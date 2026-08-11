@@ -1,6 +1,6 @@
 # Changelog
 
-> Created: 2026-07-09 16:10 · Updated: 2026-08-10
+> Created: 2026-07-09 16:10 · Updated: 2026-08-11
 
 All notable changes to VelaTerm are documented here, newest first.
 v0.1.91 is the first public release; earlier version numbers were internal iterations and are not covered.
@@ -12,6 +12,10 @@ v0.1.91 is the first public release; earlier version numbers were internal itera
 ### AI agents
 
 - **Kiro CLI is now a first-class session type.** Kiro sessions get their own node in the tree, an authoritative Working/Waiting status dot driven by Kiro's own lifecycle hooks, notifications when a turn ends, automatic resume of the same conversation when you reopen the node, launch arguments and a skip-confirmations toggle, and spawning through vspawn — everything the other agents already had. VelaTerm clones your default Kiro agent into its own `vlx-term` agent, adds observe-only lifecycle hooks to the copy, and launches that — your own agent file is never edited, and your prompt, tools and MCP servers come along unchanged. Kiro has no permission-request hook, so the dot stays Working while it waits for your approval.
+
+### Fixed
+
+- **Programs started from the terminal no longer inherit the AppImage's own environment (Linux).** The AppImage launcher points `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` and the GStreamer plugin paths at the bundle's temporary mount directory, and puts bundle directories ahead of everything else in `PATH` and `LD_LIBRARY_PATH`. A terminal hands its whole environment to the shell it starts, so the system `python3` looked for its standard library inside the bundle and refused to run at all, and other dynamically linked programs loaded the bundle's copy of a library in preference to the system one. VelaTerm now strips those bundle paths before starting a shell or an external tool, and leaves values you set yourself untouched. `APPDIR` and `APPIMAGE` stay visible, so programs that check whether they are running from an AppImage still get their answer. Only AppImage builds were affected; the deb package, macOS and Windows behave as before.
 
 ---
 

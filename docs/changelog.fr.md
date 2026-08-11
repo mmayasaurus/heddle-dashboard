@@ -1,3 +1,13 @@
+## v0.1.100 — 2026-08-10
+
+### Agents IA
+
+- **Kiro CLI devient un type de session de premier plan.** Les sessions Kiro disposent de leur propre nœud dans l'arborescence, d'une pastille d'état Travail/Attente faisant autorité et pilotée par les lifecycle hooks de Kiro lui-même, de notifications à la fin d'un tour, de la reprise automatique de la même conversation à la réouverture du nœud, d'arguments de lancement et d'une option pour ignorer les confirmations, ainsi que du lancement via vspawn — tout ce dont les autres agents disposaient déjà. VelaTerm clone votre agent Kiro par défaut vers son propre agent `vlx-term`, ajoute à la copie des lifecycle hooks en observation seule, puis lance celle-ci : votre propre fichier d'agent n'est jamais modifié, et votre invite, vos outils et vos serveurs MCP suivent sans changement. Kiro ne dispose d'aucun hook de demande d'autorisation, si bien que la pastille reste sur Travail pendant qu'il attend votre accord.
+
+### Corrections
+
+- **Les programmes lancés depuis le terminal n'héritent plus de l'environnement propre à l'AppImage (Linux).** Le lanceur AppImage fait pointer `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` et les chemins de plugins GStreamer vers le répertoire de montage temporaire du bundle, et place les répertoires du bundle avant tout le reste dans `PATH` et `LD_LIBRARY_PATH`. Un terminal transmet tout son environnement au shell qu'il démarre : le `python3` du système cherchait donc sa bibliothèque standard à l'intérieur du bundle et refusait purement et simplement de s'exécuter, tandis que d'autres programmes liés dynamiquement chargeaient la copie d'une bibliothèque fournie par le bundle plutôt que celle du système. VelaTerm retire désormais ces chemins du bundle avant de démarrer un shell ou un outil externe, et laisse intactes les valeurs que vous avez définies vous-même. `APPDIR` et `APPIMAGE` restent visibles, si bien que les programmes qui vérifient s'ils s'exécutent depuis une AppImage obtiennent toujours leur réponse. Seules les versions AppImage étaient concernées ; le paquet deb, macOS et Windows se comportent comme avant.
+
 ## v0.1.99 — 2026-08-09
 
 ### Terminal

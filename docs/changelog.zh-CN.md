@@ -1,3 +1,13 @@
+## v0.1.100 — 2026-08-10
+
+### AI 智能体
+
+- **Kiro CLI 成为一等公民会话类型。** Kiro 会话在树里有自己的节点，状态点由 Kiro 自己的生命周期 hooks 驱动，如实反映工作中与等待处理；一个回合结束会发通知；重新打开节点自动接回同一段对话；启动参数、跳过确认开关、经 vspawn 派生子会话也都齐了——其它智能体已有的能力，Kiro 现在都有。VelaTerm 把你的默认 Kiro agent 克隆成自己的 `vlx-term` agent，只在副本上加一份只观察、不干预的生命周期 hooks 再启动它，你自己的 agent 文件全程不动，提示词、工具和 MCP 服务器原样带过来。Kiro 没有权限请求 hook，所以它等你批准的时候，状态点仍然显示为工作中。
+
+### 修复
+
+- **终端里启动的程序不再继承 AppImage 自己的环境（Linux）。** AppImage 的启动器会把 `PYTHONHOME`、`PYTHONPATH`、`PERLLIB`、`QT_PLUGIN_PATH` 和 GStreamer 的插件路径指向包内的临时挂载目录，并把包内目录插到 `PATH`、`LD_LIBRARY_PATH` 的最前面。终端会把整个环境交给它启动的 shell，于是系统的 `python3` 跑到包里去找标准库，根本起不来；其它动态链接的程序也会优先加载包里的那份库，而不是系统的。现在 VelaTerm 在启动 shell 或外部工具之前先把这些包内路径剥掉，你自己设的值保持不动。`APPDIR` 和 `APPIMAGE` 仍然可见，靠它们判断自己是不是从 AppImage 启动的程序照样拿得到答案。只有 AppImage 版本受影响，deb 包、macOS 和 Windows 行为不变。
+
 ## v0.1.99 — 2026-08-09
 
 ### 终端

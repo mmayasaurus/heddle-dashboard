@@ -1,3 +1,13 @@
+## v0.1.100 — 2026-08-10
+
+### Tác nhân AI
+
+- **Kiro CLI trở thành một loại phiên hạng nhất.** Phiên Kiro có nút riêng trong cây, có chấm trạng thái Đang làm việc / Đang chờ chuẩn xác do chính lifecycle hooks của Kiro điều khiển, có thông báo khi một lượt kết thúc, tự động tiếp tục đúng cuộc hội thoại cũ khi bạn mở lại nút, có tham số khởi chạy cùng công tắc bỏ qua xác nhận, và khởi chạy qua vspawn — mọi thứ mà các tác nhân khác đã có. VelaTerm sao chép tác nhân Kiro mặc định của bạn thành một tác nhân `vlx-term` riêng, thêm lifecycle hooks chỉ quan sát vào bản sao rồi khởi chạy bản sao đó — tệp tác nhân của bạn không bao giờ bị sửa, còn prompt, công cụ và máy chủ MCP thì đi theo nguyên vẹn. Kiro không có hook yêu cầu quyền, nên chấm trạng thái vẫn là Đang làm việc trong lúc chờ bạn phê duyệt.
+
+### Sửa lỗi
+
+- **Chương trình khởi chạy từ terminal không còn thừa hưởng môi trường của chính AppImage (Linux).** Trình khởi chạy AppImage trỏ `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` và các đường dẫn plugin GStreamer vào thư mục mount tạm thời của gói, đồng thời đặt các thư mục trong gói lên trước mọi thứ khác trong `PATH` và `LD_LIBRARY_PATH`. Terminal giao toàn bộ môi trường của nó cho shell mà nó khởi chạy, nên `python3` của hệ thống đi tìm thư viện chuẩn bên trong gói rồi từ chối chạy, còn những chương trình liên kết động khác thì nạp bản sao thư viện trong gói thay vì bản của hệ thống. VelaTerm nay loại bỏ các đường dẫn của gói trước khi khởi chạy shell hoặc công cụ bên ngoài, và giữ nguyên những giá trị do chính bạn đặt. `APPDIR` và `APPIMAGE` vẫn hiển thị, nên các chương trình cần kiểm tra xem mình có đang chạy từ AppImage hay không vẫn có câu trả lời. Chỉ các bản dựng AppImage bị ảnh hưởng; gói deb, macOS và Windows vẫn như trước.
+
 ## v0.1.99 — 2026-08-09
 
 ### Terminal
