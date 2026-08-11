@@ -3,6 +3,8 @@
 #![cfg_attr(not(feature = "gui"), allow(dead_code))]
 
 mod agent;
+// Undoes the AppImage launcher's environment rewrite for child processes on Linux.
+pub mod appimage;
 // Built-in browser tabs require desktop Tauri child windows and are absent from the minimal server.
 #[cfg(feature = "gui")]
 mod browser;

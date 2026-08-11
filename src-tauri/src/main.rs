@@ -139,7 +139,11 @@ fn hydrate_path_from_login_shell() {
     // with a timeout so such prompts cannot block application startup; retain inherited PATH on timeout.
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let out = std::process::Command::new(&shell)
+        let mut probe = std::process::Command::new(&shell);
+        // Probe the shell with the system environment; otherwise the captured `PATH` would carry the
+        // AppImage's bundle directories back into this process.
+        velaterm_lib::appimage::scrub_command(&mut probe);
+        let out = probe
             .arg("-i")
             .arg("-l")
             .arg("-c")

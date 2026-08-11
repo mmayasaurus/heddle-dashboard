@@ -379,6 +379,10 @@ impl PtyManager {
         if let Some(dir) = &spawn_cwd {
             cmd.cwd(dir);
         }
+        // A PTY inherits this process's environment, which on Linux still carries the AppImage launcher's
+        // rewrite of `PYTHONHOME`, `LD_LIBRARY_PATH`, `PATH`, and friends. Undo it before anything else so
+        // the user's shell sees the system environment and later overrides here still win. No-op elsewhere.
+        crate::appimage::scrub_pty(&mut cmd);
         // Advertise a color-capable terminal.
         cmd.env("TERM", "xterm-256color");
         // Explicitly advertise true color so applications do not conservatively fall back to 256 colors.
@@ -472,7 +476,8 @@ impl PtyManager {
         // avoid system-command collisions, so no shell startup wrapper is needed.
         if let Ok(data_dir) = app.data_dir() {
             let bin = crate::agent::spawn_cli::bin_dir(&data_dir);
-            let existing = std::env::var("PATH").unwrap_or_default();
+            // Read the scrubbed `PATH`; the raw one still leads with the AppImage's bundle directories.
+            let existing = crate::appimage::clean_var("PATH").unwrap_or_default();
             // Use the platform-specific `PATH` separator.
             let sep = if cfg!(windows) { ';' } else { ':' };
             cmd.env("PATH", format!("{}{sep}{existing}", bin.display()));

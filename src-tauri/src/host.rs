@@ -56,6 +56,9 @@ pub fn command<S: AsRef<OsStr>>(program: S) -> Command {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    // External tools run under the AppImage's rewritten environment would resolve libraries and
+    // interpreters inside the bundle. Restore the system environment; a no-op off Linux.
+    crate::appimage::scrub_command(&mut cmd);
     cmd
 }
 
