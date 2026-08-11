@@ -1,0 +1,556 @@
+/* Document-tab theme:
+   - Map Crepe variables to Vlinx CSS variables. Import only official structural styles, not a preset
+     color theme; `<html data-theme>` switches all colors here.
+   - Define the header and Typora-like centered editor layout. */
+
+/* ── Crepe variable mapping ── */
+.docview .milkdown {
+  --crepe-color-background: var(--bg-term);
+  --crepe-color-on-background: var(--text);
+  --crepe-color-surface: var(--bg-1);
+  --crepe-color-surface-low: var(--bg-2);
+  --crepe-color-on-surface: var(--text);
+  --crepe-color-on-surface-variant: var(--text-mid);
+  --crepe-color-outline: var(--border-strong);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: var(--text);
+  --crepe-color-inverse: var(--text);
+  --crepe-color-on-inverse: var(--bg-0);
+  --crepe-color-inline-code: var(--mag);
+  --crepe-color-error: var(--red);
+  --crepe-color-hover: var(--bg-hover);
+  --crepe-color-selected: var(--bg-active);
+  --crepe-color-inline-area: var(--bg-2);
+
+  /* Body text uses the system UI font; code uses JetBrains Mono like the terminal. */
+  --crepe-font-title: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --crepe-font-default: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --crepe-font-code: var(--font-mono);
+
+  --crepe-shadow-1: var(--shadow);
+  --crepe-shadow-2: var(--shadow);
+
+  background: transparent;
+  font-size: 15px;
+}
+
+/* ── DocView layout ── */
+.docview {
+  position: absolute;
+  inset: 0;
+  z-index: 5; /* Cover the hidden terminal layer while a document tab is active. */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-term);
+}
+
+.docview-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: var(--ui-fs);
+}
+
+.docview-head .title {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.docview-head .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* WYSIWYG/source segmented mode switch. */
+.docview-seg {
+  flex: none;
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.docview-seg button {
+  padding: 2.5px 10px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: transparent;
+}
+.docview-seg button.on {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+.docview-save {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 11.5px;
+}
+.docview-save:hover { background: var(--bg-hover); }
+.docview-save:disabled { opacity: 0.5; cursor: default; }
+
+/* External-change banner. */
+.docview-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+.docview-banner button {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.docview-banner button:hover { background: var(--bg-hover); }
+
+/* Directory-tree toggle at the far left of the header. */
+.docview-treetoggle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+}
+.docview-treetoggle:hover { background: var(--bg-hover); color: var(--text); }
+.docview-treetoggle.on { color: var(--accent); }
+
+/* Horizontal editor container with optional sidebar plus editor/status area. */
+.docview-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  /* Anchor the absolute .docsearch overlay here; this element does not scroll with document content. */
+  position: relative;
+}
+
+/* Shared outline/directory sidebar shell. DocView controls width inline through a draggable divider;
+   the following Splitter draws its right edge. */
+.docview-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-1);
+  font-size: var(--ui-fs);
+}
+.docview-side-tabs {
+  flex: none;
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.docview-side-tabs button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: transparent;
+}
+.docview-side-tabs button:hover { color: var(--text); }
+.docview-side-tabs button.on {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Outline list with heading-level indentation and click navigation. */
+.docview-outline {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+.docview-outline-row {
+  padding: 3px 10px;
+  cursor: pointer;
+  color: var(--text-mid);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.docview-outline-row:hover { background: var(--bg-hover); color: var(--text); }
+.docview-outline-row.lv1 { font-weight: 600; color: var(--text); }
+.docview-outline-row.lv2 { font-weight: 500; }
+
+/* Directory-tree tab reusing global `.file-row` styling from the Files panel. */
+.docview-tree {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.docview-tree-root {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.docview-tree-root button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+}
+.docview-tree-root button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.docview-tree-root button:disabled { opacity: 0.35; cursor: default; }
+.docview-tree-root .nm {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.docview-tree-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+.docview-tree-empty {
+  padding: 8px 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* Editor body uses a text cursor throughout. Combined with DocView's blank-area focus behavior, empty
+   space looks and acts like part of the document. */
+.docview-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  cursor: text;
+}
+
+/* WYSIWYG content uses at least 90% of the panel. Side gutters are 5%, clamped from 24 to 72 px. */
+.docview-wysiwyg {
+  margin: 0 auto;
+  padding: 20px clamp(24px, 5%, 72px) 96px;
+}
+.docview-wysiwyg .milkdown { outline: none; }
+
+/* ── Reading typography adjustments over Crepe defaults ──
+   - Increase body line height from 1.5 to 1.8 for comfortable long-form CJK reading.
+   - Reduce headings to Typora-like scale (h1 around 2em) and use weight 600 for hierarchy.
+   - Add more space above headings to separate sections. */
+.docview .milkdown .ProseMirror p {
+  line-height: 1.8;
+  padding: 5px 0;
+}
+/* Remove extra paragraph spacing inside list items, which already have 4 px spacing. */
+.docview .milkdown .ProseMirror li > p {
+  padding: 1px 0;
+}
+/* List markers and task boxes use --text-mid. Crepe's default outline color maps to a very faint
+   border in light mode. Do not change --crepe-color-outline globally because tables and dividers use it. */
+.docview .milkdown .milkdown-list-item-block li .label-wrapper {
+  color: var(--text-mid);
+}
+.docview .milkdown .milkdown-list-item-block li .label-wrapper svg {
+  fill: var(--text-mid);
+}
+.docview .milkdown .ProseMirror h1,
+.docview .milkdown .ProseMirror h2,
+.docview .milkdown .ProseMirror h3,
+.docview .milkdown .ProseMirror h4,
+.docview .milkdown .ProseMirror h5,
+.docview .milkdown .ProseMirror h6 {
+  font-weight: 600;
+  line-height: 1.4;
+}
+.docview .milkdown .ProseMirror h1 { font-size: 32px; margin-top: 40px; }
+.docview .milkdown .ProseMirror h2 { font-size: 25px; margin-top: 36px; }
+.docview .milkdown .ProseMirror h3 { font-size: 21px; margin-top: 28px; }
+.docview .milkdown .ProseMirror h4 { font-size: 18px; margin-top: 24px; }
+.docview .milkdown .ProseMirror h5 { font-size: 16px; margin-top: 20px; }
+.docview .milkdown .ProseMirror h6 { font-size: 15px; margin-top: 20px; }
+
+/* ── Tables: prevent overlap and improve column allocation ──
+   ProseMirror's fixed layout forces equal columns, causing long URLs/version strings to overlap and
+   narrow text to create very tall rows. Auto layout follows content like Typora/Notion; wrapping and
+   horizontal `.tableWrapper` scrolling handle oversized tables. */
+.docview .milkdown .ProseMirror table {
+  table-layout: auto;
+  /* Enable prosemirror-tables' minimum width for columns without an explicit width. */
+  --default-cell-min-width: 96px;
+}
+.docview .milkdown .ProseMirror th,
+.docview .milkdown .ProseMirror td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* When minimum-width columns still overflow, scroll within the table container instead of widening
+   the document. Edge add-row/column controls may be partly clipped in extreme cases. */
+.docview .milkdown .milkdown-table-block .table-wrapper {
+  overflow-x: auto;
+}
+/* Crepe's inline-block code cannot wrap and is a primary cause of cell overflow. */
+.docview .milkdown .ProseMirror th code,
+.docview .milkdown .ProseMirror td code {
+  display: inline;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Remove body paragraph spacing inside tables for appropriate density. */
+.docview .milkdown .ProseMirror th p,
+.docview .milkdown .ProseMirror td p {
+  padding: 1px 0;
+  line-height: 1.6;
+}
+
+/* ── WYSIWYG CodeMirror blocks ──
+   Crepe hardcodes oneDark while our block background follows the application theme. Its dark active-line
+   and line-number highlight therefore becomes a black patch in light mode. Override both with theme-aware
+   --bg-hover, matching source mode. */
+.docview .milkdown .milkdown-code-block .cm-activeLine {
+  background: var(--bg-hover);
+}
+.docview .milkdown .milkdown-code-block .cm-activeLineGutter {
+  background: var(--bg-hover);
+}
+
+/* Source mode: CodeMirror owns scrolling and fills the unrestricted body. */
+.docview-source {
+  position: absolute;
+  inset: 0;
+}
+.docview-source .cm-editor { height: 100%; }
+
+/* ── Image viewer (ImageDocView) ── */
+
+/* Center small images; allow 1:1 overflow scrolling without clipping the starting edge. */
+.docview-imgbody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  padding: 16px;
+}
+.docview-imgbody img {
+  margin: auto;
+  border: 1px solid var(--border);
+  /* Checkerboard transparency background using theme-aware surface variables. */
+  background: conic-gradient(
+      var(--bg-2) 0 25%,
+      transparent 0 50%,
+      var(--bg-2) 0 75%,
+      transparent 0
+    )
+    0 0 / 16px 16px;
+}
+.docview-imgbody img.fit {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.docview-imgbody img.actual {
+  max-width: none;
+  max-height: none;
+  flex: none;
+}
+
+/* Real initial-load progress bar inside docview-state. */
+.docview-progress {
+  width: min(420px, 70%);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+.docview-progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+
+/* Thin reload progress line below the header while retaining the existing image. */
+.docview-imgreload {
+  flex: none;
+  height: 3px;
+  background: var(--bg-2);
+}
+.docview-imgreload > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+
+/* Header image metadata: intrinsic dimensions and file size. */
+.docview-imgmeta {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Loading/error panel. */
+.docview-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+.docview-state .actions { display: flex; gap: 8px; }
+
+/* ── Unified Cmd+F search overlay with find and replace rows ── */
+.docsearch {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.docsearch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.docsearch-input {
+  width: 180px;
+  padding: 4px 8px;
+}
+.docsearch-count {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* Arrow toggles the replace row; an equal-width spacer aligns its input. */
+.docsearch-toggle {
+  flex: none;
+  width: 18px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+.docsearch-toggle:hover { color: var(--text); }
+.docsearch-toggle.on { color: var(--text); }
+.docsearch-btn {
+  flex: none;
+  height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.docsearch-btn:hover:not(:disabled) { background: var(--bg-hover); }
+.docsearch-btn:disabled { opacity: 0.4; cursor: default; }
+.docsearch-text { padding: 0 8px; }
+.docsearch-case { font-size: 11px; }
+.docsearch-case.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Shared match highlighting for CodeMirror and ProseMirror ── */
+.vlx-cm-match,
+.vlx-pm-match {
+  background: var(--accent-soft);
+  border-radius: 2px;
+}
+.vlx-cm-match-current,
+.vlx-pm-match-current {
+  background: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* ── Mermaid diagrams rendered as decorations below fenced blocks in WYSIWYG mode ── */
+.vlx-mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 6px 0 18px;
+  padding: 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.vlx-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+/* Rendering placeholder with minimum height and subtle pulse to prevent flicker. */
+.vlx-mermaid-loading {
+  min-height: 40px;
+  animation: vlx-mermaid-pulse 1.2s ease-in-out infinite;
+}
+@keyframes vlx-mermaid-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.85; }
+}
+/* Syntax-error fallback as red monospaced plain text preserving newlines. */
+.vlx-mermaid-error {
+  display: block;
+  justify-content: initial;
+  color: var(--red);
+  background: var(--bg-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}

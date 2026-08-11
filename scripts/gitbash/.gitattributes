@@ -1,0 +1,2 @@
+# Git Bash sources this via /etc/profile on login; CRLF would break `source`. Force LF.
+*.sh text eol=lf

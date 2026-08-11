@@ -1,0 +1,319 @@
+/* ============================================================================
+   mobile.css — Mobile-only view styles. Only `.m-*` classes are used, with no desktop references.
+   Colors, radii, and font sizes use vlinx.css variables and follow the active theme and accent.
+   ============================================================================ */
+
+/* Root container fills the viewport. Android Chrome's `interactive-widget=resizes-content` shrinks
+   the layout viewport for the keyboard, so fixed inset:0 follows automatically. On iOS the keyboard
+   overlays content, and TerminalPage pins its inner height to visualViewport as a fallback. */
+.m-app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+  overflow: hidden;
+}
+
+/* Page layout: header, main content, and an optional terminal KeyBar. */
+.m-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.m-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 12px;
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.m-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.5px; color: var(--text); }
+.m-logo { width: 18px; height: 18px; border-radius: 4px; background: var(--accent); display: grid; place-items: center; color: var(--bg-0); font-size: 12px; font-weight: 800; }
+.m-sp { flex: 1; }
+.m-desktop-link { flex: none; font-size: 12px; color: var(--text-dim); padding: 6px 8px; border-radius: var(--r-sm); touch-action: manipulation; }
+.m-desktop-link:active { background: var(--bg-active); color: var(--text); }
+.m-back { flex: none; display: flex; align-items: center; font-size: 14px; color: var(--text-mid); padding: 8px 10px 8px 0; touch-action: manipulation; }
+.m-back:active { color: var(--text); }
+.m-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; color: var(--text); }
+.m-kind { flex: none; font-size: 11px; color: var(--text-faint); }
+
+/* ── Session list toolbar: search and status filters ── */
+.m-toolbar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+.m-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+}
+.m-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 14px;
+}
+.m-search input::placeholder { color: var(--text-faint); }
+.m-search-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-right: -6px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  touch-action: manipulation;
+}
+.m-search-clear:active { background: var(--bg-active); color: var(--text); }
+.m-chips { display: flex; gap: 6px; }
+.m-chip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-mid);
+  font-size: 12px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-chip:active { background: var(--bg-active); }
+.m-chip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
+.m-chip .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; }
+.m-chip .cnt { font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+/* ── Session hierarchy ── */
+.m-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 8px calc(16px + env(safe-area-inset-bottom));
+}
+/* Collapse arrow or placeholder for leaf nodes, preserving name alignment. */
+.m-twist {
+  flex: none;
+  width: 18px;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  touch-action: manipulation;
+}
+.m-twist.empty { visibility: hidden; }
+/* Collapsible project/group header; clicking the row toggles it. */
+.m-node {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding-right: 10px;
+  color: var(--text-mid);
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-node:active { background: var(--bg-active); }
+.m-node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.m-node.proj .m-node-name { font-weight: 700; letter-spacing: 0.4px; color: var(--text); }
+.m-node.grp .m-node-name { font-weight: 600; color: var(--text-mid); }
+/* Session row. */
+.m-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding-right: 10px;
+  border-radius: var(--r-md);
+  color: var(--text-mid);
+  text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-row:active { background: var(--bg-active); }
+.m-row-dot { width: 12px; flex: none; display: grid; place-items: center; }
+.m-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); }
+.m-row-kind { flex: none; font-size: 11px; color: var(--text-faint); }
+.m-empty { padding: 48px 20px; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+.m-nomatch { padding: 40px 20px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+/* ── Terminal page ── */
+/* `touch-action:none` delegates all gestures to our synthesized wheel scrolling and long-press
+   selection, avoiding native pan, zoom, and double-tap interference. Native selection and context
+   menus are disabled because useTouchTerminal draws its own selection. */
+.m-term {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg-term);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.m-term-host { position: absolute; inset: 4px 2px 2px 8px; }
+
+/* ── Touch-selection overlay ── */
+/* Translucent accent rectangles over selected cells. Pointer events remain disabled because handles
+   are detected from touch coordinates. */
+.m-sel-rect {
+  position: absolute;
+  z-index: 4;
+  background: var(--accent-soft);
+  border-radius: 1px;
+  pointer-events: none;
+}
+/* Drag handles are solid circles anchored by their top center at each selection endpoint. */
+.m-sel-handle {
+  position: absolute;
+  z-index: 6;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-term);
+  box-shadow: 0 1px 4px oklch(0 0 0 / 0.4);
+  pointer-events: none;
+}
+/* Copy/cancel toolbar centered at the top to avoid obscuring lower selections with the user's finger. */
+.m-sel-bar {
+  position: absolute;
+  z-index: 7;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+}
+.m-sel-btn {
+  min-width: 56px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 13px;
+  touch-action: manipulation;
+}
+.m-sel-btn:active { background: var(--bg-active); }
+/* Mirror badge: the client scales to a PTY size owned elsewhere; click to claim local sizing. */
+.m-mirror-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 6;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  opacity: 0.92;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-mirror-badge:active { background: var(--bg-active); color: var(--text); }
+
+/* Image-upload failure banner centered above the terminal and cleared by the parent after five seconds. */
+.m-img-error {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  max-width: 86%;
+  padding: 4px 12px;
+  border-radius: var(--r-sm);
+  background: var(--red, #c0392b);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.m-starting {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: var(--bg-term);
+  color: var(--text-dim);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+/* ── KeyBar shortcut toolbar ── */
+.m-keybar-wrap {
+  flex: none;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.m-keybar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.m-keybar::-webkit-scrollbar { display: none; }
+.m-key {
+  flex: none;
+  min-width: 42px;
+  height: 36px;
+  padding: 0 10px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-mid);
+  font-size: 13px;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-key:active { background: var(--bg-active); color: var(--text); }
+.m-key.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }

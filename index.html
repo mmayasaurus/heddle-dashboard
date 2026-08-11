@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Switch the favicon with the system theme: light blue in light mode and dark green in dark mode. -->
+    <link rel="icon" type="image/svg+xml" href="/velaterm-light.svg" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/velaterm-dark.svg" media="(prefers-color-scheme: dark)" />
+    <!-- interactive-widget=resizes-content shrinks the viewport instead of obscuring it when Android Chrome opens the soft keyboard. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>VelaTerm · terminal & agents</title>
+    <!-- Initial-frame background: use the final background color before the JS / vlinx.css theme is ready
+         to eliminate the white flash at startup. Follow the system theme and default to dark, matching the app.
+         The source of truth is [data-theme] --bg-0 in vlinx.css; keep both locations in sync when changing it. -->
+    <style>
+      :root { color-scheme: dark; }
+      html, body { background: oklch(0.2 0.006 260); }
+      @media (prefers-color-scheme: light) {
+        :root { color-scheme: light; }
+        html, body { background: oklch(0.95 0.004 260); }
+      }
+    </style>
+  </head>
+
+  <!-- autocapitalize is inherited by every editable descendant, so setting it once on <body>
+       turns off automatic capitalization for all inputs / textareas / contenteditable in the app. -->
+  <body autocapitalize="none">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

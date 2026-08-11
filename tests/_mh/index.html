@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>mermaid reproduction</title>
+    <style>
+      body { font-family: system-ui; margin: 0; display: flex; }
+      #app { flex: 1; padding: 16px; border-right: 2px solid #ccc; min-height: 100vh; }
+      #out { width: 460px; padding: 12px; font: 12px/1.5 monospace; background: #111; color: #0f0; overflow:auto; }
+      #out div { white-space: pre-wrap; border-bottom: 1px solid #222; padding: 2px 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="out"><div>[probe log]</div></div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

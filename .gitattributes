@@ -1,0 +1,5 @@
+# Shell scripts must use LF line endings.
+# With Git's typical `core.autocrlf=true` setting on Windows, checkout would convert `.sh` files to CRLF.
+# Bash would then read `set -euo pipefail` as `pipefail\r` and report an invalid option.
+# `eol=lf` keeps these files on LF regardless of `autocrlf` across all build machines.
+*.sh text eol=lf

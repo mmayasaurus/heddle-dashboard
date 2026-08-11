@@ -1,0 +1,156 @@
+@import "tailwindcss";
+@import "./vlinx.css";
+
+/* ============================================================================
+   index.css does three things on top of the Vlinx design system (vlinx.css):
+   1) An alias layer mapping the old variable names onto Vlinx variables, so shared components that
+      have not been rewritten yet (ContextMenu / FormModal / StatusDot / the dialogs) follow a theme
+      change without being touched;
+   2) It keeps a few custom control classes (.vlx-input / .vlx-btn / .menu-item / .vlx-status-pulse);
+   3) It applies a small number of global overrides (text selectable in terminals, not elsewhere).
+   Note: the @import above makes vlinx.css take effect before the rules in this file, so overlapping
+   declarations here win. --border / --accent / --accent-soft / --accent-line reuse the definitions
+   from vlinx.css directly.
+   ============================================================================ */
+
+:root {
+  --bg-app: var(--bg-0);
+  --bg-panel: var(--bg-1);
+  --bg-elevated: var(--bg-2);
+  --bg-terminal: var(--bg-term);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-mid);
+  --text-muted: var(--text-dim);
+  /* Unified status colors, matching the left sidebar dots, menus, and bottom bar:
+     running = blue / working = green / asking = yellow / waiting (replied) = magenta.
+     working is pinned to --green rather than --accent, so the semantic status colours do not drift
+     when the accent skin changes. */
+  --status-running: var(--blue);
+  --status-exited: var(--text-faint);
+  --status-error: var(--red);
+  --status-working: var(--green);
+  --status-asking: var(--yellow);
+  --status-waiting: var(--mag);
+}
+
+/* Allow text selection in terminal areas; keep the rest of the UI unselectable, as is conventional for terminal apps. */
+body {
+  user-select: none;
+}
+.xterm,
+.xterm * {
+  user-select: text;
+}
+
+/* ─── IME pre-edit overlay: keep it within the terminal's right edge. ───
+   While composing, the uncommitted pre-edit text is drawn by xterm's .composition-view. It is
+   positioned absolutely at the cursor with white-space:nowrap, and the parent .xterm has no
+   overflow, so a long string runs straight past the terminal's right edge (xterm's own source still
+   carries a TODO about this). xterm sets only left (the cursor x), never right or width, so we add a
+   right bound to keep the width inside the terminal and allow wrapping: the pre-edit text now wraps
+   downward inside the terminal instead of overflowing sideways. This is a presentation-only fix and
+   does not change the text actually sent. */
+/* ─── IME fix: WKWebView does not activate an IME for elements with opacity:0. ───
+   xterm.css sets opacity:0 on the hidden textarea by default, so macOS WKWebView never fires
+   compositionstart and the composing keystrokes of a Chinese or Japanese input method are sent to
+   the terminal verbatim (typing produces uuuu instead of characters). A very small opacity fixes it:
+   invisible to the eye, yet the IME still treats the element as visible. */
+.xterm .xterm-helper-textarea {
+  opacity: 0.01 !important;
+  color: transparent !important;
+}
+
+.xterm .composition-view {
+  right: 2px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
+}
+
+/* ─── Context-menu items shared through ContextMenu. ─── */
+.menu-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.menu-item:hover {
+  background: var(--accent-soft);
+}
+
+/* ─── Directory picker / Save As: horizontally scrollable shortcut and breadcrumb areas. ───
+   Both rows can exceed the dialog width, so horizontal scrolling catches the overflow. The scrollbar
+   itself both consumes height and looks poor inside such a narrow strip, so it is hidden while the
+   scrolling behaviour is kept. */
+.picker-hscroll {
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.picker-hscroll::-webkit-scrollbar {
+  height: 0;
+  display: none;
+}
+
+/* Built-in browser quick-access bar: retain horizontal scrolling in narrow windows without consuming page height. */
+.browser-quick-access {
+  scrollbar-width: none;
+}
+.browser-quick-access::-webkit-scrollbar {
+  height: 0;
+  display: none;
+}
+
+/* ─── Form controls shared by FormModal, dialogs, and search bars. ─── */
+.vlx-input {
+  width: 100%;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 7px 9px;
+  outline: none;
+}
+.vlx-input:focus {
+  border-color: var(--accent);
+}
+.vlx-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.vlx-btn:hover {
+  border-color: var(--text-muted);
+}
+.vlx-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.vlx-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Breathing animation for in-progress status dots, shared through StatusDot. */
+@keyframes vlx-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+.vlx-status-pulse {
+  animation: vlx-status-pulse 1s ease-in-out infinite;
+}

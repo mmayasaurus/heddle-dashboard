@@ -1,0 +1,28 @@
+/*
+ * vlx-symbols: embedded fallback symbol font that prevents newer symbols such as ⏵ (U+23F5) from rendering as
+ * missing-glyph boxes □.
+ *
+ * Background: JetBrains Mono and other common monospace fonts omit the media-control triangle range
+ * (U+23E9–23FA), as do most free Linux fonts. Without embedding it, users would need to
+ * `apt install fonts-symbola`; a desktop app should not depend on a system font installation.
+ *
+ * Source: Noto Sans Symbols 2 under OFL 1.1 (see ../assets/fonts/LICENSE-noto-sans-symbols-2.txt in this
+ * directory). The subset retains only U+23E9–23FA and is approximately 1.5 KB. To regenerate:
+ *         pnpm add @fontsource/noto-sans-symbols-2
+ *         pyftsubset node_modules/@fontsource/noto-sans-symbols-2/files/noto-sans-symbols-2-symbols-400-normal.woff2 \
+ *           --unicodes=23E9-23FA --flavor=woff2 --layout-features='' --no-hinting --desubroutinize \
+ *           --output-file=src/assets/fonts/vlx-symbols.woff2
+ *         pnpm remove @fontsource/noto-sans-symbols-2
+ *
+ * Reference it as "VlxSymbols" in the font stack (see DEFAULT_MONO_STACK / fontStack in theme.ts and
+ * --font-mono in vlinx.css, both before monospace). The unicode-range below limits this font to those code points,
+ * so it never affects the glyph shape or width of other characters.
+ */
+@font-face {
+  font-family: "VlxSymbols";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../assets/fonts/vlx-symbols.woff2") format("woff2");
+  unicode-range: U+23E9-23FA;
+}
