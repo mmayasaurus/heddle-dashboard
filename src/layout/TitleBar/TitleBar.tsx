@@ -128,7 +128,7 @@ export function TitleBar() {
           className="logo"
           // CSS content on `.brand .logo` follows data-theme so system-mode changes do not require a
           // TitleBar rerender. This light src is only a fallback when CSS content is unavailable.
-          src="/velaterm-light.svg"
+          src="/heddle-logo.png"
           alt="heddle"
           draggable={false}
         />

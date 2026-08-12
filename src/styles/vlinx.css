@@ -135,11 +135,11 @@ button { font-family: inherit; color: inherit; background: none; border: none; c
 .tb-dots { display: flex; gap: 7px; }
 .tb-dots i { width: 11px; height: 11px; border-radius: 50%; display: block; background: var(--border-strong); }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.5px; }
-.brand .logo { width: 18px; height: 18px; border-radius: 4px; display: block; object-fit: contain; user-select: none; }
+.brand .logo { width: 24px; height: 24px; border-radius: 4px; display: block; object-fit: contain; user-select: none; }
 /* Select the logo through CSS content based on documentElement data-theme. System theme changes update
    data-theme without rerendering TitleBar, so a JS-derived image src could retain the old light logo. */
-.brand .logo { content: url(/velaterm-light.svg); }
-:root[data-theme="dark"] .brand .logo { content: url(/velaterm-dark.svg); }
+.brand .logo { content: url(/heddle-logo.png); }
+:root[data-theme="dark"] .brand .logo { content: url(/heddle-logo.png); }
 .brand .v { color: var(--text); }
 .brand .sub { color: var(--text-dim); font-weight: 400; font-size: 11px; }
 .tb-spacer { flex: 1; }
