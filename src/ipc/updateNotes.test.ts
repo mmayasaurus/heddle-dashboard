@@ -72,7 +72,7 @@ describe("sliceReleaseNotes", () => {
 
   it("returns the text unchanged when no version heading is recognised, which beats showing nothing", () => {
     // This is the shape of the old placeholder notes.
-    expect(sliceReleaseNotes("VelaTerm 0.1.92", "0.1.91")).toBe("VelaTerm 0.1.92");
+    expect(sliceReleaseNotes("heddle 0.1.92", "0.1.91")).toBe("heddle 0.1.92");
   });
 
   it("does not treat a ## inside a code block as a version heading", () => {

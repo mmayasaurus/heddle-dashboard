@@ -431,7 +431,7 @@ fn grok_access_token(force_refresh: bool) -> Result<String, String> {
         .to_string();
 
     let refreshed = refresh_grok_token(&refresh, &client_id)?;
-    // Persist so subsequent Grok CLI/VelaTerm processes reuse the fresh token.
+    // Persist so subsequent Grok CLI/heddle processes reuse the fresh token.
     if let Some(obj) = entry.as_object_mut() {
         obj.insert("key".into(), Value::String(refreshed.access_token.clone()));
         if let Some(exp) = refreshed.expires_at {

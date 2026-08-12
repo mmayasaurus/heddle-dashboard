@@ -62,7 +62,7 @@ pub fn run_spawn(args: &[String]) -> ! {
             std::process::exit(1);
         }
         None => {
-            eprintln!("vspawn: cannot connect to VelaTerm ({url})");
+            eprintln!("vspawn: cannot connect to heddle ({url})");
             std::process::exit(1);
         }
     }
@@ -100,7 +100,7 @@ pub fn run_view(args: &[String]) -> ! {
         let body = build_view_body(&sid, f, &cwd);
         match post_json(&endpoint, &body) {
             Some(code) if (200..300).contains(&code) => {
-                println!("opened in VelaTerm: {f}");
+                println!("opened in heddle: {f}");
             }
             _ => {
                 // `/view` validation returns 404 for missing/nonregular files; connection failure returns None.
@@ -130,7 +130,7 @@ fn session_env() -> Result<(String, String, String), String> {
 fn require_env(name: &str) -> Result<String, String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Ok(v),
-        _ => Err(format!("not inside a VelaTerm session (missing {name})")),
+        _ => Err(format!("not inside a heddle session (missing {name})")),
     }
 }
 

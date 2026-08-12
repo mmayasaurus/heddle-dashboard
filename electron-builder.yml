@@ -1,4 +1,4 @@
-# electron-builder packaging configuration for the Electron edition of VelaTerm.
+# electron-builder packaging configuration for the Electron edition of heddle.
 #
 # Output: scripts/release.sh deep-signs the macOS Electron build with a Developer ID. The script controls
 # the signing identity, so it is not hard-coded here.
@@ -12,8 +12,8 @@
 # UI into the velaterm binary (`cargo build --release`), which is then packaged through `extraResources`.
 
 appId: io.vlinx.vlxterm.electron
-# Use the distinct name VelaTerm-Electron so it can coexist with the Tauri VelaTerm.app in ~/Soft (see scripts/release.sh).
-productName: VelaTerm-Electron
+# Use the distinct name heddle-Electron so it can coexist with the Tauri heddle.app in ~/Soft (see scripts/release.sh).
+productName: heddle-Electron
 copyright: Copyright © VLINX Software
 
 directories:

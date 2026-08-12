@@ -31,7 +31,7 @@ const SAFARI_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWe
 /// application access to plaintext credentials. Requires macOS 14+.
 const VLX_BROWSER_STORE: [u8; 16] = *b"vlx-browser-v1\0\0";
 
-/// Rewrite `window.open` and `target=_blank` to navigate the current tab; inject no VelaTerm objects.
+/// Rewrite `window.open` and `target=_blank` to navigate the current tab; inject no heddle objects.
 const POPUP_REWRITE_JS: &str = r#"(function () {
   window.open = function (u) { if (u) location.href = u; return null; };
   document.addEventListener("click", function (e) {

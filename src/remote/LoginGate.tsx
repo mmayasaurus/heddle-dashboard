@@ -196,7 +196,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
               marginBottom: 8,
             }}
           >
-            VelaTerm
+            heddle
           </div>
           <div
             style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.6 }}
@@ -221,7 +221,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
               marginBottom: 8,
             }}
           >
-            VelaTerm
+            heddle
           </div>
           <div
             style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.6 }}
@@ -292,7 +292,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
           </span>
           <div>
             <div style={{ fontWeight: 700, fontSize: 15, color: "var(--text)" }}>
-              VelaTerm
+              heddle
             </div>
             <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
               {t("login.remoteAccess")}

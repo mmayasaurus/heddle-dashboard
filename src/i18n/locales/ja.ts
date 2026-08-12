@@ -54,9 +54,9 @@ const ja: typeof en = {
   "titlebar.remoteAccess": "リモートアクセス（ブラウザ）", // Remote Access (Browser)
   "titlebar.connectRemote": "リモートサーバーに接続", // Connect to Remote Server
   "titlebar.share": "共有", // Share
-  "share.title": "VelaTerm を共有", // Share VelaTerm
+  "share.title": "heddle を共有", // Share heddle
   "share.subtitle":
-    "VelaTerm は小さなチームで開発しています。気に入っていただけたら、ぜひ周りの方にシェアしてください。より多くの方に私たちを知っていただくことは、チームにとって大きな支えになります。ありがとうございます！❤️", // We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others…
+    "heddle は小さなチームで開発しています。気に入っていただけたら、ぜひ周りの方にシェアしてください。より多くの方に私たちを知っていただくことは、チームにとって大きな支えになります。ありがとうございます！❤️", // We're a small team behind heddle. If you enjoy it, please share heddle with others…
   "share.copyLink": "リンクをコピー", // Copy link
   "share.copied": "コピーしました", // Copied!
   "share.wechatMoments": "WeChat モーメンツ",
@@ -90,7 +90,7 @@ const ja: typeof en = {
   "settings.cliUninstall": "‘vela’ コマンドをアンインストール",
   "settings.cliInstalledAt": (path: string) => `${path} にインストール済み`,
   "settings.cliConflict": (path: string) =>
-    `${path} に別の ‘vela’ コマンドがあります。VelaTerm は上書きしません。`,
+    `${path} に別の ‘vela’ コマンドがあります。heddle は上書きしません。`,
   "settings.cliHint": "VS Code の `code` と同様に `vela <project-path>` を PATH に追加します。",
   "settings.agentArgsHint":
     "各エージェントタイプの新規セッションに適用される既定の起動引数。セッションの作成・編集時に設定した個別の引数が優先されます。空欄で引数なし。", // Agent default launch args hint
@@ -223,7 +223,7 @@ const ja: typeof en = {
   "settings.sound": "通知音", // Notification sound
   "settings.language": "言語", // Language
   "settings.langAuto": "自動（システム）", // Auto (system)
-  "settings.skillLabel": "Vela Skills",
+  "settings.skillLabel": "heddle Skills",
   "settings.skillInstall": "Install", // Install
   "settings.skillInstalled": "Reinstall", // Reinstall
   "settings.skillInvokeHint":
@@ -233,14 +233,14 @@ const ja: typeof en = {
   "settings.notifyGranted": "Enabled", // TODO translate
   "settings.notifyAllow": "Allow notifications", // TODO translate
   "settings.notifyOffHint":
-    "Allow VelaTerm to alert you when an agent needs your input or finishes a task.", // TODO translate
+    "Allow heddle to alert you when an agent needs your input or finishes a task.", // TODO translate
   "settings.notifyDeniedHint": "Notifications are blocked. To turn them on:", // TODO translate
   "settings.notifyStepsMac":
-    "open System Settings ▸ Notifications ▸ VelaTerm and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
+    "open System Settings ▸ Notifications ▸ heddle and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
   "settings.notifyStepsWin":
-    "open Settings ▸ System ▸ Notifications, enable VelaTerm, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
+    "open Settings ▸ System ▸ Notifications, enable heddle, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
   "settings.notifyStepsLinux":
-    "open your desktop's Settings ▸ Notifications and allow VelaTerm.", // TODO translate
+    "open your desktop's Settings ▸ Notifications and allow heddle.", // TODO translate
   "settings.notifyStepsBrowser":
     "click the site-permission icon in the address bar and set Notifications to Allow.", // TODO translate
   "settings.notifyUnsupported": "Notifications aren't available in this environment.", // TODO translate
@@ -302,7 +302,7 @@ const ja: typeof en = {
   "connect.pairingPlaceholder": "ペアリングリンクを貼り付け", // Paste pairing link
   "connect.confirmConnect": "指紋を確認して接続", // Fingerprint matches, connect
   "connect.desc":
-    "リモート VelaTerm のアドレスとパスワードを入力し、新しいウィンドウで接続・操作します。", // Enter the address and password…
+    "リモート heddle のアドレスとパスワードを入力し、新しいウィンドウで接続・操作します。", // Enter the address and password…
   "connect.addressPlaceholder": "IPアドレス（例: 192.168.1.100）", // IP address, e.g. 192.168.1.100
   "connect.portPlaceholder": "ポート", // Port
   "connect.connecting": "接続中…", // Connecting…
@@ -637,7 +637,7 @@ const ja: typeof en = {
   // ── Agent installation guidance ──
   "agentInstall.title": (label) => `${label} がインストールされていません`, // {label} is not installed
   "agentInstall.desc": (label) =>
-    `VelaTerm は PATH 上で ${label} を見つけられませんでした。インストールするとこのセッションを起動できます。`, // couldn't find {label} on PATH
+    `heddle は PATH 上で ${label} を見つけられませんでした。インストールするとこのセッションを起動できます。`, // couldn't find {label} on PATH
   "agentInstall.install": "今すぐインストール", // Install now
   "agentInstall.retry": "起動を再試行", // Retry launch
   "agentInstall.dismiss": "自分でインストールする", // I'll do it myself
@@ -892,9 +892,9 @@ const ja: typeof en = {
   "updater.downloadManually": "Download manually", // TODO translate
   "updater.downloadManuallyHint": "Open the installer download in your browser.", // TODO translate
   "updater.windowsNotice":
-    "VelaTerm will close while the installer runs, then reopen on its own.", // TODO translate
+    "heddle will close while the installer runs, then reopen on its own.", // TODO translate
   "updater.installingWindows":
-    "Installing… VelaTerm is about to close. The installer will finish the update and reopen it.", // TODO translate
+    "Installing… heddle is about to close. The installer will finish the update and reopen it.", // TODO translate
   "statusbar.updateAvailable": (version) => `Update ${version}`, // TODO translate
   "statusbar.updateDownloading": (pct) => `Updating… ${pct}%`, // TODO translate
   "statusbar.updateInstalling": "Installing…", // TODO translate

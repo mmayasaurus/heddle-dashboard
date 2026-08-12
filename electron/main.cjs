@@ -1,4 +1,4 @@
-// Main process for the VelaTerm Electron shell (CommonJS, avoiding the ESM complexity of package.json "type":"module").
+// Main process for the heddle Electron shell (CommonJS, avoiding the ESM complexity of package.json "type":"module").
 //
 // Responsibilities:
 //   1. Enforce a single instance.
@@ -74,7 +74,7 @@ try {
   app.exit(2);
 }
 
-const VELA_SHIM_MARKER = "VelaTerm managed vela command";
+const VELA_SHIM_MARKER = "heddle managed vela command";
 
 function velaCommandDirs() {
   const home = app.getPath("home");
@@ -111,9 +111,9 @@ function velaCommandStatus() {
   return { installed: false, path: null, conflict: null };
 }
 
-/** The Electron and Tauri editions share this marker; overwrite only shims created by VelaTerm itself. */
+/** The Electron and Tauri editions share this marker; overwrite only shims created by heddle itself. */
 function installVelaCommand() {
-  if (!app.isPackaged) throw new Error("Install the packaged VelaTerm app before adding its shell command to PATH.");
+  if (!app.isPackaged) throw new Error("Install the packaged heddle app before adding its shell command to PATH.");
   const before = velaCommandStatus();
   if (before.installed) return before;
   if (before.conflict) throw new Error(`another 'vela' command already exists at ${before.conflict}`);
@@ -304,7 +304,7 @@ function scheduleRestart() {
   state.restarts += 1;
   if (state.restarts > MAX_RESTARTS) {
     dialog.showErrorBox(
-      "VelaTerm sidecar keeps crashing",
+      "heddle sidecar keeps crashing",
       `The local service failed to start ${MAX_RESTARTS} times in a row; retries have stopped. Please check the logs and restart the app.`,
     );
     return;
@@ -350,8 +350,8 @@ async function requestQuitConfirmation() {
       state.win && !state.win.isDestroyed() ? state.win : undefined,
       {
         type: "question",
-        title: "Quit VelaTerm?",
-        message: "Quit VelaTerm?",
+        title: "Quit heddle?",
+        message: "Quit heddle?",
         detail: "Any running terminal and agent sessions will be stopped.",
         buttons: ["Cancel", "Quit"],
         defaultId: 0,
@@ -623,8 +623,8 @@ function buildMenu() {
       const detail = status.installed
         ? `The 'vela' command is ready at:\n${status.path}\n\nRun: vela <project-path>`
         : status.conflict
-          ? `A different 'vela' command remains at:\n${status.conflict}\n\nVelaTerm did not modify it.`
-          : "The VelaTerm-managed 'vela' command was removed from PATH.";
+          ? `A different 'vela' command remains at:\n${status.conflict}\n\nheddle did not modify it.`
+          : "The heddle-managed 'vela' command was removed from PATH.";
       await dialog.showMessageBox(state.win ?? undefined, {
         type: status.conflict ? "warning" : "info",
         title: `${installing ? "Install" : "Uninstall"} 'vela' Command`,
@@ -768,7 +768,7 @@ if (!app.requestSingleInstanceLock()) {
       await startSidecar();
     } catch (e) {
       console.error(e);
-      dialog.showErrorBox("VelaTerm failed to start", String(e && e.message ? e.message : e));
+      dialog.showErrorBox("heddle failed to start", String(e && e.message ? e.message : e));
       app.quit();
       return;
     }

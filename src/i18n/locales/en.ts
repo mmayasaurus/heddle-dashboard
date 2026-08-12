@@ -53,9 +53,9 @@ const en = {
   "titlebar.remoteAccess": "Remote Access (Browser)",
   "titlebar.connectRemote": "Connect to Remote Server",
   "titlebar.share": "Share",
-  "share.title": "Share VelaTerm",
+  "share.title": "Share heddle",
   "share.subtitle":
-    "We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others. Helping more people discover us means a great deal to our team. Thank you for your support! ❤️",
+    "We're a small team behind heddle. If you enjoy it, please share heddle with others. Helping more people discover us means a great deal to our team. Thank you for your support! ❤️",
   "share.copyLink": "Copy link",
   "share.copied": "Copied!",
   "share.wechatMoments": "WeChat Moments",
@@ -89,7 +89,7 @@ const en = {
   "settings.cliUninstall": "Uninstall 'vela' command",
   "settings.cliInstalledAt": (path: string) => `Installed at ${path}`,
   "settings.cliConflict": (path: string) =>
-    `A different 'vela' command already exists at ${path}. VelaTerm will not overwrite it.`,
+    `A different 'vela' command already exists at ${path}. heddle will not overwrite it.`,
   "settings.cliHint": "Adds `vela <project-path>` to your PATH, like VS Code's `code` command.",
   "settings.agentArgsHint":
     "Default launch args applied to new sessions of each agent type. Per-session args set when creating or editing a session override these. Leave blank for none.",
@@ -222,7 +222,7 @@ const en = {
   "settings.sound": "Notification sound",
   "settings.language": "Language",
   "settings.langAuto": "Auto (system)",
-  "settings.skillLabel": "Vela Skills",
+  "settings.skillLabel": "heddle Skills",
   "settings.skillInstall": "Install",
   "settings.skillInstalled": "Reinstall",
   "settings.skillInvokeHint":
@@ -232,14 +232,14 @@ const en = {
   "settings.notifyGranted": "Enabled",
   "settings.notifyAllow": "Allow notifications",
   "settings.notifyOffHint":
-    "Allow VelaTerm to alert you when an agent needs your input or finishes a task.",
+    "Allow heddle to alert you when an agent needs your input or finishes a task.",
   "settings.notifyDeniedHint": "Notifications are blocked. To turn them on:",
   "settings.notifyStepsMac":
-    "open System Settings ▸ Notifications ▸ VelaTerm and turn on Allow Notifications (Banners or Alerts recommended).",
+    "open System Settings ▸ Notifications ▸ heddle and turn on Allow Notifications (Banners or Alerts recommended).",
   "settings.notifyStepsWin":
-    "open Settings ▸ System ▸ Notifications, enable VelaTerm, and make sure Focus assist / Do not disturb isn't blocking it.",
+    "open Settings ▸ System ▸ Notifications, enable heddle, and make sure Focus assist / Do not disturb isn't blocking it.",
   "settings.notifyStepsLinux":
-    "open your desktop's Settings ▸ Notifications and allow VelaTerm.",
+    "open your desktop's Settings ▸ Notifications and allow heddle.",
   "settings.notifyStepsBrowser":
     "click the site-permission icon in the address bar and set Notifications to Allow.",
   "settings.notifyUnsupported": "Notifications aren't available in this environment.",
@@ -301,7 +301,7 @@ const en = {
   "connect.pairingPlaceholder": "Paste pairing link",
   "connect.confirmConnect": "Fingerprint matches, connect",
   "connect.desc":
-    "Enter the address and password of a remote VelaTerm to connect and control it in a new window.",
+    "Enter the address and password of a remote heddle to connect and control it in a new window.",
   "connect.addressPlaceholder": "IP address, e.g. 192.168.1.100",
   "connect.portPlaceholder": "Port",
   "connect.connecting": "Connecting…",
@@ -645,7 +645,7 @@ const en = {
   // ── Agent installation guidance (AgentInstallCard) ──
   "agentInstall.title": (label: string) => `${label} is not installed`,
   "agentInstall.desc": (label: string) =>
-    `VelaTerm couldn't find ${label} on your PATH. Install it to launch this session.`,
+    `heddle couldn't find ${label} on your PATH. Install it to launch this session.`,
   "agentInstall.install": "Install now",
   "agentInstall.retry": "Retry launch",
   "agentInstall.dismiss": "I'll do it myself",
@@ -908,9 +908,9 @@ const en = {
   "updater.downloadManually": "Download manually",
   "updater.downloadManuallyHint": "Open the installer download in your browser.",
   "updater.windowsNotice":
-    "VelaTerm will close while the installer runs, then reopen on its own.",
+    "heddle will close while the installer runs, then reopen on its own.",
   "updater.installingWindows":
-    "Installing… VelaTerm is about to close. The installer will finish the update and reopen it.",
+    "Installing… heddle is about to close. The installer will finish the update and reopen it.",
   // The status-bar new-version segment belongs to automatic updates and stays here for centralized editing.
   "statusbar.updateAvailable": (version: string) => `Update ${version}`,
   "statusbar.updateDownloading": (pct: number) => `Updating… ${pct}%`,

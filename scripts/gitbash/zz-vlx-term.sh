@@ -23,7 +23,7 @@ fi
 command_not_found_handle() {
   case "$1" in
     git|gitk|git-*|ssh|ssh-keygen|ssh-add|scp|sftp|curl|wget|perl|openssl|gpg|vim|vi|nano|node|npm)
-      printf '%s\n' "VelaTerm: '$1' needs the full Git Bash (git/ssh, incl. ssh key login) -- get it from the tab-bar Shell menu (Download full Git Bash)." >&2
+      printf '%s\n' "heddle: '$1' needs the full Git Bash (git/ssh, incl. ssh key login) -- get it from the tab-bar Shell menu (Download full Git Bash)." >&2
       return 127 ;;
   esac
   printf '%s\n' "bash: $1: command not found" >&2

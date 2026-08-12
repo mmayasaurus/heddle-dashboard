@@ -6,7 +6,7 @@ Created: 2026-07-09 20:41
 
 ## 1. What spawning is
 
-From inside any session, split a subtask off: VelaTerm creates a new child session **under** the current node (the tree becomes hierarchical: parent → child → grandchild), optionally gives it an isolated git worktree, and feeds the task description in as the new session's **first message** — the new agent starts working the moment it boots, no re-explaining needed.
+From inside any session, split a subtask off: heddle creates a new child session **under** the current node (the tree becomes hierarchical: parent → child → grandchild), optionally gives it an isolated git worktree, and feeds the task description in as the new session's **first message** — the new agent starts working the moment it boots, no re-explaining needed.
 
 What you get is a real session in the tree — its own process, fully interactive, resumable — that you can watch or step into at any time. It is not a hidden background task.
 
@@ -21,7 +21,7 @@ What you get is a real session in the tree — its own process, fully interactiv
 
 The two terminal commands are injected into every session's PATH automatically — zero install.
 
-> **Prerequisite for agent skills:** enable **Vela Skills** in Settings ▸ General. This installs `vspawn`, `vspawn-tree`, and `vopen` into both `~/.claude/skills/` and the Codex skills directory (`$CODEX_HOME/skills` when set, otherwise `~/.codex/skills`); they're kept up to date automatically on app upgrades. After enabling, start a new Claude or Codex thread so the agent picks them up. Without this, only the terminal-typed `vspawn` / `vspawn-tree` commands work.
+> **Prerequisite for agent skills:** enable **heddle Skills** in Settings ▸ General. This installs `vspawn`, `vspawn-tree`, and `vopen` into both `~/.claude/skills/` and the Codex skills directory (`$CODEX_HOME/skills` when set, otherwise `~/.codex/skills`); they're kept up to date automatically on app upgrades. After enabling, start a new Claude or Codex thread so the agent picks them up. Without this, only the terminal-typed `vspawn` / `vspawn-tree` commands work.
 
 ## 3. Confirm before spawn
 
@@ -51,7 +51,7 @@ Merging does not auto-delete the worktree — clean it up afterwards via "Worktr
 
 ## 6. A typical workflow
 
-1. In the main session, have claude analyze the task, then `/vspawn-tree refactor the checkout module` to spawn it (requires Vela Skills — see §2).
+1. In the main session, have claude analyze the task, then `/vspawn-tree refactor the checkout module` to spawn it (requires heddle Skills — see §2).
 2. Review the prompt on the confirmation card and hit Launch — the child starts in its own worktree, visible in the sidebar under its parent, dot turning green.
 3. You keep working in the main session; when the child asks something or finishes, its dot turns yellow and a notification fires.
 4. Step in to review, then right-click → "Git ▸ Merge…" to merge its branch back into main.

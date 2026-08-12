@@ -3,7 +3,7 @@
 Created: 2026-07-09 20:41
 Updated: 2026-08-09 19:45
 
-> This chapter covers VelaTerm's organizational model: the three-pane layout, managing the tree, how tabs and split panes behave, status dots and filtering, archiving, and global search. Everything else builds on these.
+> This chapter covers heddle's organizational model: the three-pane layout, managing the tree, how tabs and split panes behave, status dots and filtering, archiving, and global search. Everything else builds on these.
 
 ## 1. The layout
 

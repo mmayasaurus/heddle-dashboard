@@ -2,7 +2,7 @@
   "name": "velaterm",
   "private": true,
   "version": "0.1.100",
-  "description": "VelaTerm — a terminal multiplexer GUI that manages terminals and AI agent sessions in one project/group/session tree",
+  "description": "heddle — a terminal multiplexer GUI that manages terminals and AI agent sessions in one project/group/session tree",
   "author": "VLINX Software",
   "type": "module",
   "packageManager": "pnpm@11.5.2",

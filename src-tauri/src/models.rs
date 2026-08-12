@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Session type, which determines launch behavior.
 /// - `Terminal`: a plain login shell and the backward-compatible default.
-/// - Agent types are launched by VelaTerm with official hooks, notify handlers, plugins, or extensions
+/// - Agent types are launched by heddle with official hooks, notify handlers, plugins, or extensions
 ///   injected to obtain authoritative lifecycle state. OpenCode uses local plugin events; Copilot uses
 ///   command hooks under `~/.copilot/hooks/`; Cursor merges hooks into `~/.cursor/hooks.json`; Cline uses
 ///   scripts under `<data_dir>/cline/hooks/` through `CLINE_HOOKS_DIR` without user-config changes; Pi

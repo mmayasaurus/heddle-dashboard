@@ -2,17 +2,17 @@
 
 ### KI-Agenten
 
-- **Kiro CLI ist jetzt ein vollwertiger Sitzungstyp.** Kiro-Sitzungen erhalten einen eigenen Knoten im Baum, einen verlässlichen Arbeits- und Wartezustand aus Kiros eigenen lifecycle hooks, Benachrichtigungen am Ende eines Durchlaufs, das automatische Fortsetzen derselben Unterhaltung beim erneuten Öffnen des Knotens, Startargumente samt Schalter zum Überspringen von Bestätigungen sowie den Start über vspawn – alles, was die übrigen Agenten bereits hatten. VelaTerm kopiert Ihren Standard-Kiro-Agenten in einen eigenen `vlx-term`-Agenten, ergänzt die Kopie um rein beobachtende lifecycle hooks und startet diese – Ihre eigene Agentendatei wird nie verändert, und Ihr prompt, Ihre Werkzeuge und Ihre MCP-Server werden unverändert übernommen. Kiro besitzt keinen hook für Berechtigungsanfragen, deshalb bleibt der Statuspunkt auf „arbeitet“ stehen, während Kiro auf Ihre Bestätigung wartet.
+- **Kiro CLI ist jetzt ein vollwertiger Sitzungstyp.** Kiro-Sitzungen erhalten einen eigenen Knoten im Baum, einen verlässlichen Arbeits- und Wartezustand aus Kiros eigenen lifecycle hooks, Benachrichtigungen am Ende eines Durchlaufs, das automatische Fortsetzen derselben Unterhaltung beim erneuten Öffnen des Knotens, Startargumente samt Schalter zum Überspringen von Bestätigungen sowie den Start über vspawn – alles, was die übrigen Agenten bereits hatten. heddle kopiert Ihren Standard-Kiro-Agenten in einen eigenen `vlx-term`-Agenten, ergänzt die Kopie um rein beobachtende lifecycle hooks und startet diese – Ihre eigene Agentendatei wird nie verändert, und Ihr prompt, Ihre Werkzeuge und Ihre MCP-Server werden unverändert übernommen. Kiro besitzt keinen hook für Berechtigungsanfragen, deshalb bleibt der Statuspunkt auf „arbeitet“ stehen, während Kiro auf Ihre Bestätigung wartet.
 
 ### Fehlerbehebungen
 
-- **Aus dem Terminal gestartete Programme erben nicht mehr die Umgebung des AppImage (Linux).** Der AppImage-Starter richtet `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` und die GStreamer-Plugin-Pfade auf das temporäre Einhängeverzeichnis des Pakets aus und stellt dessen Verzeichnisse in `PATH` und `LD_LIBRARY_PATH` allem anderen voran. Ein Terminal gibt seine gesamte Umgebung an die gestartete Shell weiter, deshalb suchte das System-`python3` seine Standardbibliothek im Paket und startete überhaupt nicht mehr, und andere dynamisch gelinkte Programme luden die Bibliothekskopie aus dem Paket statt der des Systems. VelaTerm entfernt diese Paketpfade jetzt, bevor eine Shell oder ein externes Werkzeug gestartet wird, und lässt selbst gesetzte Werte unangetastet. `APPDIR` und `APPIMAGE` bleiben sichtbar, damit Programme, die prüfen, ob sie aus einem AppImage laufen, weiterhin ihre Antwort erhalten. Betroffen waren nur AppImage-Builds; das deb-Paket, macOS und Windows verhalten sich wie bisher.
+- **Aus dem Terminal gestartete Programme erben nicht mehr die Umgebung des AppImage (Linux).** Der AppImage-Starter richtet `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` und die GStreamer-Plugin-Pfade auf das temporäre Einhängeverzeichnis des Pakets aus und stellt dessen Verzeichnisse in `PATH` und `LD_LIBRARY_PATH` allem anderen voran. Ein Terminal gibt seine gesamte Umgebung an die gestartete Shell weiter, deshalb suchte das System-`python3` seine Standardbibliothek im Paket und startete überhaupt nicht mehr, und andere dynamisch gelinkte Programme luden die Bibliothekskopie aus dem Paket statt der des Systems. heddle entfernt diese Paketpfade jetzt, bevor eine Shell oder ein externes Werkzeug gestartet wird, und lässt selbst gesetzte Werte unangetastet. `APPDIR` und `APPIMAGE` bleiben sichtbar, damit Programme, die prüfen, ob sie aus einem AppImage laufen, weiterhin ihre Antwort erhalten. Betroffen waren nur AppImage-Builds; das deb-Paket, macOS und Windows verhalten sich wie bisher.
 
 ## v0.1.99 — 2026-08-09
 
 ### Terminal
 
-- **Shift+Enter fügt einen Zeilenumbruch ein, statt abzuschicken.** Terminals kennen keine Kodierung für Enter mit Zusatztaste, deshalb erhielten Agenten-CLIs wie Claude Code und Codex nur einen einfachen Wagenrücklauf und schickten die Eingabe ab, während man noch schrieb. VelaTerm sendet nun ESC+CR, also genau die Sequenz, die diese Werkzeuge von einer iTerm2-Tastenbelegung erwarten. Damit funktionieren mehrzeilige Eingaben – auch unter macOS, wo die eigene Tastenbehandlung bisher überhaupt nicht installiert war. Während der Eingabemethoden-Komposition bleibt alles unverändert, Enter bestätigt weiterhin den Kandidaten.
+- **Shift+Enter fügt einen Zeilenumbruch ein, statt abzuschicken.** Terminals kennen keine Kodierung für Enter mit Zusatztaste, deshalb erhielten Agenten-CLIs wie Claude Code und Codex nur einen einfachen Wagenrücklauf und schickten die Eingabe ab, während man noch schrieb. heddle sendet nun ESC+CR, also genau die Sequenz, die diese Werkzeuge von einer iTerm2-Tastenbelegung erwarten. Damit funktionieren mehrzeilige Eingaben – auch unter macOS, wo die eigene Tastenbehandlung bisher überhaupt nicht installiert war. Während der Eingabemethoden-Komposition bleibt alles unverändert, Enter bestätigt weiterhin den Kandidaten.
 
 ### Projekte und Organisation
 
@@ -27,7 +27,7 @@
 
 ### KI-Agenten
 
-- **Grok Build wird zu einem vollwertigen Agenten in VelaTerm.** Grok 4.5 lässt sich installieren, starten und fortsetzen – mit stabilen Sitzungs-IDs, offiziellen lifecycle hooks, präzisen Arbeits- und Berechtigungszuständen, zusammengeführten Transkripten, Nutzungsdetails und einem offiziellen, an das Theme angepassten Symbol in Desktop-, Browser- und Mobilansichten.
+- **Grok Build wird zu einem vollwertigen Agenten in heddle.** Grok 4.5 lässt sich installieren, starten und fortsetzen – mit stabilen Sitzungs-IDs, offiziellen lifecycle hooks, präzisen Arbeits- und Berechtigungszuständen, zusammengeführten Transkripten, Nutzungsdetails und einem offiziellen, an das Theme angepassten Symbol in Desktop-, Browser- und Mobilansichten.
 
 ### Projekte und Organisation
 
@@ -37,7 +37,7 @@
 
 ### Oberfläche
 
-- **Teilen Sie VelaTerm dort, wo Ihre Community ist.** Der Teilen-Dialog unterstützt jetzt WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram und WhatsApp – einschließlich QR-Code-Ablauf für WeChat und einem Teilen-Hinweis im Aktualisierungsdialog.
+- **Teilen Sie heddle dort, wo Ihre Community ist.** Der Teilen-Dialog unterstützt jetzt WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram und WhatsApp – einschließlich QR-Code-Ablauf für WeChat und einem Teilen-Hinweis im Aktualisierungsdialog.
 - **Auch kleine Interaktionen wirken durchdachter.** Temporäre Terminal-Tabs lassen sich umbenennen, bevor sie zu gespeicherten Sitzungen werden. Normale Eingabefelder deaktivieren die automatische Großschreibung mobiler Tastaturen, ohne die Terminaleingabe zu verändern.
 
 ## v0.1.97 — 2026-07-25
@@ -49,7 +49,7 @@
 
 ### Oberfläche
 
-- **Zuverlässige Teilen-Kurzbefehle unter macOS.** Rechts teilen (Cmd+D) und nach unten teilen (Cmd+Shift+D) sind nun auch als native Terminal-Menübefehle registriert, sodass macOS die Tastenkombination nicht mehr vor VelaTerm abfängt.
+- **Zuverlässige Teilen-Kurzbefehle unter macOS.** Rechts teilen (Cmd+D) und nach unten teilen (Cmd+Shift+D) sind nun auch als native Terminal-Menübefehle registriert, sodass macOS die Tastenkombination nicht mehr vor heddle abfängt.
 - **Pro Tastendruck genau ein Speichervorgang.** Cmd+S wurde sowohl vom globalen Kurzbefehl als auch vom fokussierten Editor verarbeitet und konnte dieselbe Datei bei einem einzigen Tastendruck zweimal schreiben.
 
 ## v0.1.96 — 2026-07-23
@@ -67,12 +67,12 @@
 
 ### KI-Agenten
 
-- **Kimi Code und Zoo Code sind jetzt im Sitzungsbaum verfügbar.** VelaTerm kann beide Agenten starten, fortsetzen, installieren und konfigurieren. Kimi meldet Arbeits-, Berechtigungs- und Wartezustände über offizielle lifecycle hooks; Zoo Code behält eine stabile Task-ID und nutzt bei fehlenden externen hooks die Terminalerkennung.
+- **Kimi Code und Zoo Code sind jetzt im Sitzungsbaum verfügbar.** heddle kann beide Agenten starten, fortsetzen, installieren und konfigurieren. Kimi meldet Arbeits-, Berechtigungs- und Wartezustände über offizielle lifecycle hooks; Zoo Code behält eine stabile Task-ID und nutzt bei fehlenden externen hooks die Terminalerkennung.
 - **Codex-Nutzung live aktualisieren.** Der Info-Bereich fragt aktuelle Limits beim Codex app server ab und fällt kompatibel auf den lokalen rollout-Snapshot zurück.
 
 ### Projekte und Terminals
 
-- **Projekte mit `vela <path>` öffnen.** Paketierte Builds können einen Shell-Befehl nach VS-Code-Vorbild installieren. Ein zweiter Aufruf übergibt das Projekt an das vorhandene VelaTerm-Fenster, statt eine doppelte Instanz zu öffnen.
+- **Projekte mit `vela <path>` öffnen.** Paketierte Builds können einen Shell-Befehl nach VS-Code-Vorbild installieren. Ein zweiter Aufruf übergibt das Projekt an das vorhandene heddle-Fenster, statt eine doppelte Instanz zu öffnen.
 - **Sichtbares, abbrechbares Git-Klonen.** Clone Project zeigt Git-Phase, Prozent und Laufzeit, warnt bei Stillstand und beendet beim Abbruch den gesamten Git-Prozessbaum ohne halbfertiges Ziel. Zugangsdaten und query tokens werden in Fehlern und Audit-Logs geschwärzt.
 - **WSL-Terminals unter Windows.** Alle installierten WSL-Distributionen stehen neben PowerShell, cmd und Git Bash für normale Terminals bereit. Agent-Sitzungen bleiben im Windows-Host-Shell, damit hooks und Programmpfade zuverlässig funktionieren.
 
@@ -93,14 +93,14 @@
 
 ### Bilder und Dokumente
 
-- **Zuverlässiges Einfügen von Bildpfaden unter macOS.** Wenn WebKit ein kopiertes Bild nicht als Datei bereitstellt, liest VelaTerm es jetzt aus der nativen Zwischenablage und lädt es weiterhin als Dateipfad hoch, statt unbemerkt auf den nativen Bildplatzhalter eines Agenten zurückzufallen. Remote-Fenster zeigen die Einstellung zum Einfügen von Bildern immer an, erklären, warum der Dateipfadmodus erforderlich ist, und deaktivieren die nicht verfügbare native Option.
+- **Zuverlässiges Einfügen von Bildpfaden unter macOS.** Wenn WebKit ein kopiertes Bild nicht als Datei bereitstellt, liest heddle es jetzt aus der nativen Zwischenablage und lädt es weiterhin als Dateipfad hoch, statt unbemerkt auf den nativen Bildplatzhalter eines Agenten zurückzufallen. Remote-Fenster zeigen die Einstellung zum Einfügen von Bildern immer an, erklären, warum der Dateipfadmodus erforderlich ist, und deaktivieren die nicht verfügbare native Option.
 - **Bilder in Quelldokumente einfügen.** Der Quelltexteditor akzeptiert jetzt Bilder aus der Zwischenablage. Gespeicherte Markdown-Dokumente legen sie neben dem Dokument unter `assets/` ab und fügen portable Markdown-Bildsyntax ein. Nicht gespeicherte Entwürfe betten die Bilddaten ein, damit sie beim Bereinigen temporärer Dateien nicht verloren gehen.
 
 ### Oberfläche
 
 - **Kontextmenüs bleiben sichtbar und zielen auf das richtige Element.** Menüs am rechten Rand werden korrekt vermessen und verschoben. Ein Rechtsklick auf einen Baumknoten hebt jetzt nur das Menüziel hervor, ohne die bestehende Auswahl zu ändern. Gruppenmenüs enthalten außerdem ein Terminal für die jeweilige Gruppe.
-- **Übersichtlichere Bearbeitung und Statusbeschriftungen.** Quelltext zeigt für Zeichenfolgen wie HTML-Kommentare keine pfeilförmigen Schriftligaturen mehr an. Nutzungsprozente sind ausdrücklich als verwendet gekennzeichnet, und das unbeteiligte native Kontextmenü des Host-WebView erscheint nicht mehr hinter den VelaTerm-Menüs.
+- **Übersichtlichere Bearbeitung und Statusbeschriftungen.** Quelltext zeigt für Zeichenfolgen wie HTML-Kommentare keine pfeilförmigen Schriftligaturen mehr an. Nutzungsprozente sind ausdrücklich als verwendet gekennzeichnet, und das unbeteiligte native Kontextmenü des Host-WebView erscheint nicht mehr hinter den heddle-Menüs.
 
 ### Fehlerbehebungen
 
-- **Codex bleibt im normalen Terminalverlauf.** Von VelaTerm gestartete Codex-Sitzungen verwenden jetzt den Inline-Terminalmodus. Beim Drücken von Esc zum Unterbrechen oder Zurückgehen werden daher weder die Terminal-Bildschirmpuffer gewechselt noch die Scrollback-Ansicht an den Anfang versetzt. Ihre eigene Codex-Konfiguration bleibt unverändert.
+- **Codex bleibt im normalen Terminalverlauf.** Von heddle gestartete Codex-Sitzungen verwenden jetzt den Inline-Terminalmodus. Beim Drücken von Esc zum Unterbrechen oder Zurückgehen werden daher weder die Terminal-Bildschirmpuffer gewechselt noch die Scrollback-Ansicht an den Anfang versetzt. Ihre eigene Codex-Konfiguration bleibt unverändert.

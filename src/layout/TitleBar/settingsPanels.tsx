@@ -211,7 +211,7 @@ const AGENT_DEFAULT_KINDS: {
   { kind: "kimi", label: "Kimi Code (K3)", yolo: "--yolo", permVia: "flag" },
   { kind: "kiro", label: "Kiro", yolo: "--trust-all-tools", permVia: "flag" },
   { kind: "grok", label: "Grok Build (Grok 4.5)", yolo: "--always-approve", permVia: "flag" },
-  // Zoo auto-approves natively; VelaTerm injects --require-approval in default mode and no skip flag.
+  // Zoo auto-approves natively; heddle injects --require-approval in default mode and no skip flag.
   { kind: "zoo", label: "Zoo Code", yolo: "", permVia: "inverse" },
 ];
 

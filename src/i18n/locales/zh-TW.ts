@@ -54,9 +54,9 @@ const zhTW: typeof en = {
   "titlebar.remoteAccess": "遠端存取（瀏覽器）", // Remote Access (Browser)
   "titlebar.connectRemote": "連線到遠端服務", // Connect to Remote Server
   "titlebar.share": "分享", // Share
-  "share.title": "分享 VelaTerm", // Share VelaTerm
+  "share.title": "分享 heddle", // Share heddle
   "share.subtitle":
-    "我們是 VelaTerm 背後的一個小團隊。如果你喜歡它，歡迎把 VelaTerm 分享給更多人。讓更多人知道我們，對我們真的很重要。謝謝你的支持！❤️", // We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others…
+    "我們是 heddle 背後的一個小團隊。如果你喜歡它，歡迎把 heddle 分享給更多人。讓更多人知道我們，對我們真的很重要。謝謝你的支持！❤️", // We're a small team behind heddle. If you enjoy it, please share heddle with others…
   "share.copyLink": "複製連結", // Copy link
   "share.copied": "已複製！", // Copied!
   "share.wechatMoments": "微信朋友圈",
@@ -89,7 +89,7 @@ const zhTW: typeof en = {
   "settings.cliUninstall": "解除安裝 ‘vela’ 指令",
   "settings.cliInstalledAt": (path: string) => `已安裝至 ${path}`,
   "settings.cliConflict": (path: string) =>
-    `${path} 已存在其他 ‘vela’ 指令，VelaTerm 不會覆寫它。`,
+    `${path} 已存在其他 ‘vela’ 指令，heddle 不會覆寫它。`,
   "settings.cliHint": "像 VS Code 的 `code` 一樣，將 `vela <專案路徑>` 加入 PATH。",
   "settings.agentArgsHint":
     "各類型智能體新建工作階段時套用的預設啟動參數。新建或編輯單個工作階段時設定的參數會覆寫此處的預設。留空表示不帶參數。", // Agent default launch args hint
@@ -230,14 +230,14 @@ const zhTW: typeof en = {
   "settings.notifyGranted": "已開啟", // Enabled
   "settings.notifyAllow": "允許通知", // Allow notifications
   "settings.notifyOffHint":
-    "允許 VelaTerm 在智能體需要你輸入或任務完成時通知你。", // Allow VelaTerm to alert you when an agent needs your input or finishes a task.
+    "允許 heddle 在智能體需要你輸入或任務完成時通知你。", // Allow heddle to alert you when an agent needs your input or finishes a task.
   "settings.notifyDeniedHint": "通知已被系統封鎖。開啟方法：", // Notifications are blocked. To turn them on:
   "settings.notifyStepsMac":
-    "開啟「系統設定 ▸ 通知 ▸ VelaTerm」，開啟「允許通知」（建議樣式選橫幅或提醒）。", // open System Settings ▸ Notifications ▸ VelaTerm and turn on Allow Notifications (Banners or Alerts recommended).
+    "開啟「系統設定 ▸ 通知 ▸ heddle」，開啟「允許通知」（建議樣式選橫幅或提醒）。", // open System Settings ▸ Notifications ▸ heddle and turn on Allow Notifications (Banners or Alerts recommended).
   "settings.notifyStepsWin":
-    "開啟「設定 ▸ 系統 ▸ 通知」，啟用 VelaTerm，並確認「專注輔助 / 勿擾」沒有封鎖它。", // open Settings ▸ System ▸ Notifications, enable VelaTerm, and make sure Focus assist / Do not disturb isn't blocking it.
+    "開啟「設定 ▸ 系統 ▸ 通知」，啟用 heddle，並確認「專注輔助 / 勿擾」沒有封鎖它。", // open Settings ▸ System ▸ Notifications, enable heddle, and make sure Focus assist / Do not disturb isn't blocking it.
   "settings.notifyStepsLinux":
-    "在桌面環境的「設定 ▸ 通知」裡允許 VelaTerm。", // open your desktop's Settings ▸ Notifications and allow VelaTerm.
+    "在桌面環境的「設定 ▸ 通知」裡允許 heddle。", // open your desktop's Settings ▸ Notifications and allow heddle.
   "settings.notifyStepsBrowser":
     "點擊網址列的站點權限圖示，把通知設為「允許」。", // click the site-permission icon in the address bar and set Notifications to Allow.
   "settings.notifyUnsupported": "目前環境不支援系統通知。", // Notifications aren't available in this environment.
@@ -298,7 +298,7 @@ const zhTW: typeof en = {
   "connect.title": "連線到遠端服務", // Connect to Remote Server
   "connect.pairingPlaceholder": "貼上配對連結", // Paste pairing link
   "connect.confirmConnect": "指紋無誤，連線", // Fingerprint matches, connect
-  "connect.desc": "輸入遠端 VelaTerm 的位址和密碼，在新視窗中連線並操控。", // Enter the address and password…
+  "connect.desc": "輸入遠端 heddle 的位址和密碼，在新視窗中連線並操控。", // Enter the address and password…
   "connect.addressPlaceholder": "IP 位址，如 192.168.1.100", // IP address, e.g. 192.168.1.100
   "connect.portPlaceholder": "連接埠", // Port
   "connect.connecting": "連線中…", // Connecting…
@@ -630,7 +630,7 @@ const zhTW: typeof en = {
   // ── Agent installation guidance ──
   "agentInstall.title": (label) => `${label} 尚未安裝`, // {label} is not installed
   "agentInstall.desc": (label) =>
-    `VelaTerm 沒有在 PATH 上找到 ${label}。安裝後即可啟動此工作階段。`, // couldn't find {label} on PATH
+    `heddle 沒有在 PATH 上找到 ${label}。安裝後即可啟動此工作階段。`, // couldn't find {label} on PATH
   "agentInstall.install": "一鍵安裝", // Install now
   "agentInstall.retry": "重試啟動", // Retry launch
   "agentInstall.dismiss": "我自己裝", // I'll do it myself
@@ -880,9 +880,9 @@ const zhTW: typeof en = {
   "updater.hideHint": "在背景繼續下載，進度會留在狀態列。",
   "updater.downloadManually": "手動下載",
   "updater.downloadManuallyHint": "在瀏覽器中開啟安裝包的下載連結。",
-  "updater.windowsNotice": "安裝期間 VelaTerm 會關閉，安裝完成後自動重新開啟。",
+  "updater.windowsNotice": "安裝期間 heddle 會關閉，安裝完成後自動重新開啟。",
   "updater.installingWindows":
-    "正在安裝… VelaTerm 即將關閉，安裝程式會完成更新並重新開啟它。",
+    "正在安裝… heddle 即將關閉，安裝程式會完成更新並重新開啟它。",
   // The status-bar new-version segment belongs to automatic updates and stays here for centralized editing.
   "statusbar.updateAvailable": (version) => `更新 ${version}`,
   "statusbar.updateDownloading": (pct) => `正在更新… ${pct}%`,

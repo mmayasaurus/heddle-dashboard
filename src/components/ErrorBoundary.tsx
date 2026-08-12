@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[VelaTerm] React render crash:", error, info.componentStack);
+    console.error("[heddle] React render crash:", error, info.componentStack);
   }
 
   render() {

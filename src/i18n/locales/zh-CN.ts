@@ -53,9 +53,9 @@ const zhCN: typeof en = {
   "titlebar.remoteAccess": "远程访问（浏览器）",
   "titlebar.connectRemote": "连接远程服务",
   "titlebar.share": "分享", // Share
-  "share.title": "分享 VelaTerm", // Share VelaTerm
+  "share.title": "分享 heddle", // Share heddle
   "share.subtitle":
-    "我们是 VelaTerm 背后的一个小团队。如果你喜欢它，欢迎把 VelaTerm 分享给更多人。让更多人知道我们，对我们真的很重要。谢谢你的支持！❤️", // We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others…
+    "我们是 heddle 背后的一个小团队。如果你喜欢它，欢迎把 heddle 分享给更多人。让更多人知道我们，对我们真的很重要。谢谢你的支持！❤️", // We're a small team behind heddle. If you enjoy it, please share heddle with others…
   "share.copyLink": "复制链接", // Copy link
   "share.copied": "已复制！", // Copied!
   "share.wechatMoments": "微信朋友圈",
@@ -88,7 +88,7 @@ const zhCN: typeof en = {
   "settings.cliUninstall": "卸载 ‘vela’ 命令",
   "settings.cliInstalledAt": (path: string) => `已安装到 ${path}`,
   "settings.cliConflict": (path: string) =>
-    `${path} 已存在其他 ‘vela’ 命令，VelaTerm 不会覆盖它。`,
+    `${path} 已存在其他 ‘vela’ 命令，heddle 不会覆盖它。`,
   "settings.cliHint": "像 VS Code 的 `code` 一样，把 `vela <项目路径>` 添加到 PATH。",
   "settings.agentArgsHint":
     "各类型智能体新建会话时套用的默认启动参数。新建或编辑单个会话时设的参数会覆盖这里的默认。留空表示不带参数。",
@@ -229,14 +229,14 @@ const zhCN: typeof en = {
   "settings.notifyGranted": "已开启",
   "settings.notifyAllow": "允许通知",
   "settings.notifyOffHint":
-    "允许 VelaTerm 在智能体需要你输入或任务完成时通知你。",
+    "允许 heddle 在智能体需要你输入或任务完成时通知你。",
   "settings.notifyDeniedHint": "通知已被系统屏蔽。开启方法：",
   "settings.notifyStepsMac":
-    "打开「系统设置 ▸ 通知 ▸ VelaTerm」，开启「允许通知」（建议样式选横幅或提醒）。",
+    "打开「系统设置 ▸ 通知 ▸ heddle」，开启「允许通知」（建议样式选横幅或提醒）。",
   "settings.notifyStepsWin":
-    "打开「设置 ▸ 系统 ▸ 通知」，启用 VelaTerm，并确认「专注助手 / 勿扰」没有屏蔽它。",
+    "打开「设置 ▸ 系统 ▸ 通知」，启用 heddle，并确认「专注助手 / 勿扰」没有屏蔽它。",
   "settings.notifyStepsLinux":
-    "在桌面环境的「设置 ▸ 通知」里允许 VelaTerm。",
+    "在桌面环境的「设置 ▸ 通知」里允许 heddle。",
   "settings.notifyStepsBrowser":
     "点击地址栏的站点权限图标，把通知设为「允许」。",
   "settings.notifyUnsupported": "当前环境不支持系统通知。",
@@ -297,7 +297,7 @@ const zhCN: typeof en = {
   "connect.title": "连接远程服务",
   "connect.pairingPlaceholder": "粘贴配对链接",
   "connect.confirmConnect": "指纹无误，连接",
-  "connect.desc": "输入远程 VelaTerm 的地址和密码，在新窗口中连接并操控。",
+  "connect.desc": "输入远程 heddle 的地址和密码，在新窗口中连接并操控。",
   "connect.addressPlaceholder": "IP 地址，如 192.168.1.100",
   "connect.portPlaceholder": "端口",
   "connect.connecting": "连接中…",
@@ -629,7 +629,7 @@ const zhCN: typeof en = {
   // ── Agent installation guidance ──
   "agentInstall.title": (label) => `${label} 未安装`,
   "agentInstall.desc": (label) =>
-    `VelaTerm 没有在 PATH 上找到 ${label}。安装后即可启动该会话。`,
+    `heddle 没有在 PATH 上找到 ${label}。安装后即可启动该会话。`,
   "agentInstall.install": "一键安装",
   "agentInstall.retry": "重试启动",
   "agentInstall.dismiss": "我自己装",
@@ -879,9 +879,9 @@ const zhCN: typeof en = {
   "updater.hideHint": "在后台继续下载，进度会留在状态栏。",
   "updater.downloadManually": "手动下载",
   "updater.downloadManuallyHint": "在浏览器中打开安装包的下载链接。",
-  "updater.windowsNotice": "安装期间 VelaTerm 会关闭，安装完成后自动重新打开。",
+  "updater.windowsNotice": "安装期间 heddle 会关闭，安装完成后自动重新打开。",
   "updater.installingWindows":
-    "正在安装… VelaTerm 即将关闭，安装程序会完成更新并重新打开它。",
+    "正在安装… heddle 即将关闭，安装程序会完成更新并重新打开它。",
   // The status-bar new-version segment belongs to automatic updates and stays here for centralized editing.
   "statusbar.updateAvailable": (version) => `更新 ${version}`,
   "statusbar.updateDownloading": (pct) => `正在更新… ${pct}%`,

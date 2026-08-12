@@ -341,7 +341,7 @@ export function SessionListPage({ onOpen }: { onOpen: (id: SessionId) => void })
       <header className="m-header">
         <span className="m-brand">
           <span className="m-logo">V</span>
-          VelaTerm
+          heddle
         </span>
         <span className="m-sp" />
         <button

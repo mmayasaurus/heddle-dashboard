@@ -4,7 +4,7 @@
 #
 # Usage:
 #   bash scripts/refresh-dock-icon.sh                     # Clear caches and restart Dock/Finder.
-#   bash scripts/refresh-dock-icon.sh ~/Soft/VelaTerm.app # Also re-register the specified .app for a deeper refresh.
+#   bash scripts/refresh-dock-icon.sh ~/Soft/heddle.app # Also re-register the specified .app for a deeper refresh.
 #
 # Notes:
 #   - Deleted caches are rebuilt automatically by the OS, so removal is safe.

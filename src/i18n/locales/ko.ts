@@ -54,9 +54,9 @@ const ko: typeof en = {
   "titlebar.remoteAccess": "원격 접속 (브라우저)", // Remote Access (Browser)
   "titlebar.connectRemote": "원격 서버에 연결", // Connect to Remote Server
   "titlebar.share": "공유", // Share
-  "share.title": "VelaTerm 공유", // Share VelaTerm
+  "share.title": "heddle 공유", // Share heddle
   "share.subtitle":
-    "VelaTerm은 작은 팀이 만들고 있습니다. 마음에 드셨다면 주변에 VelaTerm을 공유해 주세요. 더 많은 분이 저희를 알게 되는 것은 팀에 정말 큰 힘이 됩니다. 감사합니다! ❤️", // We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others…
+    "heddle은 작은 팀이 만들고 있습니다. 마음에 드셨다면 주변에 heddle을 공유해 주세요. 더 많은 분이 저희를 알게 되는 것은 팀에 정말 큰 힘이 됩니다. 감사합니다! ❤️", // We're a small team behind heddle. If you enjoy it, please share heddle with others…
   "share.copyLink": "링크 복사", // Copy link
   "share.copied": "복사됨!", // Copied!
   "share.wechatMoments": "WeChat 모멘트",
@@ -90,7 +90,7 @@ const ko: typeof en = {
   "settings.cliUninstall": "‘vela’ 명령 제거",
   "settings.cliInstalledAt": (path: string) => `${path}에 설치됨`,
   "settings.cliConflict": (path: string) =>
-    `${path}에 다른 ‘vela’ 명령이 있습니다. VelaTerm은 덮어쓰지 않습니다.`,
+    `${path}에 다른 ‘vela’ 명령이 있습니다. heddle은 덮어쓰지 않습니다.`,
   "settings.cliHint": "VS Code의 `code`처럼 `vela <project-path>`를 PATH에 추가합니다.",
   "settings.agentArgsHint":
     "각 에이전트 유형의 새 세션에 적용되는 기본 실행 인자. 세션 생성·편집 시 설정한 개별 인자가 우선합니다. 비워두면 없음.", // Agent default launch args hint
@@ -223,7 +223,7 @@ const ko: typeof en = {
   "settings.sound": "알림음", // Notification sound
   "settings.language": "언어", // Language
   "settings.langAuto": "자동 (시스템)", // Auto (system)
-  "settings.skillLabel": "Vela Skills",
+  "settings.skillLabel": "heddle Skills",
   "settings.skillInstall": "Install", // Install
   "settings.skillInstalled": "Reinstall", // Reinstall
   "settings.skillInvokeHint":
@@ -233,14 +233,14 @@ const ko: typeof en = {
   "settings.notifyGranted": "Enabled", // TODO translate
   "settings.notifyAllow": "Allow notifications", // TODO translate
   "settings.notifyOffHint":
-    "Allow VelaTerm to alert you when an agent needs your input or finishes a task.", // TODO translate
+    "Allow heddle to alert you when an agent needs your input or finishes a task.", // TODO translate
   "settings.notifyDeniedHint": "Notifications are blocked. To turn them on:", // TODO translate
   "settings.notifyStepsMac":
-    "open System Settings ▸ Notifications ▸ VelaTerm and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
+    "open System Settings ▸ Notifications ▸ heddle and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
   "settings.notifyStepsWin":
-    "open Settings ▸ System ▸ Notifications, enable VelaTerm, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
+    "open Settings ▸ System ▸ Notifications, enable heddle, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
   "settings.notifyStepsLinux":
-    "open your desktop's Settings ▸ Notifications and allow VelaTerm.", // TODO translate
+    "open your desktop's Settings ▸ Notifications and allow heddle.", // TODO translate
   "settings.notifyStepsBrowser":
     "click the site-permission icon in the address bar and set Notifications to Allow.", // TODO translate
   "settings.notifyUnsupported": "Notifications aren't available in this environment.", // TODO translate
@@ -301,7 +301,7 @@ const ko: typeof en = {
   "connect.title": "원격 서버에 연결", // Connect to Remote Server
   "connect.pairingPlaceholder": "페어링 링크 붙여넣기", // Paste pairing link
   "connect.confirmConnect": "지문 확인 후 연결", // Fingerprint matches, connect
-  "connect.desc": "원격 VelaTerm의 주소와 비밀번호를 입력하면 새 창에서 연결·조작합니다.", // Enter the address and password…
+  "connect.desc": "원격 heddle의 주소와 비밀번호를 입력하면 새 창에서 연결·조작합니다.", // Enter the address and password…
   "connect.addressPlaceholder": "IP 주소 (예: 192.168.1.100)", // IP address, e.g. 192.168.1.100
   "connect.portPlaceholder": "포트", // Port
   "connect.connecting": "연결 중…", // Connecting…
@@ -635,7 +635,7 @@ const ko: typeof en = {
   // ── agent 설치 안내 카드 ──
   "agentInstall.title": (label) => `${label}이(가) 설치되어 있지 않습니다`, // {label} is not installed
   "agentInstall.desc": (label) =>
-    `VelaTerm이 PATH에서 ${label}을(를) 찾지 못했습니다. 설치하면 이 세션을 시작할 수 있습니다.`, // couldn't find {label} on PATH
+    `heddle이 PATH에서 ${label}을(를) 찾지 못했습니다. 설치하면 이 세션을 시작할 수 있습니다.`, // couldn't find {label} on PATH
   "agentInstall.install": "지금 설치", // Install now
   "agentInstall.retry": "다시 시작", // Retry launch
   "agentInstall.dismiss": "직접 설치", // I'll do it myself
@@ -889,9 +889,9 @@ const ko: typeof en = {
   "updater.downloadManually": "Download manually", // TODO translate
   "updater.downloadManuallyHint": "Open the installer download in your browser.", // TODO translate
   "updater.windowsNotice":
-    "VelaTerm will close while the installer runs, then reopen on its own.", // TODO translate
+    "heddle will close while the installer runs, then reopen on its own.", // TODO translate
   "updater.installingWindows":
-    "Installing… VelaTerm is about to close. The installer will finish the update and reopen it.", // TODO translate
+    "Installing… heddle is about to close. The installer will finish the update and reopen it.", // TODO translate
   "statusbar.updateAvailable": (version) => `Update ${version}`, // TODO translate
   "statusbar.updateDownloading": (pct) => `Updating… ${pct}%`, // TODO translate
   "statusbar.updateInstalling": "Installing…", // TODO translate

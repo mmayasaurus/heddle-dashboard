@@ -1,11 +1,11 @@
-# Getting Started with VelaTerm
+# Getting Started with heddle
 
 Created: 2026-07-09 20:41
 Updated: 2026-08-09 19:45
 
 > This guide takes you from installation to your first terminal and your first AI agent session. It's enough to start working; details of each feature live in the rest of the manual series (see the [Manuals Overview](manuals-overview_20260709_2041.md)).
 
-## 1. What is VelaTerm
+## 1. What is heddle
 
 In one sentence: a terminal manager built for the AI-agent era. It organizes scattered terminal sessions into a **project → group → session** tree, and treats coding agents like Claude Code and Codex as first-class citizens — you can see in real time whether they're working, asking for input, or done, and reopening a session automatically resumes its conversation. Add browser remote access and SSH remote development, and you can take over your sessions from anywhere.
 
@@ -15,7 +15,7 @@ Grab the package for your platform:
 
 | Platform | Package | Notes |
 |----------|---------|-------|
-| macOS | `.dmg` (separate Apple Silicon / Intel builds) | Open and drag VelaTerm into Applications; the app is notarized, so it opens without security workarounds |
+| macOS | `.dmg` (separate Apple Silicon / Intel builds) | Open and drag heddle into Applications; the app is notarized, so it opens without security workarounds |
 | Windows | `-setup.exe` installer, in min / full variants | full (~360MB) bundles a complete Git Bash and works out of the box; min (~25MB) is small and downloads missing commands on demand. Both install to the same location — pick one |
 | Linux | `.AppImage` (x86_64 / aarch64) | Make it executable and run; no installation needed |
 
@@ -41,7 +41,7 @@ Any of the three:
 
 ## 5. Open your first AI agent session
 
-Right-click a project or group → "New Claude Session" (the menu also offers Codex and the rest under "More Agent Session"). VelaTerm launches Claude Code in that project's directory and automatically injects its status-reporting hooks:
+Right-click a project or group → "New Claude Session" (the menu also offers Codex and the rest under "More Agent Session"). heddle launches Claude Code in that project's directory and automatically injects its status-reporting hooks:
 
 ![A running Claude session with the Info panel](../assets/manuals/agent-info.png)
 

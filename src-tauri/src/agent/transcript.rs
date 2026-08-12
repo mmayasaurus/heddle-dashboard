@@ -559,7 +559,7 @@ pub fn live_codex_rate_limits(bin_path: Option<&str>) -> Result<CodexUsage, Stri
     let result = (|| {
         writeln!(
             input,
-            r#"{{"method":"initialize","id":0,"params":{{"clientInfo":{{"name":"vlx_term","title":"VelaTerm","version":"{}"}}}}}}"#,
+            r#"{{"method":"initialize","id":0,"params":{{"clientInfo":{{"name":"vlx_term","title":"heddle","version":"{}"}}}}}}"#,
             env!("CARGO_PKG_VERSION")
         )
         .and_then(|_| input.flush())
@@ -650,7 +650,7 @@ fn parse_live_codex_rate_limits(result: &Value) -> Option<CodexUsage> {
 }
 
 /// Reads the newest Codex rollout containing rate limits. Because usage is account-level, this keeps Info available
-/// before a VelaTerm session captures its own Codex ID.
+/// before a heddle session captures its own Codex ID.
 pub fn latest_codex_rate_limits() -> Result<CodexUsage, String> {
     for path in resume::codex_rollout_paths_newest_first() {
         let Ok(tail) = read_tail(&path, CONTEXT_TAIL_BYTES) else {

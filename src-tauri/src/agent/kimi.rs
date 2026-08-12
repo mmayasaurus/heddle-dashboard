@@ -1,17 +1,17 @@
 //! Kimi Code CLI status bridge.
 //!
 //! Kimi's official hooks currently read only `~/.kimi-code/config.toml` and offer no per-launch inline
-//! configuration. On the user's first Kimi session, append a clearly delimited VelaTerm block and write a static
+//! configuration. On the user's first Kimi session, append a clearly delimited heddle block and write a static
 //! forwarding script to `~/.kimi-code/vlx-term/hook.sh`. The block stores no port, token, or session ID. The script
 //! reads only `VLX_*` variables inherited by the managed process and no-ops when `kimi` runs in an ordinary terminal.
 
 use std::path::{Path, PathBuf};
 
-const BLOCK_BEGIN: &str = "# >>> VelaTerm Kimi status hooks >>>";
-const BLOCK_END: &str = "# <<< VelaTerm Kimi status hooks <<<";
+const BLOCK_BEGIN: &str = "# >>> heddle Kimi status hooks >>>";
+const BLOCK_END: &str = "# <<< heddle Kimi status hooks <<<";
 
 const HOOK_SCRIPT: &str = r#"#!/bin/sh
-# VelaTerm Kimi status bridge. Active only in Kimi sessions launched by VelaTerm.
+# heddle Kimi status bridge. Active only in Kimi sessions launched by heddle.
 [ -n "$VLX_SPAWN_URL" ] && [ -n "$VLX_SESSION_ID" ] && [ -n "$VLX_TOKEN" ] || exit 0
 event="$1"
 curl -s -m 3 -X POST -H "Content-Type: application/json" --data-binary @- \
@@ -91,7 +91,7 @@ fn merge_block(existing: &str, block: &str) -> Result<String, String> {
             merged.push_str(block);
             Ok(merged)
         }
-        _ => Err("Kimi config contains an incomplete VelaTerm hook marker block".to_string()),
+        _ => Err("Kimi config contains an incomplete heddle hook marker block".to_string()),
     }
 }
 

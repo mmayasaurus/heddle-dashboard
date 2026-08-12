@@ -40,7 +40,7 @@ impl Db {
 fn init_search_index(conn: &Connection) {
     if let Err(e) = conn.execute_batch(schema::SESSION_FTS_DDL) {
         eprintln!(
-            "[VelaTerm] Search index unavailable: failed to create FTS5 table ({e}). \
+            "[heddle] Search index unavailable: failed to create FTS5 table ({e}). \
              Full-text search will be disabled. This SQLite build may lack FTS5/trigram support."
         );
     }

@@ -1,4 +1,4 @@
-//! Vela-style application header with branding, theme toggle, appearance settings, and panel controls.
+//! heddle-style application header with branding, theme toggle, appearance settings, and panel controls.
 //! The window retains native decorations; this row sits below the system title bar.
 
 import { useEffect, useState } from "react";
@@ -129,10 +129,10 @@ export function TitleBar() {
           // CSS content on `.brand .logo` follows data-theme so system-mode changes do not require a
           // TitleBar rerender. This light src is only a fallback when CSS content is unavailable.
           src="/velaterm-light.svg"
-          alt="VelaTerm"
+          alt="heddle"
           draggable={false}
         />
-        <span className="v">Vela</span>
+        <span className="v">heddle</span>
         <span className="sub">terminal · agents</span>
         {env.isDev || __DEV_BUILD__ ? (
           <span

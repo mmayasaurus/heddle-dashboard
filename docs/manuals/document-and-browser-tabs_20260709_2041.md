@@ -8,7 +8,7 @@ Created: 2026-07-09 20:41
 
 ### 1.1 Opening
 
-Type `vopen <file>` in any session and a document tab opens in the center pane; inside a claude conversation the `/vopen` skill does the same (requires the Vela Skills toggle in Settings ▸ General). The view is chosen by file type:
+Type `vopen <file>` in any session and a document tab opens in the center pane; inside a claude conversation the `/vopen` skill does the same (requires the heddle Skills toggle in Settings ▸ General). The view is chosen by file type:
 
 | Type | View |
 |------|------|
@@ -21,7 +21,7 @@ Type `vopen <file>` in any session and a document tab opens in the center pane; 
 ### 1.2 Editing and saving
 
 - The WYSIWYG / Source segmented control in the header switches modes at any time (markdown only); edits carry across.
-- ⌘S or the Save button writes to disk. If the file changes on disk outside VelaTerm, a banner offers reload-or-ignore — no silent overwrites in either direction.
+- ⌘S or the Save button writes to disk. If the file changes on disk outside heddle, a banner offers reload-or-ignore — no silent overwrites in either direction.
 - Closing a tab with unsaved changes asks: Save & Close / Close Without Saving / Cancel.
 - ⌘F brings up the unified search bar: find, replace, match-case — identical in both editor modes.
 - The sidebar (toggleable, resizable) shows the document outline and the containing folder's file tree; click a file to switch to it.
@@ -42,7 +42,7 @@ The third tab kind embeds a real web page (native WebView) — handy for pinning
 - **Scratch tab**: what ⌘⇧B or `vopen <url>` opens — a draft that isn't in the tree and doesn't survive restarts; right-click the tab to convert it into a persistent node.
 - **Browser page node**: created via "New Browser Page" in the sidebar — a tree node whose URL is persisted, still there after a restart.
 
-**Security boundary**: the embedded page is a fully isolated external website — it gets no VelaTerm internal permissions or credentials, and only http / https URLs are allowed.
+**Security boundary**: the embedded page is a fully isolated external website — it gets no heddle internal permissions or credentials, and only http / https URLs are allowed.
 
 ## 3. How the three tab kinds coexist
 

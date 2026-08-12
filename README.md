@@ -1,6 +1,6 @@
-# VelaTerm
+# heddle
 
-A terminal manager built for the AI-agent era. VelaTerm organizes scattered terminal sessions into a
+A terminal manager built for the AI-agent era. heddle organizes scattered terminal sessions into a
 **project → group → session** tree, treats coding agents such as Claude Code and Codex as first-class
 citizens, and lets you take over any session from a browser or another machine.
 
@@ -10,7 +10,7 @@ citizens, and lets you take over any session from a browser or another machine.
 [![YouTube](https://img.shields.io/badge/YouTube-@vlinx__soft-FF0000.svg)](https://www.youtube.com/@vlinx_soft)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg)](https://discord.gg/PjRqtCgSn)
 
-![VelaTerm main window](docs/assets/manuals/main-ui.png)
+![heddle main window](docs/assets/manuals/main-ui.png)
 
 ## Why
 
@@ -23,7 +23,7 @@ Working with coding agents breaks the assumptions traditional terminals were bui
 - **Lost context.** Closing a terminal usually throws away the agent conversation with it.
 - **Tied to one desk.** Long-running tasks keep going after you walk away, with no way to check in.
 
-VelaTerm addresses each of these directly: a persistent session tree, live per-session agent status,
+heddle addresses each of these directly: a persistent session tree, live per-session agent status,
 transcripts that survive restarts, and remote access from a browser or over SSH.
 
 ## Features
@@ -114,7 +114,7 @@ src-tauri/src/    Rust backend
   web/            embedded web server and command dispatch
   git.rs          git status probing
 electron/         Electron shell
-skills/           agent skills exposed inside VelaTerm sessions
+skills/           agent skills exposed inside heddle sessions
 docs/manuals/     user manuals
 ```
 
@@ -149,5 +149,5 @@ run on the main thread and freeze the UI.
 
 Copyright (c) 2026 VLINX Software. Released under the [MIT License](LICENSE).
 
-You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of VelaTerm, for
+You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of heddle, for
 any purpose, as long as the copyright notice and the licence text travel with it.

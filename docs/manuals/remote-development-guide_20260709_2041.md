@@ -2,7 +2,7 @@
 
 Created: 2026-07-09 20:41
 
-> This guide covers two things: opening your local VelaTerm up to other devices, and connecting out to remote machines to develop and manage sessions there.
+> This guide covers two things: opening your local heddle up to other devices, and connecting out to remote machines to develop and manage sessions there.
 > Implementation details (protocols, auth, process orchestration) live in the design docs: [服务端通信机制](../design/服务端通信机制_20260610_1740.md), [认证与通信机制](../design/认证与通信机制_20260703_1722.md), [远程连接生命周期与状态保持](../design/远程连接生命周期与状态保持_20260703_2031.md).
 
 ## 1. Two entry points, two directions
@@ -11,13 +11,13 @@ Both remote features live on the right side of the title bar (next to the theme 
 
 ![Title bar buttons](../assets/remote-guide/titlebar-buttons.png)
 
-The globe icon is **Remote Access (Browser)** — open this machine up so a phone, tablet, or another computer can use your VelaTerm from a browser. The arrow icon is **Connect to Remote Server** — this machine acts as a client and connects out to develop on another machine. When the server is running, the globe lights up green.
+The globe icon is **Remote Access (Browser)** — open this machine up so a phone, tablet, or another computer can use your heddle from a browser. The arrow icon is **Connect to Remote Server** — this machine acts as a client and connects out to develop on another machine. When the server is running, the globe lights up green.
 
 | What you want | Which entry |
 |---------------|-------------|
 | See and operate this machine's sessions from a phone / tablet / another computer | Globe button (Remote Access) |
 | Work on a remote Linux / macOS dev box that has nothing pre-installed | Connect button → SSH mode |
-| Connect to another VelaTerm that already has remote access enabled | Connect button → URL mode |
+| Connect to another heddle that already has remote access enabled | Connect button → URL mode |
 
 ## 2. Opening this machine up (Remote Access)
 
@@ -74,7 +74,7 @@ Click the connect button in the title bar; the panel offers SSH and URL modes.
 
 ### 3.1 SSH mode: all the remote needs is SSH
 
-For a remote dev box (typically Linux or macOS) with no VelaTerm components installed. Connecting runs the whole pipeline automatically: probe the remote's OS and architecture → transfer the matching vela-server → start it as a persistent process → set up local port forwarding → open a remote window and log in automatically.
+For a remote dev box (typically Linux or macOS) with no heddle components installed. Connecting runs the whole pipeline automatically: probe the remote's OS and architecture → transfer the matching vela-server → start it as a persistent process → set up local port forwarding → open a remote window and log in automatically.
 
 ![Connect to Remote · SSH mode](../assets/remote-guide/connect-ssh.png)
 
@@ -88,7 +88,7 @@ Enter `user@host[:port]` and hit Connect. Details worth knowing:
 
 ![SSH password prompt](../assets/remote-guide/connect-ssh-password.png)
 
-**Data mode: "Use remote desktop app's database".** Unchecked (default), the remote server uses an isolated data directory (`~/.velaterm/data`), fully separate from any VelaTerm desktop app installed on that machine. Checked, it opens the remote desktop release build's database instead — both sides see the same session tree, which suits "that machine runs VelaTerm day-to-day and I'm taking over the same projects remotely". What's shared is the database file on disk, not running processes (see §4.1); keeping both ends on the same version is recommended.
+**Data mode: "Use remote desktop app's database".** Unchecked (default), the remote server uses an isolated data directory (`~/.velaterm/data`), fully separate from any heddle desktop app installed on that machine. Checked, it opens the remote desktop release build's database instead — both sides see the same session tree, which suits "that machine runs heddle day-to-day and I'm taking over the same projects remotely". What's shared is the database file on disk, not running processes (see §4.1); keeping both ends on the same version is recommended.
 
 **Recent hosts.** Hosts you've connected to are listed; clicking one only fills the input (no auto-connect) — review, then Connect. A key icon means a saved password; × forgets the host (and its saved password).
 
@@ -96,7 +96,7 @@ Enter `user@host[:port]` and hit Connect. Details worth knowing:
 
 ### 3.2 URL mode: the other side already has remote access on
 
-For when another machine's VelaTerm has Remote Access running (§2) and you have its pairing link. Compared to opening the link in a plain browser, you get a dedicated window, keychain-backed auto-login, and fingerprint verification handled by the app.
+For when another machine's heddle has Remote Access running (§2) and you have its pairing link. Compared to opening the link in a plain browser, you get a dedicated window, keychain-backed auto-login, and fingerprint verification handled by the app.
 
 ![Connect to Remote · URL mode](../assets/remote-guide/connect-url.png)
 

@@ -54,9 +54,9 @@ const es: typeof en = {
   "titlebar.remoteAccess": "Acceso remoto (navegador)", // Remote Access (Browser)
   "titlebar.connectRemote": "Conectar a servidor remoto", // Connect to Remote Server
   "titlebar.share": "Compartir", // Share
-  "share.title": "Compartir VelaTerm", // Share VelaTerm
+  "share.title": "Compartir heddle", // Share heddle
   "share.subtitle":
-    "Somos el pequeño equipo que está detrás de VelaTerm. Si te gusta, comparte VelaTerm con otras personas. Ayudarnos a que más gente nos conozca significa muchísimo para nuestro equipo. ¡Gracias por tu apoyo! ❤️", // We're a small team behind VelaTerm. If you enjoy it, please share VelaTerm with others…
+    "Somos el pequeño equipo que está detrás de heddle. Si te gusta, comparte heddle con otras personas. Ayudarnos a que más gente nos conozca significa muchísimo para nuestro equipo. ¡Gracias por tu apoyo! ❤️", // We're a small team behind heddle. If you enjoy it, please share heddle with others…
   "share.copyLink": "Copiar enlace", // Copy link
   "share.copied": "¡Copiado!", // Copied!
   "share.wechatMoments": "Momentos de WeChat",
@@ -91,7 +91,7 @@ const es: typeof en = {
   "settings.cliUninstall": "Desinstalar el comando ‘vela’",
   "settings.cliInstalledAt": (path: string) => `Instalado en ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Ya existe otro comando ‘vela’ en ${path}. VelaTerm no lo sobrescribirá.`,
+    `Ya existe otro comando ‘vela’ en ${path}. heddle no lo sobrescribirá.`,
   "settings.cliHint": "Añade `vela <ruta-del-proyecto>` al PATH, como el comando `code` de VS Code.",
   "settings.agentArgsHint":
     "Argumentos de inicio predeterminados aplicados a las nuevas sesiones de cada tipo de agente. Los argumentos por sesión definidos al crear o editar tienen prioridad. Dejar vacío para ninguno.", // Agent default launch args hint
@@ -224,7 +224,7 @@ const es: typeof en = {
   "settings.sound": "Sonido de notificación", // Notification sound
   "settings.language": "Idioma", // Language
   "settings.langAuto": "Auto (sistema)", // Auto (system)
-  "settings.skillLabel": "Vela Skills",
+  "settings.skillLabel": "heddle Skills",
   "settings.skillInstall": "Install", // Install
   "settings.skillInstalled": "Reinstall", // Reinstall
   "settings.skillInvokeHint":
@@ -234,14 +234,14 @@ const es: typeof en = {
   "settings.notifyGranted": "Enabled", // TODO translate
   "settings.notifyAllow": "Allow notifications", // TODO translate
   "settings.notifyOffHint":
-    "Allow VelaTerm to alert you when an agent needs your input or finishes a task.", // TODO translate
+    "Allow heddle to alert you when an agent needs your input or finishes a task.", // TODO translate
   "settings.notifyDeniedHint": "Notifications are blocked. To turn them on:", // TODO translate
   "settings.notifyStepsMac":
-    "open System Settings ▸ Notifications ▸ VelaTerm and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
+    "open System Settings ▸ Notifications ▸ heddle and turn on Allow Notifications (Banners or Alerts recommended).", // TODO translate
   "settings.notifyStepsWin":
-    "open Settings ▸ System ▸ Notifications, enable VelaTerm, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
+    "open Settings ▸ System ▸ Notifications, enable heddle, and make sure Focus assist / Do not disturb isn't blocking it.", // TODO translate
   "settings.notifyStepsLinux":
-    "open your desktop's Settings ▸ Notifications and allow VelaTerm.", // TODO translate
+    "open your desktop's Settings ▸ Notifications and allow heddle.", // TODO translate
   "settings.notifyStepsBrowser":
     "click the site-permission icon in the address bar and set Notifications to Allow.", // TODO translate
   "settings.notifyUnsupported": "Notifications aren't available in this environment.", // TODO translate
@@ -303,7 +303,7 @@ const es: typeof en = {
   "connect.pairingPlaceholder": "Pega el enlace de emparejamiento", // Paste pairing link
   "connect.confirmConnect": "Huella correcta, conectar", // Fingerprint matches, connect
   "connect.desc":
-    "Introduce la dirección y la contraseña de un VelaTerm remoto para conectarte y controlarlo en una ventana nueva.", // Enter the address and password…
+    "Introduce la dirección y la contraseña de un heddle remoto para conectarte y controlarlo en una ventana nueva.", // Enter the address and password…
   "connect.addressPlaceholder": "Dirección IP, p. ej. 192.168.1.100", // IP address, e.g. 192.168.1.100
   "connect.portPlaceholder": "Puerto", // Port
   "connect.connecting": "Conectando…", // Connecting…
@@ -641,7 +641,7 @@ const es: typeof en = {
   // ── Tarjeta de ayuda para instalar un agente ──
   "agentInstall.title": (label) => `${label} no está instalado`, // {label} is not installed
   "agentInstall.desc": (label) =>
-    `VelaTerm no encontró ${label} en tu PATH. Instálalo para iniciar esta sesión.`, // couldn't find {label} on PATH
+    `heddle no encontró ${label} en tu PATH. Instálalo para iniciar esta sesión.`, // couldn't find {label} on PATH
   "agentInstall.install": "Instalar ahora", // Install now
   "agentInstall.retry": "Reintentar", // Retry launch
   "agentInstall.dismiss": "Lo haré yo mismo", // I'll do it myself
@@ -902,9 +902,9 @@ const es: typeof en = {
   "updater.downloadManually": "Download manually", // TODO translate
   "updater.downloadManuallyHint": "Open the installer download in your browser.", // TODO translate
   "updater.windowsNotice":
-    "VelaTerm will close while the installer runs, then reopen on its own.", // TODO translate
+    "heddle will close while the installer runs, then reopen on its own.", // TODO translate
   "updater.installingWindows":
-    "Installing… VelaTerm is about to close. The installer will finish the update and reopen it.", // TODO translate
+    "Installing… heddle is about to close. The installer will finish the update and reopen it.", // TODO translate
   "statusbar.updateAvailable": (version) => `Update ${version}`, // TODO translate
   "statusbar.updateDownloading": (pct) => `Updating… ${pct}%`, // TODO translate
   "statusbar.updateInstalling": "Installing…", // TODO translate

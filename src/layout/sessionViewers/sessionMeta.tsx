@@ -111,9 +111,9 @@ export function KindIcon({ session, size = 14 }: { session: Session; size?: numb
  * session rows in the left sidebar and tabs in the center pane.
  *
  * Worktree membership is determined in two ways:
- * 1. Use a persisted `worktreePath` for worktrees created by VelaTerm, such as `vspawn --worktree`.
+ * 1. Use a persisted `worktreePath` for worktrees created by heddle, such as `vspawn --worktree`.
  * 2. Otherwise probe Git at the session directory, falling back from a missing `cwd` to `rootPath`.
- *    This also covers worktrees opened directly as projects and therefore not recorded by VelaTerm.
+ *    This also covers worktrees opened directly as projects and therefore not recorded by heddle.
  *
  * Only linked worktrees—not the primary working tree—receive a badge. `useGitBranchInfo` caches and
  * deduplicates by path, while sidebar virtualization limits probes to visible rows. The parent must

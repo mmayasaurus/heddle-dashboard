@@ -13,7 +13,7 @@ Created: 2026-07-09 20:41
 | Language | UI language; Auto (follow system) by default, or pin one of eleven languages |
 | System notifications | Notification permission state and toggle, with per-platform steps when the OS has denied it |
 | Notification sound | Sound for notifications |
-| Vela Skills | One-click install of the `vspawn`, `vspawn-tree`, and `vopen` skills for both Claude and Codex (installed and removed as a bundle, refreshed on upgrade) |
+| heddle Skills | One-click install of the `vspawn`, `vspawn-tree`, and `vopen` skills for both Claude and Codex (installed and removed as a bundle, refreshed on upgrade) |
 
 ## 2. Appearance
 

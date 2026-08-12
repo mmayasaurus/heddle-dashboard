@@ -478,7 +478,7 @@ pub async fn open_remote_window(
     );
 
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
-        .title(format!("VelaTerm · Remote: {display_addr}"))
+        .title(format!("heddle · Remote: {display_addr}"))
         .inner_size(1280.0, 820.0)
         .min_inner_size(900.0, 600.0)
         .initialization_script(&init_script)
@@ -790,7 +790,7 @@ fn open_login_window(
     );
 
     let win = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::External(parsed))
-        .title(format!("VelaTerm · SSH: {host}"))
+        .title(format!("heddle · SSH: {host}"))
         .inner_size(1280.0, 820.0)
         .min_inner_size(900.0, 600.0)
         .initialization_script(&init_script)

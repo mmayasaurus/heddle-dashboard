@@ -2,17 +2,17 @@
 
 ### Agents IA
 
-- **Kiro CLI devient un type de session de premier plan.** Les sessions Kiro disposent de leur propre nœud dans l'arborescence, d'une pastille d'état Travail/Attente faisant autorité et pilotée par les lifecycle hooks de Kiro lui-même, de notifications à la fin d'un tour, de la reprise automatique de la même conversation à la réouverture du nœud, d'arguments de lancement et d'une option pour ignorer les confirmations, ainsi que du lancement via vspawn — tout ce dont les autres agents disposaient déjà. VelaTerm clone votre agent Kiro par défaut vers son propre agent `vlx-term`, ajoute à la copie des lifecycle hooks en observation seule, puis lance celle-ci : votre propre fichier d'agent n'est jamais modifié, et votre invite, vos outils et vos serveurs MCP suivent sans changement. Kiro ne dispose d'aucun hook de demande d'autorisation, si bien que la pastille reste sur Travail pendant qu'il attend votre accord.
+- **Kiro CLI devient un type de session de premier plan.** Les sessions Kiro disposent de leur propre nœud dans l'arborescence, d'une pastille d'état Travail/Attente faisant autorité et pilotée par les lifecycle hooks de Kiro lui-même, de notifications à la fin d'un tour, de la reprise automatique de la même conversation à la réouverture du nœud, d'arguments de lancement et d'une option pour ignorer les confirmations, ainsi que du lancement via vspawn — tout ce dont les autres agents disposaient déjà. heddle clone votre agent Kiro par défaut vers son propre agent `vlx-term`, ajoute à la copie des lifecycle hooks en observation seule, puis lance celle-ci : votre propre fichier d'agent n'est jamais modifié, et votre invite, vos outils et vos serveurs MCP suivent sans changement. Kiro ne dispose d'aucun hook de demande d'autorisation, si bien que la pastille reste sur Travail pendant qu'il attend votre accord.
 
 ### Corrections
 
-- **Les programmes lancés depuis le terminal n'héritent plus de l'environnement propre à l'AppImage (Linux).** Le lanceur AppImage fait pointer `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` et les chemins de plugins GStreamer vers le répertoire de montage temporaire du bundle, et place les répertoires du bundle avant tout le reste dans `PATH` et `LD_LIBRARY_PATH`. Un terminal transmet tout son environnement au shell qu'il démarre : le `python3` du système cherchait donc sa bibliothèque standard à l'intérieur du bundle et refusait purement et simplement de s'exécuter, tandis que d'autres programmes liés dynamiquement chargeaient la copie d'une bibliothèque fournie par le bundle plutôt que celle du système. VelaTerm retire désormais ces chemins du bundle avant de démarrer un shell ou un outil externe, et laisse intactes les valeurs que vous avez définies vous-même. `APPDIR` et `APPIMAGE` restent visibles, si bien que les programmes qui vérifient s'ils s'exécutent depuis une AppImage obtiennent toujours leur réponse. Seules les versions AppImage étaient concernées ; le paquet deb, macOS et Windows se comportent comme avant.
+- **Les programmes lancés depuis le terminal n'héritent plus de l'environnement propre à l'AppImage (Linux).** Le lanceur AppImage fait pointer `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` et les chemins de plugins GStreamer vers le répertoire de montage temporaire du bundle, et place les répertoires du bundle avant tout le reste dans `PATH` et `LD_LIBRARY_PATH`. Un terminal transmet tout son environnement au shell qu'il démarre : le `python3` du système cherchait donc sa bibliothèque standard à l'intérieur du bundle et refusait purement et simplement de s'exécuter, tandis que d'autres programmes liés dynamiquement chargeaient la copie d'une bibliothèque fournie par le bundle plutôt que celle du système. heddle retire désormais ces chemins du bundle avant de démarrer un shell ou un outil externe, et laisse intactes les valeurs que vous avez définies vous-même. `APPDIR` et `APPIMAGE` restent visibles, si bien que les programmes qui vérifient s'ils s'exécutent depuis une AppImage obtiennent toujours leur réponse. Seules les versions AppImage étaient concernées ; le paquet deb, macOS et Windows se comportent comme avant.
 
 ## v0.1.99 — 2026-08-09
 
 ### Terminal
 
-- **Shift+Entrée insère un saut de ligne au lieu d'envoyer.** Les terminaux ne disposent d'aucun encodage pour Entrée avec une touche de modification : les CLI d'agents comme Claude Code et Codex ne recevaient qu'un retour chariot ordinaire et envoyaient l'invite alors qu'on était encore en train de l'écrire. VelaTerm émet désormais ESC+CR, la séquence même que ces outils attendent d'une correspondance de touches iTerm2, ce qui rend les saisies multilignes utilisables — y compris sur macOS, où le gestionnaire de touches personnalisé n'était tout simplement pas installé. La composition dans une méthode de saisie reste inchangée : Entrée valide toujours le candidat.
+- **Shift+Entrée insère un saut de ligne au lieu d'envoyer.** Les terminaux ne disposent d'aucun encodage pour Entrée avec une touche de modification : les CLI d'agents comme Claude Code et Codex ne recevaient qu'un retour chariot ordinaire et envoyaient l'invite alors qu'on était encore en train de l'écrire. heddle émet désormais ESC+CR, la séquence même que ces outils attendent d'une correspondance de touches iTerm2, ce qui rend les saisies multilignes utilisables — y compris sur macOS, où le gestionnaire de touches personnalisé n'était tout simplement pas installé. La composition dans une méthode de saisie reste inchangée : Entrée valide toujours le candidat.
 
 ### Projets et organisation
 
@@ -27,7 +27,7 @@
 
 ### Agents IA
 
-- **Grok Build devient un agent de premier plan dans VelaTerm.** Installez, lancez et reprenez Grok 4.5 avec des identifiants de session stables, les lifecycle hooks officiels, des états de travail et d’autorisation précis, des transcriptions fusionnées, le détail de l’utilisation et une icône officielle adaptée au thème, de façon cohérente sur ordinateur, navigateur et mobile.
+- **Grok Build devient un agent de premier plan dans heddle.** Installez, lancez et reprenez Grok 4.5 avec des identifiants de session stables, les lifecycle hooks officiels, des états de travail et d’autorisation précis, des transcriptions fusionnées, le détail de l’utilisation et une icône officielle adaptée au thème, de façon cohérente sur ordinateur, navigateur et mobile.
 
 ### Projets et organisation
 
@@ -37,7 +37,7 @@
 
 ### Interface
 
-- **Partagez VelaTerm là où se trouve votre communauté.** La boîte de dialogue prend désormais en charge WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram et WhatsApp, avec un parcours par code QR pour WeChat et une invitation au partage dans la fenêtre de mise à jour.
+- **Partagez heddle là où se trouve votre communauté.** La boîte de dialogue prend désormais en charge WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram et WhatsApp, avec un parcours par code QR pour WeChat et une invitation au partage dans la fenêtre de mise à jour.
 - **Des interactions plus soignées jusque dans les détails.** Les onglets de terminal temporaires peuvent être renommés avant de devenir des sessions enregistrées. Les champs ordinaires désactivent la mise en majuscule automatique des claviers mobiles sans modifier la saisie dans le terminal.
 
 ## v0.1.97 — 2026-07-25
@@ -49,7 +49,7 @@
 
 ### Interface
 
-- **Raccourcis de division fiables sous macOS.** Diviser à droite (Cmd+D) et diviser vers le bas (Cmd+Shift+D) sont désormais enregistrés comme commandes du menu Terminal natif, si bien que macOS n’intercepte plus la combinaison avant VelaTerm.
+- **Raccourcis de division fiables sous macOS.** Diviser à droite (Cmd+D) et diviser vers le bas (Cmd+Shift+D) sont désormais enregistrés comme commandes du menu Terminal natif, si bien que macOS n’intercepte plus la combinaison avant heddle.
 - **Un seul enregistrement par frappe.** Cmd+S était traité à la fois par le raccourci global et par l’éditeur actif, ce qui pouvait écrire deux fois le même fichier en une seule frappe.
 
 ## v0.1.96 — 2026-07-23
@@ -67,12 +67,12 @@
 
 ### Agents IA
 
-- **Kimi Code et Zoo Code rejoignent l’arborescence des sessions.** VelaTerm peut désormais lancer, reprendre, installer et configurer ces deux agents. Kimi utilise ses lifecycle hooks officiels pour signaler précisément les états de travail, d’autorisation et d’attente ; Zoo Code conserve un identifiant de tâche stable et utilise la détection du terminal en l’absence de hooks externes.
+- **Kimi Code et Zoo Code rejoignent l’arborescence des sessions.** heddle peut désormais lancer, reprendre, installer et configurer ces deux agents. Kimi utilise ses lifecycle hooks officiels pour signaler précisément les états de travail, d’autorisation et d’attente ; Zoo Code conserve un identifiant de tâche stable et utilise la détection du terminal en l’absence de hooks externes.
 - **Actualisation en direct de l’utilisation Codex.** Le panneau Info interroge le Codex app server pour obtenir les limites actuelles, avec repli compatible sur l’instantané rollout local.
 
 ### Projets et terminaux
 
-- **Ouvrez un projet avec `vela <path>`.** Les versions empaquetées peuvent installer une commande shell à la manière de VS Code. Un second appel transmet le projet à la fenêtre VelaTerm existante au lieu d’ouvrir une instance en double.
+- **Ouvrez un projet avec `vela <path>`.** Les versions empaquetées peuvent installer une commande shell à la manière de VS Code. Un second appel transmet le projet à la fenêtre heddle existante au lieu d’ouvrir une instance en double.
 - **Clonage Git visible et annulable.** Clone Project affiche les étapes Git, le pourcentage et le temps écoulé, avertit en cas de blocage et peut arrêter tout l’arbre de processus Git sans laisser de cible incomplète. Les identifiants et query tokens sont masqués dans les erreurs et journaux d’audit.
 - **Terminaux WSL sous Windows.** Toutes les distributions WSL installées sont proposées avec PowerShell, cmd et Git Bash pour les terminaux ordinaires. Les agents restent dans le shell hôte Windows afin de préserver la fiabilité des hooks et des chemins exécutables.
 
@@ -93,14 +93,14 @@
 
 ### Images et documents
 
-- **Collage fiable des chemins d'image sous macOS.** Lorsque WebKit n'expose pas une image copiée sous forme de fichier, VelaTerm la lit désormais depuis le presse-papiers natif et l'envoie tout de même sous forme de chemin de fichier, sans basculer silencieusement vers l'espace réservé aux images propre à l'agent. Les fenêtres distantes affichent toujours le réglage de collage d'image, expliquent pourquoi le mode chemin de fichier est requis et désactivent l'option native indisponible.
+- **Collage fiable des chemins d'image sous macOS.** Lorsque WebKit n'expose pas une image copiée sous forme de fichier, heddle la lit désormais depuis le presse-papiers natif et l'envoie tout de même sous forme de chemin de fichier, sans basculer silencieusement vers l'espace réservé aux images propre à l'agent. Les fenêtres distantes affichent toujours le réglage de collage d'image, expliquent pourquoi le mode chemin de fichier est requis et désactivent l'option native indisponible.
 - **Collage d'images dans les documents source.** L'éditeur source accepte désormais les images du presse-papiers. Les documents Markdown enregistrés les stockent à côté du document dans `assets/` et insèrent une syntaxe d'image Markdown portable ; les brouillons non enregistrés intègrent les données de l'image afin qu'elles ne soient pas perdues lors du nettoyage des fichiers temporaires.
 
 ### Interface
 
 - **Des menus contextuels visibles et ciblant le bon élément.** Les menus ouverts près du bord droit sont correctement mesurés et repositionnés. Un clic droit sur un nœud de l'arborescence ne met désormais en évidence que la cible du menu sans modifier la sélection existante, et les menus de groupe proposent un terminal limité à ce groupe.
-- **Édition et libellés d'état plus nets.** Le texte source n'affiche plus de ligatures en forme de flèche pour des séquences telles que les commentaires HTML, les pourcentages d'utilisation sont explicitement libellés comme utilisés, et le menu contextuel natif sans rapport du WebView hôte n'apparaît plus derrière les menus de VelaTerm.
+- **Édition et libellés d'état plus nets.** Le texte source n'affiche plus de ligatures en forme de flèche pour des séquences telles que les commentaires HTML, les pourcentages d'utilisation sont explicitement libellés comme utilisés, et le menu contextuel natif sans rapport du WebView hôte n'apparaît plus derrière les menus de heddle.
 
 ### Corrections
 
-- **Codex reste dans l'historique normal du terminal.** Les sessions Codex lancées par VelaTerm utilisent désormais le mode terminal en ligne. Appuyer sur Esc pour interrompre ou revenir en arrière ne change donc plus les tampons d'écran du terminal et ne fait plus sauter la vue de défilement en haut. Votre propre configuration Codex reste intacte.
+- **Codex reste dans l'historique normal du terminal.** Les sessions Codex lancées par heddle utilisent désormais le mode terminal en ligne. Appuyer sur Esc pour interrompre ou revenir en arrière ne change donc plus les tampons d'écran du terminal et ne fait plus sauter la vue de défilement en haut. Votre propre configuration Codex reste intacte.

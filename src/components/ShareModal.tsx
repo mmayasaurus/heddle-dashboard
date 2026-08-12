@@ -1,4 +1,4 @@
-//! Share modal for posting VelaTerm to social platforms and copying its link. Weibo opens a prefilled web share;
+//! Share modal for posting heddle to social platforms and copying its link. Weibo opens a prefilled web share;
 //! WeChat Moments shows a locally generated QR code; Xiaohongshu copies the post text before opening its creator
 //! center. Shared across desktop Tauri, Electron, and remote browser clients:
 //!   - External links use platform.opener.openExternal (Tauri opener plugin, Electron shell, or window.open fallback).

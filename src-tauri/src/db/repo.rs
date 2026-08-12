@@ -681,7 +681,7 @@ pub fn set_agent_session_id(
 ///
 /// Disk scanning narrows only by start time/cwd, so concurrent agents may see the same newest file.
 /// One UPDATE verifies the target is unbound/pending fork and the ID is unclaimed by the same kind,
-/// preventing two VelaTerm sessions from claiming one conversation.
+/// preventing two heddle sessions from claiming one conversation.
 pub fn claim_agent_session_id(
     conn: &Connection,
     id: &str,

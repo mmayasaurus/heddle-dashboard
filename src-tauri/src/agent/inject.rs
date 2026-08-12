@@ -148,9 +148,9 @@ pub fn build_codex_notify(exe_path: &str) -> String {
 
 /// Builds an inline configuration table for the official Codex lifecycle hooks.
 ///
-/// Injected through `-c hooks="$VLX_CODEX_HOOKS"` as the highest-priority layer for this VelaTerm
+/// Injected through `-c hooks="$VLX_CODEX_HOOKS"` as the highest-priority layer for this heddle
 /// session only; the user's `~/.codex/config.toml` and `hooks.json` remain untouched. Each hook invokes
-/// the current VelaTerm executable's hidden `--codex-hook <state>` subcommand, which reads raw JSON from
+/// the current heddle executable's hidden `--codex-hook <state>` subcommand, which reads raw JSON from
 /// stdin and reports to the local hook service using the session's injected `VLX_SPAWN_URL`,
 /// `VLX_SESSION_ID`, and `VLX_TOKEN` values.
 ///
@@ -199,7 +199,7 @@ pub fn build_codex_hooks() -> String {
 }
 
 /// Manual Codex configuration snippet for precise state reporting, intended for `~/.codex/config.toml`.
-/// VelaTerm only displays this snippet and never writes the user's configuration automatically.
+/// heddle only displays this snippet and never writes the user's configuration automatically.
 pub fn codex_config_snippet(exe_path: &str) -> String {
     format!("notify = [{:?}, \"--notify-env\"]", exe_path)
 }
@@ -320,7 +320,7 @@ pub fn permission_flag(kind: SessionKind, mode: Option<&str>) -> Option<&'static
             "--auto-approve false"
         }),
         // Zoo Code defaults to automatic approval. Require approval explicitly in the default mode;
-        // skip needs no flag, preserving VelaTerm's consistent permission semantics.
+        // skip needs no flag, preserving heddle's consistent permission semantics.
         SessionKind::Zoo => {
             if skip {
                 None
@@ -403,11 +403,11 @@ fn valid_resume_id(id: &str) -> Option<&str> {
 fn not_found_message(shell: ShellKind, bin: &str) -> String {
     match shell {
         ShellKind::PowerShell => format!(
-            "[VelaTerm] {bin} not found on PATH. Your shell profile may be blocked - run: \
+            "[heddle] {bin} not found on PATH. Your shell profile may be blocked - run: \
              Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then reopen the session."
         ),
         _ => format!(
-            "[VelaTerm] {bin} not found on PATH. Check that it is installed and your shell \
+            "[heddle] {bin} not found on PATH. Check that it is installed and your shell \
              profile loaded, then re-run."
         ),
     }
@@ -511,7 +511,7 @@ fn launch_cmd(shell: ShellKind, bin: &str, args: &str) -> String {
 /// Apart from the path, the text uses a shell-safe ASCII subset; callers escape the path for each shell.
 fn path_missing_message(path: &str) -> String {
     format!(
-        "[VelaTerm] {path} does not exist or is not executable. \
+        "[heddle] {path} does not exist or is not executable. \
          Fix the agent executable path in Settings, Agents tab, or clear it to launch from PATH."
     )
 }
@@ -751,8 +751,8 @@ pub fn prepare_with_args_capabilities(
             // `codex [resume <id>] -c notify=<value> -c hooks=<value>
             //        --dangerously-bypass-hook-trust --no-alt-screen ["$VLX_INIT_PROMPT"]`。
             // `--no-alt-screen` keeps Codex in normal inline terminal history so interrupting or backing
-            // out with Esc does not make VelaTerm's xterm viewport jump to the top during an alternate-screen
-            // transition. It affects only Codex processes launched by VelaTerm and does not modify the user's
+            // out with Esc does not make heddle's xterm viewport jump to the top during an alternate-screen
+            // transition. It affects only Codex processes launched by heddle and does not modify the user's
             // `~/.codex/config.toml`. Notify and hook values directly follow their configuration keys and
             // reference environment variables. The resume subcommand precedes global `-c` options, and the
             // callback URL is supplied separately for `--notify-env`.
@@ -761,7 +761,7 @@ pub fn prepare_with_args_capabilities(
             let status_args = if codex_hooks_supported {
                 let hooks = value_ref(shell, CODEX_HOOKS_ENV);
                 env.push((CODEX_HOOKS_ENV.to_string(), build_codex_hooks()));
-                // VelaTerm constructs these trusted hooks and injects them only into this process. Bypass
+                // heddle constructs these trusted hooks and injects them only into this process. Bypass
                 // Codex's interactive hook-trust prompt so every managed session does not require a manual
                 // `/hooks` confirmation. This flag affects hook trust only, not approval policy or sandboxing.
                 format!(
@@ -826,7 +826,7 @@ pub fn prepare_with_args_capabilities(
         SessionKind::Copilot => {
             // GitHub Copilot CLI: `copilot [--resume=<id>] [--interactive "$VLX_INIT_PROMPT"]`.
             // Hooks require file configuration, so `agent/copilot.rs` installs static command hooks at
-            // `~/.copilot/hooks/vlx-term.json`; they read injected `VLX_*` values and no-op outside VelaTerm.
+            // `~/.copilot/hooks/vlx-term.json`; they read injected `VLX_*` values and no-op outside heddle.
             // Resume must use `--resume=<id>` because the optional-value form does not consume a space-separated
             // ID. A missing ID starts a new session with that UUID, so no existence fallback is needed.
             // `--interactive <prompt>` starts the TUI and executes the initial prompt only for new sessions.
@@ -888,7 +888,7 @@ pub fn prepare_with_args_capabilities(
             // Google Antigravity CLI (`agy`):
             // `agy [--conversation=<id>] [permission flag + custom args] ["$VLX_INIT_PROMPT"]`.
             // Hooks require fixed file configuration, installed and merged by `agent/antigravity.rs`; they
-            // report through injected `VLX_*` values and no-op outside VelaTerm. `--conversation=<id>` avoids
+            // report through injected `VLX_*` values and no-op outside heddle. `--conversation=<id>` avoids
             // ambiguity with the trailing positional prompt, and the ID comes from the hook payload's
             // `session_id`. Existence is not yet checked. The prompt is injected only for new sessions, and
             // Antigravity does not support forks.
@@ -917,7 +917,7 @@ pub fn prepare_with_args_capabilities(
             // Cline CLI: `cline -i [--id <id>] [permission flag + custom args] ["$VLX_INIT_PROMPT"]`.
             // Always pass `-i`; a positional prompt without it starts a headless one-shot task rather than
             // the interactive TUI. `agent/cline.rs` installs hook scripts in `<data_dir>/cline/hooks/`, and
-            // the manager exposes that directory as `CLINE_HOOKS_DIR` only to VelaTerm sessions. The scripts
+            // the manager exposes that directory as `CLINE_HOOKS_DIR` only to heddle sessions. The scripts
             // report through injected `VLX_*` values. Resume uses the documented `--id <id>` form after ID
             // validation. The final positional prompt applies only to new sessions. Cline cannot fork.
             let mut env = Vec::new();
@@ -981,7 +981,7 @@ pub fn prepare_with_args_capabilities(
         SessionKind::Crush => {
             // Crush: `crush [--session <id>] [--yolo + custom args]`. Because hooks can only live in
             // `crush.json`, `agent/crush.rs` creates a shadow configuration under `<data_dir>/crush/` by
-            // cloning the user's global configuration and merging VelaTerm's `PreToolUse` hook. The manager
+            // cloning the user's global configuration and merging heddle's `PreToolUse` hook. The manager
             // points `CRUSH_GLOBAL_CONFIG` to it without modifying user files. The hook reports `e=working`
             // and captures `session_id`, but Crush has no authoritative waiting hook; idle state relies on
             // `screenDetect.ts::detectCrush`. `--session <id>` resumes in place, with existence checking not
@@ -1057,7 +1057,7 @@ pub fn prepare_with_args_capabilities(
         }
         SessionKind::Grok => {
             // Grok Build: `grok [--resume <id> | --session-id <sid>] --no-alt-screen
-            // [--always-approve + custom args] ["$VLX_INIT_PROMPT"]`. A stable VelaTerm UUID prevents
+            // [--always-approve + custom args] ["$VLX_INIT_PROMPT"]`. A stable heddle UUID prevents
             // parallel sessions in the same directory from sharing Grok's "most recent" conversation.
             // The positional PROMPT starts an interactive session; only `-p/--single` exits after one turn.
             let mut args: Vec<String> = Vec::new();
@@ -1084,7 +1084,7 @@ pub fn prepare_with_args_capabilities(
             }
         }
         SessionKind::Zoo => {
-            // Zoo Code still uses the `roo` command. Reuse VelaTerm's UUID session ID as the Zoo task ID for
+            // Zoo Code still uses the `roo` command. Reuse heddle's UUID session ID as the Zoo task ID for
             // a stable one-to-one mapping: create it on first launch, then resume after validation in `resume.rs`.
             let mut env = Vec::new();
             let mut args: Vec<String> = Vec::new();
@@ -1216,7 +1216,7 @@ mod tests {
              if command -v claude >/dev/null 2>&1; then claude --settings \"$VLX_CLAUDE_SETTINGS\"; \
              else { curl -fsS -m 2 \"$VLX_NOTFOUND_URL\" >/dev/null 2>&1 || \
              wget -qO- -T 2 \"$VLX_NOTFOUND_URL\" >/dev/null 2>&1; }; \
-             printf '%s\\n' '[VelaTerm] claude not found on PATH. Check that it is installed \
+             printf '%s\\n' '[heddle] claude not found on PATH. Check that it is installed \
              and your shell profile loaded, then re-run.'; fi"
         );
         // With no arguments, the inner command is the bare binary.
@@ -1237,7 +1237,7 @@ mod tests {
             "[Console]::Write([char]27 + '[3J' + [char]27 + '[2J' + [char]27 + '[H'); \
              if (Get-Command claude -ErrorAction SilentlyContinue) { claude --settings $env:VLX_CLAUDE_SETTINGS } \
              else { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 $env:VLX_NOTFOUND_URL | Out-Null } \
-             catch {}; Write-Host '[VelaTerm] claude not found on PATH. Your shell profile may be blocked - run: \
+             catch {}; Write-Host '[heddle] claude not found on PATH. Your shell profile may be blocked - run: \
              Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then reopen the session.' }"
         );
     }
@@ -1254,7 +1254,7 @@ mod tests {
              if type -q claude; claude --settings \"$VLX_CLAUDE_SETTINGS\"; \
              else; curl -fsS -m 2 \"$VLX_NOTFOUND_URL\" >/dev/null 2>&1; \
              or wget -qO- -T 2 \"$VLX_NOTFOUND_URL\" >/dev/null 2>&1; \
-             echo '[VelaTerm] claude not found on PATH. Check that it is installed \
+             echo '[heddle] claude not found on PATH. Check that it is installed \
              and your shell profile loaded, then re-run.'; end"
         );
     }
@@ -1270,7 +1270,7 @@ mod tests {
                 "--settings \"%VLX_CLAUDE_SETTINGS%\""
             ),
             "cls & where claude >nul 2>nul & if errorlevel 1 \
-             (echo [VelaTerm] claude not found on PATH. Check that it is installed \
+             (echo [heddle] claude not found on PATH. Check that it is installed \
              and your shell profile loaded, then re-run.) \
              else (claude --settings \"%VLX_CLAUDE_SETTINGS%\")"
         );

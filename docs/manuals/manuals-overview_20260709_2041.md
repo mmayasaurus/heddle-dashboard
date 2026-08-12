@@ -1,8 +1,8 @@
-# VelaTerm User Manuals — Overview
+# heddle User Manuals — Overview
 
 Created: 2026-07-09 20:41
 
-> `docs/manuals/` is the VelaTerm user manual series. This page is the table of contents and reading guide: new users should read the first three in order; dip into the rest as needed.
+> `docs/manuals/` is the heddle user manual series. This page is the table of contents and reading guide: new users should read the first three in order; dip into the rest as needed.
 
 ## Reading order
 

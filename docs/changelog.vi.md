@@ -2,17 +2,17 @@
 
 ### Tác nhân AI
 
-- **Kiro CLI trở thành một loại phiên hạng nhất.** Phiên Kiro có nút riêng trong cây, có chấm trạng thái Đang làm việc / Đang chờ chuẩn xác do chính lifecycle hooks của Kiro điều khiển, có thông báo khi một lượt kết thúc, tự động tiếp tục đúng cuộc hội thoại cũ khi bạn mở lại nút, có tham số khởi chạy cùng công tắc bỏ qua xác nhận, và khởi chạy qua vspawn — mọi thứ mà các tác nhân khác đã có. VelaTerm sao chép tác nhân Kiro mặc định của bạn thành một tác nhân `vlx-term` riêng, thêm lifecycle hooks chỉ quan sát vào bản sao rồi khởi chạy bản sao đó — tệp tác nhân của bạn không bao giờ bị sửa, còn prompt, công cụ và máy chủ MCP thì đi theo nguyên vẹn. Kiro không có hook yêu cầu quyền, nên chấm trạng thái vẫn là Đang làm việc trong lúc chờ bạn phê duyệt.
+- **Kiro CLI trở thành một loại phiên hạng nhất.** Phiên Kiro có nút riêng trong cây, có chấm trạng thái Đang làm việc / Đang chờ chuẩn xác do chính lifecycle hooks của Kiro điều khiển, có thông báo khi một lượt kết thúc, tự động tiếp tục đúng cuộc hội thoại cũ khi bạn mở lại nút, có tham số khởi chạy cùng công tắc bỏ qua xác nhận, và khởi chạy qua vspawn — mọi thứ mà các tác nhân khác đã có. heddle sao chép tác nhân Kiro mặc định của bạn thành một tác nhân `vlx-term` riêng, thêm lifecycle hooks chỉ quan sát vào bản sao rồi khởi chạy bản sao đó — tệp tác nhân của bạn không bao giờ bị sửa, còn prompt, công cụ và máy chủ MCP thì đi theo nguyên vẹn. Kiro không có hook yêu cầu quyền, nên chấm trạng thái vẫn là Đang làm việc trong lúc chờ bạn phê duyệt.
 
 ### Sửa lỗi
 
-- **Chương trình khởi chạy từ terminal không còn thừa hưởng môi trường của chính AppImage (Linux).** Trình khởi chạy AppImage trỏ `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` và các đường dẫn plugin GStreamer vào thư mục mount tạm thời của gói, đồng thời đặt các thư mục trong gói lên trước mọi thứ khác trong `PATH` và `LD_LIBRARY_PATH`. Terminal giao toàn bộ môi trường của nó cho shell mà nó khởi chạy, nên `python3` của hệ thống đi tìm thư viện chuẩn bên trong gói rồi từ chối chạy, còn những chương trình liên kết động khác thì nạp bản sao thư viện trong gói thay vì bản của hệ thống. VelaTerm nay loại bỏ các đường dẫn của gói trước khi khởi chạy shell hoặc công cụ bên ngoài, và giữ nguyên những giá trị do chính bạn đặt. `APPDIR` và `APPIMAGE` vẫn hiển thị, nên các chương trình cần kiểm tra xem mình có đang chạy từ AppImage hay không vẫn có câu trả lời. Chỉ các bản dựng AppImage bị ảnh hưởng; gói deb, macOS và Windows vẫn như trước.
+- **Chương trình khởi chạy từ terminal không còn thừa hưởng môi trường của chính AppImage (Linux).** Trình khởi chạy AppImage trỏ `PYTHONHOME`, `PYTHONPATH`, `PERLLIB`, `QT_PLUGIN_PATH` và các đường dẫn plugin GStreamer vào thư mục mount tạm thời của gói, đồng thời đặt các thư mục trong gói lên trước mọi thứ khác trong `PATH` và `LD_LIBRARY_PATH`. Terminal giao toàn bộ môi trường của nó cho shell mà nó khởi chạy, nên `python3` của hệ thống đi tìm thư viện chuẩn bên trong gói rồi từ chối chạy, còn những chương trình liên kết động khác thì nạp bản sao thư viện trong gói thay vì bản của hệ thống. heddle nay loại bỏ các đường dẫn của gói trước khi khởi chạy shell hoặc công cụ bên ngoài, và giữ nguyên những giá trị do chính bạn đặt. `APPDIR` và `APPIMAGE` vẫn hiển thị, nên các chương trình cần kiểm tra xem mình có đang chạy từ AppImage hay không vẫn có câu trả lời. Chỉ các bản dựng AppImage bị ảnh hưởng; gói deb, macOS và Windows vẫn như trước.
 
 ## v0.1.99 — 2026-08-09
 
 ### Terminal
 
-- **Shift+Enter xuống dòng thay vì gửi đi.** Terminal không có mã hóa cho Enter kèm phím bổ trợ, nên các CLI tác nhân như Claude Code và Codex chỉ nhận được một ký tự xuống dòng thông thường và gửi nội dung đi khi bạn còn đang viết. VelaTerm nay phát ESC+CR, đúng chuỗi mà những công cụ đó mong đợi từ ánh xạ phím của iTerm2, nhờ vậy nhập nhiều dòng đã dùng được — kể cả trên macOS, nơi trước đây bộ xử lý phím tùy chỉnh hoàn toàn không được cài. Trong lúc gõ bằng bộ gõ, mọi thứ giữ nguyên: Enter vẫn dùng để chọn từ gợi ý.
+- **Shift+Enter xuống dòng thay vì gửi đi.** Terminal không có mã hóa cho Enter kèm phím bổ trợ, nên các CLI tác nhân như Claude Code và Codex chỉ nhận được một ký tự xuống dòng thông thường và gửi nội dung đi khi bạn còn đang viết. heddle nay phát ESC+CR, đúng chuỗi mà những công cụ đó mong đợi từ ánh xạ phím của iTerm2, nhờ vậy nhập nhiều dòng đã dùng được — kể cả trên macOS, nơi trước đây bộ xử lý phím tùy chỉnh hoàn toàn không được cài. Trong lúc gõ bằng bộ gõ, mọi thứ giữ nguyên: Enter vẫn dùng để chọn từ gợi ý.
 
 ### Dự án và tổ chức
 
@@ -27,7 +27,7 @@
 
 ### Tác nhân AI
 
-- **Grok Build trở thành tác nhân hạng nhất trong VelaTerm.** Cài đặt, khởi chạy và tiếp tục Grok 4.5 với ID phiên ổn định, lifecycle hooks chính thức, trạng thái làm việc và quyền chính xác, bản ghi hội thoại đã hợp nhất, chi tiết sử dụng cùng biểu tượng chính thức thích ứng theo giao diện trên máy tính, trình duyệt và thiết bị di động.
+- **Grok Build trở thành tác nhân hạng nhất trong heddle.** Cài đặt, khởi chạy và tiếp tục Grok 4.5 với ID phiên ổn định, lifecycle hooks chính thức, trạng thái làm việc và quyền chính xác, bản ghi hội thoại đã hợp nhất, chi tiết sử dụng cùng biểu tượng chính thức thích ứng theo giao diện trên máy tính, trình duyệt và thiết bị di động.
 
 ### Dự án và tổ chức
 
@@ -37,7 +37,7 @@
 
 ### Giao diện
 
-- **Chia sẻ VelaTerm ở nơi cộng đồng của bạn hiện diện.** Hộp thoại chia sẻ nay hỗ trợ WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram và WhatsApp, kèm quy trình mã QR cho WeChat và lời mời chia sẻ trong hộp thoại cập nhật.
+- **Chia sẻ heddle ở nơi cộng đồng của bạn hiện diện.** Hộp thoại chia sẻ nay hỗ trợ WeChat Moments, Weibo, Xiaohongshu, X, Reddit, Hacker News, LinkedIn, Facebook, Telegram và WhatsApp, kèm quy trình mã QR cho WeChat và lời mời chia sẻ trong hộp thoại cập nhật.
 - **Những tương tác nhỏ trở nên chỉn chu hơn.** Có thể đổi tên tab terminal tạm thời trước khi chuyển thành phiên đã lưu. Các ô nhập thông thường tắt tự động viết hoa trên bàn phím di động mà không làm thay đổi thao tác nhập trong terminal.
 
 ## v0.1.97 — 2026-07-25
@@ -49,7 +49,7 @@
 
 ### Giao diện
 
-- **Phím tắt chia khung đáng tin cậy trên macOS.** Chia sang phải (Cmd+D) và chia xuống dưới (Cmd+Shift+D) nay được đăng ký thành lệnh menu Terminal gốc, nên macOS không còn chặn tổ hợp phím trước khi VelaTerm nhận được.
+- **Phím tắt chia khung đáng tin cậy trên macOS.** Chia sang phải (Cmd+D) và chia xuống dưới (Cmd+Shift+D) nay được đăng ký thành lệnh menu Terminal gốc, nên macOS không còn chặn tổ hợp phím trước khi heddle nhận được.
 - **Mỗi lần nhấn phím chỉ lưu một lần.** Cmd+S trước đây được xử lý bởi cả phím tắt toàn cục lẫn trình soạn thảo đang có tiêu điểm, nên có thể ghi cùng một tệp hai lần chỉ trong một lần nhấn.
 
 ## v0.1.96 — 2026-07-23
@@ -67,12 +67,12 @@
 
 ### Tác nhân AI
 
-- **Kimi Code và Zoo Code đã có trong cây phiên.** VelaTerm giờ có thể khởi chạy, tiếp tục, cài đặt và cấu hình cả hai tác nhân. Kimi dùng lifecycle hooks chính thức để báo cáo chính xác trạng thái làm việc, quyền và chờ; Zoo Code giữ định danh tác vụ ổn định và dùng nhận diện terminal khi không có hooks bên ngoài.
+- **Kimi Code và Zoo Code đã có trong cây phiên.** heddle giờ có thể khởi chạy, tiếp tục, cài đặt và cấu hình cả hai tác nhân. Kimi dùng lifecycle hooks chính thức để báo cáo chính xác trạng thái làm việc, quyền và chờ; Zoo Code giữ định danh tác vụ ổn định và dùng nhận diện terminal khi không có hooks bên ngoài.
 - **Làm mới trực tiếp mức sử dụng Codex.** Bảng Info truy vấn Codex app server để lấy giới hạn hiện tại và vẫn dùng ảnh chụp rollout cục bộ làm phương án tương thích dự phòng.
 
 ### Dự án và terminal
 
-- **Mở dự án bằng `vela <path>`.** Bản đóng gói có thể cài lệnh shell kiểu VS Code. Lần gọi thứ hai chuyển dự án tới cửa sổ VelaTerm hiện có thay vì mở một phiên bản trùng lặp.
+- **Mở dự án bằng `vela <path>`.** Bản đóng gói có thể cài lệnh shell kiểu VS Code. Lần gọi thứ hai chuyển dự án tới cửa sổ heddle hiện có thay vì mở một phiên bản trùng lặp.
 - **Git clone có tiến độ và có thể hủy.** Clone Project hiển thị giai đoạn, phần trăm và thời gian, cảnh báo khi bị đình trệ, đồng thời có thể hủy toàn bộ cây tiến trình Git mà không để lại thư mục dở dang. Thông tin xác thực và query tokens được che trong lỗi và nhật ký kiểm toán.
 - **Terminal WSL trên Windows.** Mọi bản phân phối WSL đã cài được phát hiện và hiển thị cùng PowerShell, cmd và Git Bash cho terminal thông thường. Phiên tác nhân vẫn dùng Windows host shell để hooks và đường dẫn thực thi hoạt động tin cậy.
 
@@ -93,14 +93,14 @@
 
 ### Hình ảnh và tài liệu
 
-- **Dán đường dẫn hình ảnh đáng tin cậy trên macOS.** Khi WebKit không cung cấp hình ảnh đã sao chép dưới dạng tệp, VelaTerm sẽ đọc hình ảnh từ bảng nhớ tạm gốc và vẫn tải lên dưới dạng đường dẫn tệp, thay vì âm thầm chuyển sang phần giữ chỗ hình ảnh gốc của agent. Cửa sổ từ xa luôn hiển thị cài đặt dán hình ảnh, giải thích vì sao cần chế độ đường dẫn tệp và vô hiệu hóa tùy chọn gốc không khả dụng.
+- **Dán đường dẫn hình ảnh đáng tin cậy trên macOS.** Khi WebKit không cung cấp hình ảnh đã sao chép dưới dạng tệp, heddle sẽ đọc hình ảnh từ bảng nhớ tạm gốc và vẫn tải lên dưới dạng đường dẫn tệp, thay vì âm thầm chuyển sang phần giữ chỗ hình ảnh gốc của agent. Cửa sổ từ xa luôn hiển thị cài đặt dán hình ảnh, giải thích vì sao cần chế độ đường dẫn tệp và vô hiệu hóa tùy chọn gốc không khả dụng.
 - **Dán hình ảnh vào tài liệu mã nguồn.** Trình soạn thảo mã nguồn hiện chấp nhận hình ảnh từ bảng nhớ tạm. Tài liệu Markdown đã lưu sẽ đặt hình ảnh bên cạnh tài liệu trong `assets/` và chèn cú pháp hình ảnh Markdown có tính di động; bản nháp chưa lưu sẽ nhúng dữ liệu hình ảnh để không bị mất khi các tệp tạm thời được dọn dẹp.
 
 ### Giao diện
 
 - **Menu ngữ cảnh luôn hiển thị và nhắm đúng mục.** Menu mở gần mép phải được đo và dịch chuyển chính xác. Khi nhấp chuột phải vào một nút trong cây, giờ đây chỉ mục tiêu của menu được tô sáng mà không làm thay đổi lựa chọn hiện có; menu nhóm cũng có một terminal giới hạn trong nhóm đó.
-- **Hiển thị chỉnh sửa và nhãn trạng thái gọn gàng hơn.** Văn bản mã nguồn không còn hiển thị các chữ ghép phông giống mũi tên cho những chuỗi như chú thích HTML, phần trăm mức sử dụng được ghi rõ là đã dùng và menu ngữ cảnh gốc không liên quan của WebView chủ không còn xuất hiện phía sau menu của VelaTerm.
+- **Hiển thị chỉnh sửa và nhãn trạng thái gọn gàng hơn.** Văn bản mã nguồn không còn hiển thị các chữ ghép phông giống mũi tên cho những chuỗi như chú thích HTML, phần trăm mức sử dụng được ghi rõ là đã dùng và menu ngữ cảnh gốc không liên quan của WebView chủ không còn xuất hiện phía sau menu của heddle.
 
 ### Sửa lỗi
 
-- **Codex vẫn nằm trong lịch sử terminal thông thường.** Các phiên Codex do VelaTerm khởi chạy giờ sử dụng chế độ terminal nội tuyến. Vì vậy, nhấn Esc để ngắt hoặc quay lại sẽ không còn chuyển đổi bộ đệm màn hình terminal và đưa khung nhìn lịch sử cuộn lên đầu. Cấu hình Codex của người dùng không bị thay đổi.
+- **Codex vẫn nằm trong lịch sử terminal thông thường.** Các phiên Codex do heddle khởi chạy giờ sử dụng chế độ terminal nội tuyến. Vì vậy, nhấn Esc để ngắt hoặc quay lại sẽ không còn chuyển đổi bộ đệm màn hình terminal và đưa khung nhìn lịch sử cuộn lên đầu. Cấu hình Codex của người dùng không bị thay đổi.

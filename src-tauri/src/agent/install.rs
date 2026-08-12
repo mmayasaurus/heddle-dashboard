@@ -154,7 +154,7 @@ pub fn install_recipe(agent: &str) -> Option<InstallRecipe> {
                     .into(),
         },
         "kiro" => InstallRecipe {
-            // The official installer is a POSIX shell script. Windows support is unconfirmed and VelaTerm's
+            // The official installer is a POSIX shell script. Windows support is unconfirmed and heddle's
             // Windows sessions default to PowerShell, so hide one-click installation there while keeping the
             // documentation link and any manually configured executable path.
             label: "Kiro".into(),

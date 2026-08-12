@@ -1,4 +1,4 @@
-//! Remap GrokDay canvas grays to pure white for VelaTerm light terminals.
+//! Remap GrokDay canvas grays to pure white for heddle light terminals.
 //!
 //! Grok Build's current GrokDay theme paints its main canvas as `#eeeeee` (truecolor 238,238,238). That reads
 //! as a dull gray next to Codex's pure-white analysis pane. User chat bars use slightly darker grays

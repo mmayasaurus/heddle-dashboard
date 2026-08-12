@@ -160,7 +160,7 @@ pub fn create_session(
         let seeded_agent_id = agent_session_id
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            // Zoo and Grok accept caller-provided UUIDs. Reuse the VelaTerm session ID so parallel sessions in
+            // Zoo and Grok accept caller-provided UUIDs. Reuse the heddle session ID so parallel sessions in
             // one directory never attach to each other's most recent conversation; first launch creates it.
             .or_else(|| {
                 matches!(kind, SessionKind::Zoo | SessionKind::Grok).then(|| session.id.clone())

@@ -61,7 +61,7 @@ export function planImagePaste(
 ): ImagePastePlan {
   const files = imagesFromClipboard(data);
   const text = data?.getData("text/plain") ?? "";
-  // In local native mode, VelaTerm converts image paste into the Ctrl+V agents recognize. Letting it
+  // In local native mode, heddle converts image paste into the Ctrl+V agents recognize. Letting it
   // reach xterm would paste empty text because images lack text/plain, so the agent would never read
   // the system clipboard. Plain text still follows xterm's normal path.
   if (mode === "agent" && nativePasteAvailable) {

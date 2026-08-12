@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VelaTerm",
+  "productName": "heddle",
   "version": "0.1.100",
   "identifier": "io.vlinx.vlxterm",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "VelaTerm",
+        "title": "heddle",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

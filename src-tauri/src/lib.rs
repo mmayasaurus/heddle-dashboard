@@ -56,7 +56,7 @@ pub(crate) struct PendingOpenProject(pub std::sync::Mutex<Option<String>>);
 
 /// Brief `vela` CLI help invoked through a hidden shim argument so normal GUI startup stays quiet.
 pub fn print_vela_help() {
-    println!("usage: vela <project-path>\n\nOpen a project in VelaTerm, or switch to it if it is already open.");
+    println!("usage: vela <project-path>\n\nOpen a project in heddle, or switch to it if it is already open.");
 }
 
 /// Parse `--open-project <path>` or a development-friendly positional project path while ignoring
@@ -539,13 +539,13 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                                 ),
                                 Ok(status) if status.conflict.is_some() => (
                                     format!(
-                                        "A different 'vela' command remains at:\n{}\n\nVelaTerm did not modify it.",
+                                        "A different 'vela' command remains at:\n{}\n\nheddle did not modify it.",
                                         status.conflict.as_deref().unwrap_or("PATH")
                                     ),
                                     MessageDialogKind::Warning,
                                 ),
                                 Ok(_) => (
-                                    "The VelaTerm-managed 'vela' command was removed from PATH."
+                                    "The heddle-managed 'vela' command was removed from PATH."
                                         .to_string(),
                                     MessageDialogKind::Info,
                                 ),
@@ -863,7 +863,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     app.clone()
                         .dialog()
                         .message("Any running terminal and agent sessions will be stopped.")
-                        .title("Quit VelaTerm?")
+                        .title("Quit heddle?")
                         .kind(MessageDialogKind::Info)
                         .buttons(MessageDialogButtons::OkCancelCustom(
                             "Quit".to_string(),
@@ -953,7 +953,7 @@ struct ServeArgs {
 }
 
 /// Recommended headless password environment variable, avoiding exposure in process arguments.
-/// The legacy VLX_SERVE_PASSWORD remains a compatibility fallback after the VelaTerm rename.
+/// The legacy VLX_SERVE_PASSWORD remains a compatibility fallback after the heddle rename.
 const SERVE_PASSWORD_ENV: &str = "VELA_SERVE_PASSWORD";
 /// Legacy pre-rename password variable for backward compatibility only.
 const SERVE_PASSWORD_ENV_LEGACY: &str = "VLX_SERVE_PASSWORD";

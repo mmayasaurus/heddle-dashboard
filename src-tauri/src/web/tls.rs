@@ -22,7 +22,7 @@ pub fn ensure_cert(data_dir: &Path, lan_ips: &[String]) -> Result<(Vec<u8>, Vec<
         .map_err(|e| format!("Invalid certificate parameters: {e}"))?;
     params
         .distinguished_name
-        .push(rcgen::DnType::CommonName, "VelaTerm");
+        .push(rcgen::DnType::CommonName, "heddle");
     params
         .subject_alt_names
         .push(rcgen::SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)));

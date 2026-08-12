@@ -216,7 +216,7 @@ mod tests {
     /// `ARGV0` and `OWD` carry no bundle path but still belong to the launcher.
     #[test]
     fn drops_launcher_only_variables() {
-        let o = overrides_for(&[("ARGV0", "./VelaTerm.AppImage"), ("OWD", "/home/vlinx")]);
+        let o = overrides_for(&[("ARGV0", "./heddle.AppImage"), ("OWD", "/home/vlinx")]);
         assert_eq!(lookup(&o, "ARGV0"), Some(&None));
         assert_eq!(lookup(&o, "OWD"), Some(&None));
     }
@@ -226,7 +226,7 @@ mod tests {
     fn keeps_appimage_identity_variables() {
         let o = overrides_for(&[
             ("APPDIR", APPDIR),
-            ("APPIMAGE", "/home/vlinx/Apps/VelaTerm.AppImage"),
+            ("APPIMAGE", "/home/vlinx/Apps/heddle.AppImage"),
         ]);
         assert!(o.is_empty());
     }

@@ -54,9 +54,9 @@ const vi: typeof en = {
   "titlebar.remoteAccess": "Truy cập từ xa (Trình duyệt)",
   "titlebar.connectRemote": "Kết nối máy chủ từ xa",
   "titlebar.share": "Chia sẻ",
-  "share.title": "Chia sẻ VelaTerm",
+  "share.title": "Chia sẻ heddle",
   "share.subtitle":
-    "VelaTerm được xây dựng bởi một đội ngũ nhỏ. Nếu bạn yêu thích sản phẩm, hãy chia sẻ VelaTerm với mọi người. Việc giúp nhiều người biết đến chúng tôi hơn có ý nghĩa rất lớn với cả đội. Cảm ơn bạn đã ủng hộ! ❤️",
+    "heddle được xây dựng bởi một đội ngũ nhỏ. Nếu bạn yêu thích sản phẩm, hãy chia sẻ heddle với mọi người. Việc giúp nhiều người biết đến chúng tôi hơn có ý nghĩa rất lớn với cả đội. Cảm ơn bạn đã ủng hộ! ❤️",
   "share.copyLink": "Sao chép liên kết",
   "share.copied": "Đã sao chép!",
   "share.wechatMoments": "Khoảnh khắc WeChat",
@@ -91,7 +91,7 @@ const vi: typeof en = {
   "settings.cliUninstall": "Gỡ lệnh ‘vela’",
   "settings.cliInstalledAt": (path: string) => `Đã cài tại ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Đã có một lệnh ‘vela’ khác tại ${path}. VelaTerm sẽ không ghi đè.`,
+    `Đã có một lệnh ‘vela’ khác tại ${path}. heddle sẽ không ghi đè.`,
   "settings.cliHint": "Thêm `vela <đường-dẫn-dự-án>` vào PATH, giống lệnh `code` của VS Code.",
   "settings.agentArgsHint":
     "Đối số khởi chạy mặc định áp dụng cho phiên mới của từng loại tác nhân. Đối số riêng đặt khi tạo hoặc sửa phiên sẽ ghi đè chúng. Để trống nếu không dùng.",
@@ -233,14 +233,14 @@ const vi: typeof en = {
   "settings.notifyGranted": "Đã bật",
   "settings.notifyAllow": "Cho phép thông báo",
   "settings.notifyOffHint":
-    "Cho phép VelaTerm cảnh báo khi tác nhân cần bạn nhập liệu hoặc hoàn thành tác vụ.",
+    "Cho phép heddle cảnh báo khi tác nhân cần bạn nhập liệu hoặc hoàn thành tác vụ.",
   "settings.notifyDeniedHint": "Thông báo đang bị chặn. Cách bật:",
   "settings.notifyStepsMac":
-    "mở Cài đặt hệ thống ▸ Thông báo ▸ VelaTerm và bật Cho phép thông báo (khuyên dùng Biểu ngữ hoặc Cảnh báo).",
+    "mở Cài đặt hệ thống ▸ Thông báo ▸ heddle và bật Cho phép thông báo (khuyên dùng Biểu ngữ hoặc Cảnh báo).",
   "settings.notifyStepsWin":
-    "mở Cài đặt ▸ Hệ thống ▸ Thông báo, bật VelaTerm và đảm bảo Hỗ trợ tập trung / Không làm phiền không chặn ứng dụng.",
+    "mở Cài đặt ▸ Hệ thống ▸ Thông báo, bật heddle và đảm bảo Hỗ trợ tập trung / Không làm phiền không chặn ứng dụng.",
   "settings.notifyStepsLinux":
-    "mở Cài đặt ▸ Thông báo của môi trường máy tính và cho phép VelaTerm.",
+    "mở Cài đặt ▸ Thông báo của môi trường máy tính và cho phép heddle.",
   "settings.notifyStepsBrowser":
     "nhấp biểu tượng quyền trang web trên thanh địa chỉ và đặt Thông báo thành Cho phép.",
   "settings.notifyUnsupported": "Môi trường này không hỗ trợ thông báo.",
@@ -297,7 +297,7 @@ const vi: typeof en = {
   "connect.pairingPlaceholder": "Dán liên kết ghép đôi",
   "connect.confirmConnect": "Dấu vân tay khớp, kết nối",
   "connect.desc":
-    "Nhập địa chỉ và mật khẩu của VelaTerm từ xa để kết nối và điều khiển trong cửa sổ mới.",
+    "Nhập địa chỉ và mật khẩu của heddle từ xa để kết nối và điều khiển trong cửa sổ mới.",
   "connect.addressPlaceholder": "Địa chỉ IP, vd. 192.168.1.100",
   "connect.portPlaceholder": "Cổng",
   "connect.connecting": "Đang kết nối…",
@@ -621,7 +621,7 @@ const vi: typeof en = {
   "term.startFailed": (err: string) => `Khởi động thất bại: ${err}`,
   "agentInstall.title": (label: string) => `${label} chưa được cài đặt`,
   "agentInstall.desc": (label: string) =>
-    `VelaTerm không tìm thấy ${label} trong PATH. Hãy cài đặt để khởi chạy phiên này.`,
+    `heddle không tìm thấy ${label} trong PATH. Hãy cài đặt để khởi chạy phiên này.`,
   "agentInstall.install": "Cài đặt ngay",
   "agentInstall.retry": "Thử khởi chạy lại",
   "agentInstall.dismiss": "Tôi sẽ tự cài",
@@ -873,9 +873,9 @@ const vi: typeof en = {
   "updater.downloadManually": "Tải xuống thủ công",
   "updater.downloadManuallyHint": "Mở tệp cài đặt trong trình duyệt.",
   "updater.windowsNotice":
-    "VelaTerm sẽ đóng khi trình cài đặt chạy rồi tự mở lại.",
+    "heddle sẽ đóng khi trình cài đặt chạy rồi tự mở lại.",
   "updater.installingWindows":
-    "Đang cài đặt… VelaTerm sắp đóng. Trình cài đặt sẽ hoàn tất cập nhật và mở lại ứng dụng.",
+    "Đang cài đặt… heddle sắp đóng. Trình cài đặt sẽ hoàn tất cập nhật và mở lại ứng dụng.",
   "statusbar.updateAvailable": (version: string) => `Cập nhật ${version}`,
   "statusbar.updateDownloading": (pct: number) => `Đang cập nhật… ${pct}%`,
   "statusbar.updateInstalling": "Đang cài đặt…",

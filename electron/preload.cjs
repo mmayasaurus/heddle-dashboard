@@ -1,4 +1,4 @@
-// Preload bridge for the VelaTerm Electron shell (CommonJS).
+// Preload bridge for the heddle Electron shell (CommonJS).
 //
 // Security: contextIsolation is enabled. Expose **only a narrow, controlled API** here; never hand the full
 // ipcRenderer object to the page. The renderer receives two values used by the frontend platform adapter:

@@ -2,7 +2,7 @@
 
 Created: 2026-07-09 20:41
 
-> This chapter covers VelaTerm's core differentiator: hosting AI coding agents as **typed sessions** — live status, automatic conversation resume, forking, and permission control.
+> This chapter covers heddle's core differentiator: hosting AI coding agents as **typed sessions** — live status, automatic conversation resume, forking, and permission control.
 
 ## 1. Supported agents
 
@@ -21,7 +21,7 @@ The New Session menus offer these local agent types: **Claude Code**, **Codex**,
 | Crush | Partially authoritative + screen detection | ✅ | ✗ | ✅ |
 | Kiro | Authoritative | ✅ | ✗ | ✅ |
 
-"Authoritative" means VelaTerm injects the agent's official callback mechanism (hooks / plugin / extension) at launch, so state changes are **actively reported** by the agent rather than guessed from terminal output. For agents that don't report everything (codex, crush), a screen-detection fallback fills the gaps. Agents you run yourself in a plain terminal are untouched — injection only applies to sessions VelaTerm launches.
+"Authoritative" means heddle injects the agent's official callback mechanism (hooks / plugin / extension) at launch, so state changes are **actively reported** by the agent rather than guessed from terminal output. For agents that don't report everything (codex, crush), a screen-detection fallback fills the gaps. Agents you run yourself in a plain terminal are untouched — injection only applies to sessions heddle launches.
 
 ## 2. Status dots: who's working, who's waiting on me
 
@@ -33,8 +33,8 @@ Paired with **system notifications**: when an agent stops for you (a question, o
 
 The mental model in one line: **each agent session node in the tree = one ongoing conversation.**
 
-- On first run, VelaTerm remembers the agent's own session id automatically.
-- After that — whether you closed the tab or quit the app — reopening the node relaunches the agent with its resume flag (e.g. `claude --resume <id>`) and the context comes right back. Before resuming, VelaTerm verifies the conversation still exists; if it was deleted, it silently falls back to a fresh start instead of hanging.
+- On first run, heddle remembers the agent's own session id automatically.
+- After that — whether you closed the tab or quit the app — reopening the node relaunches the agent with its resume flag (e.g. `claude --resume <id>`) and the context comes right back. Before resuming, heddle verifies the conversation still exists; if it was deleted, it silently falls back to a fresh start instead of hanging.
 - Want a fresh conversation? Create a new node. The whole mechanism is automatic — no switches, no cleanup.
 
 **Manual resume**: if you have an agent session id from elsewhere (say, a conversation you ran in a plain terminal), use "Resume Session…" at the bottom of the New Session menu — pick the type, paste the id, and that conversation joins the tree as a proper session node.
@@ -77,5 +77,5 @@ With an agent session open, the right panel's Info tab shows its runtime details
 
 - **Auto-naming**: unnamed sessions take their name from your first message (claude and others).
 - **Live theme following**: switching light/dark re-skins running claude sessions instantly, no restart.
-- **Vela Skills**: the "Vela Skills" toggle in Settings ▸ General installs `vspawn`, `vspawn-tree`, and `vopen` for both Claude and Codex, letting either agent spawn sub-sessions and open documents from inside a conversation (see [Session Spawning & Git Collaboration](session-spawning-and-git_20260709_2041.md)).
+- **heddle Skills**: the "heddle Skills" toggle in Settings ▸ General installs `vspawn`, `vspawn-tree`, and `vopen` for both Claude and Codex, letting either agent spawn sub-sessions and open documents from inside a conversation (see [Session Spawning & Git Collaboration](session-spawning-and-git_20260709_2041.md)).
 - **Windows**: claude / codex fully supported (via PowerShell); the other types are best-effort.

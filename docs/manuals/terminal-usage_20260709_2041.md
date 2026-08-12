@@ -23,11 +23,11 @@ To search across sessions and history, use global search (⌘⇧F) — see [Inte
 - Select to highlight; the context menu offers copy / paste, and the usual ⌘C / ⌘V work.
 - Inside TUI programs that capture the mouse (vim, htop), hold Option/Alt while dragging to force normal text selection.
 
-**Image paste** is the channel for feeding images to agents: paste or drag a screenshot / image file into the terminal, and VelaTerm writes the image to a temp location and types its **file path** into the terminal — exactly what CLIs like claude expect. Related settings: "Image paste" chooses between "Upload as file" (always materialize to a path) and "Agent default"; "Auto-clean pasted images" periodically clears those temp images, with a "Clean now" button.
+**Image paste** is the channel for feeding images to agents: paste or drag a screenshot / image file into the terminal, and heddle writes the image to a temp location and types its **file path** into the terminal — exactly what CLIs like claude expect. Related settings: "Image paste" chooses between "Upload as file" (always materialize to a path) and "Agent default"; "Auto-clean pasted images" periodically clears those temp images, with a "Clean now" button.
 
 ## 4. `vopen`: open files and pages from the terminal
 
-Every session's PATH carries three small commands (zero install): `vopen`, `vspawn`, `vspawn-tree`. Note these are the terminal commands — the same-named `/` skills used *inside* claude conversations are a separate thing and require the Vela Skills toggle in Settings ▸ General. `vopen` sends things to the center pane:
+Every session's PATH carries three small commands (zero install): `vopen`, `vspawn`, `vspawn-tree`. Note these are the terminal commands — the same-named `/` skills used *inside* claude conversations are a separate thing and require the heddle Skills toggle in Settings ▸ General. `vopen` sends things to the center pane:
 
 ```bash
 vopen README.md          # markdown → WYSIWYG editor
@@ -42,7 +42,7 @@ Document tabs in full (dual-mode editing, find & replace, PDF export): [Document
 
 On Windows, terminal sessions can explicitly pick a shell — PowerShell / pwsh / cmd / Git Bash, plus every installed WSL distribution — via the New submenu, the session edit form's dropdown, or right-click "Shell ▸"; a running session applies the change on restart. Settings ▸ Terminal ▸ "Default shell" sets the default for new sessions.
 
-WSL entries appear as `WSL: <distribution>` only when `wsl --list --quiet` reports an installed distribution. Choosing one launches that exact distribution and maps the session's Windows project directory into WSL. WSL support currently applies to plain terminal sessions; VelaTerm-managed agent sessions continue to use the Windows host shell so their hooks, executable paths and built-in commands remain reliable. The host-side `vopen` / `vspawn` shims are not currently exposed inside WSL terminals.
+WSL entries appear as `WSL: <distribution>` only when `wsl --list --quiet` reports an installed distribution. Choosing one launches that exact distribution and maps the session's Windows project directory into WSL. WSL support currently applies to plain terminal sessions; heddle-managed agent sessions continue to use the Windows host shell so their hooks, executable paths and built-in commands remain reliable. The host-side `vopen` / `vspawn` shims are not currently exposed inside WSL terminals.
 
 About the bundled Git Bash: the full installer ships the complete version (git, ssh, perl included); the min installer ships a core subset, and missing commands prompt an on-demand download of the full version (also available via right-click "Download full Git Bash"). Agent sessions are unaffected — they always use PowerShell.
 

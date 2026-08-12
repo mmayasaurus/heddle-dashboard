@@ -671,7 +671,7 @@ impl PtyManager {
         }
 
         // Grok loads hooks only from fixed user-level files. Install one namespaced JSON file that invokes
-        // VelaTerm's hidden bridge; it reads dynamic VLX_* values and no-ops outside managed sessions.
+        // heddle's hidden bridge; it reads dynamic VLX_* values and no-ops outside managed sessions.
         // PTY activity remains enabled below as a pre-hook/failure fallback and is ignored after an authoritative event.
         if kind == SessionKind::Grok {
             let started = std::time::Instant::now();
@@ -1387,7 +1387,7 @@ fn open_recorder(app: &AppCtx, id: &str) -> Option<Recorder> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let _ = file
-        .write_all(format!("\r\n--- [VelaTerm] session started/resumed @ {ts} ---\r\n").as_bytes());
+        .write_all(format!("\r\n--- [heddle] session started/resumed @ {ts} ---\r\n").as_bytes());
     Some(Recorder::new(file, existing_len, RECORDING_CAP))
 }
 

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// Shadow agent name, used both as the file stem and as the `--agent` argument.
 pub const AGENT_NAME: &str = "vlx-term";
 
-/// Substring identifying hook entries VelaTerm owns, so re-installing replaces them instead of accumulating
+/// Substring identifying hook entries heddle owns, so re-installing replaces them instead of accumulating
 /// duplicates while leaving the user's own hook entries in the cloned config untouched.
 const MARKER: &str = "vlx-term/hook.";
 
@@ -42,8 +42,8 @@ const EVENTS: [(&str, &str); 5] = [
 
 /// Static POSIX forwarding script. `$1` carries the `e=` value, so one script serves every trigger.
 const SH_SCRIPT: &str = r#"#!/bin/sh
-# VelaTerm Kiro status bridge (auto-installed by VelaTerm; safe to delete).
-# Active only in Kiro sessions launched by VelaTerm; otherwise consume stdin and exit successfully.
+# heddle Kiro status bridge (auto-installed by heddle; safe to delete).
+# Active only in Kiro sessions launched by heddle; otherwise consume stdin and exit successfully.
 if [ -z "$VLX_SPAWN_URL" ] || [ -z "$VLX_SESSION_ID" ] || [ -z "$VLX_TOKEN" ]; then
   cat >/dev/null 2>&1
   exit 0
@@ -54,8 +54,8 @@ exit 0
 "#;
 
 /// Windows PowerShell script with the same semantics as [`SH_SCRIPT`]; the event arrives as the first argument.
-const PS1_SCRIPT: &str = r#"# VelaTerm Kiro status bridge (auto-installed by VelaTerm; safe to delete).
-# Active only in Kiro sessions launched by VelaTerm; otherwise read stdin and exit successfully.
+const PS1_SCRIPT: &str = r#"# heddle Kiro status bridge (auto-installed by heddle; safe to delete).
+# Active only in Kiro sessions launched by heddle; otherwise read stdin and exit successfully.
 param([string]$Event)
 $body = [Console]::In.ReadToEnd()
 if ($env:VLX_SPAWN_URL -and $env:VLX_SESSION_ID -and $env:VLX_TOKEN) {
@@ -154,9 +154,9 @@ fn base_config(home: &Path) -> serde_json::Map<String, serde_json::Value> {
     }
 }
 
-/// Merge VelaTerm's hook entries into a cloned configuration, preserving the user's own entries.
+/// Merge heddle's hook entries into a cloned configuration, preserving the user's own entries.
 ///
-/// Entries previously written by VelaTerm are identified by [`MARKER`] and replaced rather than duplicated, so
+/// Entries previously written by heddle are identified by [`MARKER`] and replaced rather than duplicated, so
 /// re-installing after an upgrade converges instead of accumulating.
 fn merge_hooks(base: &mut serde_json::Map<String, serde_json::Value>, script: &Path) {
     let mut hooks = match base.remove("hooks") {
@@ -198,7 +198,7 @@ fn agent_json(home: &Path, script: &Path) -> String {
     config.insert(
         "description".to_string(),
         serde_json::Value::String(
-            "VelaTerm status bridge. Clone of your default agent plus observe-only lifecycle hooks."
+            "heddle status bridge. Clone of your default agent plus observe-only lifecycle hooks."
                 .to_string(),
         ),
     );
@@ -278,7 +278,7 @@ mod tests {
         .expect("settings file");
     }
 
-    /// Read back the `e=` value baked into one trigger's first VelaTerm entry.
+    /// Read back the `e=` value baked into one trigger's first heddle entry.
     fn event_of(value: &serde_json::Value, trigger: &str) -> String {
         let entries = value["hooks"][trigger]
             .as_array()
@@ -286,7 +286,7 @@ mod tests {
         let command = entries
             .iter()
             .find_map(|e| e["command"].as_str().filter(|c| c.contains(MARKER)))
-            .unwrap_or_else(|| panic!("no VelaTerm entry for {trigger}"));
+            .unwrap_or_else(|| panic!("no heddle entry for {trigger}"));
         command
             .rsplit(' ')
             .next()
@@ -347,7 +347,7 @@ mod tests {
                 .iter()
                 .filter(|e| e["command"].as_str().is_some_and(|c| c.contains(MARKER)))
                 .count();
-            assert_eq!(ours, 1, "{trigger} must keep exactly one VelaTerm entry");
+            assert_eq!(ours, 1, "{trigger} must keep exactly one heddle entry");
         }
         let _ = std::fs::remove_dir_all(&home);
     }

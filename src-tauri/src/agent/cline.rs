@@ -3,11 +3,11 @@
 //! Cline registers executable scripts by placing them in a directory with filenames matching hook
 //! names. It also accepts a runtime hooks directory through `CLINE_HOOKS_DIR`, equivalent to
 //! `--hooks-dir`, merged with global and project hooks. This makes Cline the least invasive agent:
-//! VelaTerm installs scripts under its own `<data_dir>/cline/hooks/`, like the OpenCode plugin, and
+//! heddle installs scripts under its own `<data_dir>/cline/hooks/`, like the OpenCode plugin, and
 //! `pty/manager.rs` adds `CLINE_HOOKS_DIR=<that directory>` when launching a Cline session.
 //!
-//! - **No user configuration is written**: VelaTerm never touches `~/.cline` or merges user hook files.
-//!   `CLINE_HOOKS_DIR` exists only in sessions launched by VelaTerm, so unmanaged Cline processes never
+//! - **No user configuration is written**: heddle never touches `~/.cline` or merges user hook files.
+//!   `CLINE_HOOKS_DIR` exists only in sessions launched by heddle, so unmanaged Cline processes never
 //!   see these scripts. VLX_* guards remain in each script in case users configure the directory manually.
 //! - Scripts are **fully static**, one per event with a fixed `e=` value. They read the injected
 //!   `VLX_SESSION_ID`, `VLX_TOKEN`, and `VLX_SPAWN_URL`, forward stdin unchanged with
@@ -125,7 +125,7 @@ fn install_at(dir: &Path) -> Result<PathBuf, String> {
     for (event, ev) in EVENTS {
         let path = dir.join(script_name(event));
         let content = script_body(ev);
-        // Preserve matching files and their mtime; overwrite scripts changed by a VelaTerm upgrade.
+        // Preserve matching files and their mtime; overwrite scripts changed by a heddle upgrade.
         let current = std::fs::read_to_string(&path)
             .map(|s| s == content)
             .unwrap_or(false);

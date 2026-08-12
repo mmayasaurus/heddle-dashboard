@@ -308,7 +308,7 @@ fn serve_with(
 
 /// Extract an agent session ID from a hook JSON body. Support `session_id`, `sessionId`,
 /// `taskId`/`task_id`, and Codex notify's `thread-id`/`thread_id`. Because hook URLs already embed
-/// the VelaTerm sid, this mapping is more precise than scanning rollouts by cwd/mtime.
+/// the heddle sid, this mapping is more precise than scanning rollouts by cwd/mtime.
 fn parse_session_id(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     let sid = v
@@ -1251,7 +1251,7 @@ mod tests {
             "expected to receive waiting, got {states:?}"
         );
 
-        // Verify the body carries Claude's session_id and the URL preserves the VelaTerm sid.
+        // Verify the body carries Claude's session_id and the URL preserves the heddle sid.
         let (vlx_sid, agent_sid) = rx_sid
             .recv_timeout(Duration::from_secs(5))
             .expect("a claude session_id should be parsed out of the hook body");

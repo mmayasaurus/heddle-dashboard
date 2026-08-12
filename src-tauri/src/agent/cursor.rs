@@ -26,15 +26,15 @@
 
 use std::path::{Path, PathBuf};
 
-/// Marker identifying VelaTerm entries in hooks.json by command substring.
+/// Marker identifying heddle entries in hooks.json by command substring.
 const MARKER: &str = "vlx-term/hook.sh";
 
 /// Static POSIX hook script where `$1` is working, waiting, or boot. Missing variables consume stdin and
 /// return `{}` successfully. curl is limited to three seconds and all failures exit successfully so the
 /// hook cannot disrupt Cursor. The final `{}` is Cursor's empty continue response.
 const HOOK_SCRIPT: &str = r#"#!/bin/sh
-# VelaTerm status-bridge hook, installed and updated automatically and safe to delete at any time.
-# Active only in Cursor sessions launched by VelaTerm; missing VLX_* variables make it a no-op.
+# heddle status-bridge hook, installed and updated automatically and safe to delete at any time.
+# Active only in Cursor sessions launched by heddle; missing VLX_* variables make it a no-op.
 if [ -z "$VLX_SPAWN_URL" ] || [ -z "$VLX_SESSION_ID" ] || [ -z "$VLX_TOKEN" ]; then
   cat >/dev/null 2>&1
   echo '{}'
@@ -73,7 +73,7 @@ fn hook_entry(script: &Path, event: &str) -> serde_json::Value {
     serde_json::json!({ "command": format!("{} {event}", script.display()) })
 }
 
-/// Merge VelaTerm entries into the hooks.json root object in place.
+/// Merge heddle entries into the hooks.json root object in place.
 ///
 /// Create the root, `hooks`, and event arrays as needed; return Err without writing when an existing
 /// value has another type. Within each event, replace old commands containing `vlx-term/hook.sh` with
@@ -231,7 +231,7 @@ mod tests {
         let script = dir.join("vlx-term/hook.sh");
         let hooks = dir.join("hooks.json");
 
-        // Seed user hooks, one old VelaTerm entry, and a user-owned top-level field.
+        // Seed user hooks, one old heddle entry, and a user-owned top-level field.
         std::fs::write(
             &hooks,
             r#"{

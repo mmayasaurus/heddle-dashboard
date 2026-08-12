@@ -354,7 +354,7 @@ fn wait_for_pi_session(
 ///
 /// This compatibility path captures IDs only and **never renames from a scanned rollout**. With concurrent Codex
 /// sessions in one cwd, mtime/cwd cannot prove ownership; the old rename path could assign a neighboring title even
-/// after hooks later corrected the ID. Modern Codex reports ID and prompt with an exact VelaTerm SID and skips this scan.
+/// after hooks later corrected the ID. Modern Codex reports ID and prompt with an exact heddle SID and skips this scan.
 pub fn spawn_codex_capture(app: AppCtx, vlx_sid: String, cwd: Option<String>, pid: u32) {
     let since = SystemTime::now();
     std::thread::spawn(move || {
@@ -501,7 +501,7 @@ pub fn confirmed_missing(kind: SessionKind, id: &str) -> bool {
             }
             find_grok_updates_in(&sessions, id).is_none()
         }
-        // Zoo creates one task directory per UUID and VelaTerm uses its own session UUID as task ID. Confirm absence
+        // Zoo creates one task directory per UUID and heddle uses its own session UUID as task ID. Confirm absence
         // only when the tasks directory is readable and target missing, so launch uses --create-with-session-id.
         SessionKind::Zoo => {
             let Some(home) = crate::host::home_dir() else {

@@ -121,7 +121,7 @@ export interface WindowCapability {
 export interface VelaCommandStatus {
   installed: boolean;
   path: string | null;
-  /** Existing same-named command on PATH not managed by VelaTerm; installation will not overwrite it. */
+  /** Existing same-named command on PATH not managed by heddle; installation will not overwrite it. */
   conflict: string | null;
 }
 

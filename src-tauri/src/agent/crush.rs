@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 /// duplicates and stale script paths.
 const HOOK_NAME: &str = "vlx-term-status";
 
-/// Static POSIX PreToolUse script. Missing VelaTerm variables consume stdin and exit successfully with empty
+/// Static POSIX PreToolUse script. Missing heddle variables consume stdin and exit successfully with empty
 /// output. curl has a three-second limit and all failures succeed so hooks cannot disrupt Crush. Never return
 /// `{"decision":"allow"}`; empty stdout means no opinion and preserves normal permission handling.
 const SH_SCRIPT: &str = r#"#!/bin/sh
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn merge_replaces_stale_vlx_entry() {
-        // Replace an old VelaTerm entry and stale script path rather than accumulating duplicates.
+        // Replace an old heddle entry and stale script path rather than accumulating duplicates.
         let mut root: serde_json::Value = serde_json::json!({
             "hooks": { "PreToolUse": [
                 { "name": HOOK_NAME, "command": "/old/data/crush/hook.sh" }

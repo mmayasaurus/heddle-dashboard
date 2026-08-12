@@ -43,7 +43,7 @@ impl Recorder {
             self.stopped = true;
             let _ = self
                 .file
-                .write_all(b"\r\n--- [VelaTerm] recording truncated: size limit reached ---\r\n");
+                .write_all(b"\r\n--- [heddle] recording truncated: size limit reached ---\r\n");
             let _ = self.file.flush();
             return;
         }

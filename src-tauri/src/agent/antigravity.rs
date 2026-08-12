@@ -276,7 +276,7 @@ mod tests {
         let script = dir.join("vlx-term/hook.sh");
         let hooks = dir.join("config/hooks.json");
         std::fs::create_dir_all(hooks.parent().unwrap()).unwrap();
-        // Seed user groups and an old VelaTerm group to be replaced as a whole.
+        // Seed user groups and an old heddle group to be replaced as a whole.
         std::fs::write(
             &hooks,
             r#"{

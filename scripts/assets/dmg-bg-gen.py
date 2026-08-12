@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generate VelaTerm's dark branded DMG background (scripts/assets/dmg-background.png).
+"""Generate heddle's dark branded DMG background (scripts/assets/dmg-background.png).
 
 The logical window is 660×400; this image is rendered at 2× (1320×800) for Retina displays.
-The layout places the VelaTerm wordmark and tagline at the top, an arrow from the app icon on the
+The layout places the heddle wordmark and tagline at the top, an arrow from the app icon on the
 left to Applications on the right, and installation guidance at the bottom. create-dmg overlays the
 icons on this background; see publish.sh. Edit this file and rerun it to change the design:
 python3 scripts/assets/dmg-bg-gen.py
@@ -44,7 +44,7 @@ title_f = ImageFont.truetype(BOLD, 76)
 tag_f = ImageFont.truetype(REG, 30)
 hint_f = ImageFont.truetype(REG, 30)
 
-center("VelaTerm", title_f, 78, WHITE)
+center("heddle", title_f, 78, WHITE)
 center("terminal · agents", tag_f, 188, DIM)
 
 # Arrow: app icon center x≈330, Applications center x≈990 (logical 165/495 ×2), y=500.

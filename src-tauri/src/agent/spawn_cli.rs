@@ -1,6 +1,6 @@
 //! Installation and discovery of built-in command shims (`vspawn`, `vspawn-tree`, and `vopen`).
 //!
-//! At startup VelaTerm installs thin shims under the application data `bin/` directory and prepends it
+//! At startup heddle installs thin shims under the application data `bin/` directory and prepends it
 //! to each session shell's PATH, allowing `vspawn "task"` and `vopen <file>` with no separate setup.
 //!
 //! Each shim invokes a hidden main-program subcommand such as `$VLX_EXE --spawn` or `--view`, implemented
@@ -21,7 +21,7 @@ const SHIMS: &[(&str, &str)] = &[
 ];
 
 #[cfg(feature = "gui")]
-const VELA_SHIM_MARKER: &str = "VelaTerm managed vela command";
+const VELA_SHIM_MARKER: &str = "heddle managed vela command";
 
 /// Visibility of the `vela` command in the user's shell. `conflict` means an earlier PATH entry contains
 /// an unmanaged command with the same name, which the installer never overwrites.
@@ -101,7 +101,7 @@ pub fn install_user_cli() -> std::io::Result<UserCliStatus> {
     if cfg!(debug_assertions) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "install the packaged VelaTerm app before adding its shell command to PATH",
+            "install the packaged heddle app before adding its shell command to PATH",
         ));
     }
     let before = user_cli_status();
@@ -143,7 +143,7 @@ pub fn install_user_cli() -> std::io::Result<UserCliStatus> {
     ))
 }
 
-/// Remove every VelaTerm-managed `vela` shim in PATH without touching user-owned commands.
+/// Remove every heddle-managed `vela` shim in PATH without touching user-owned commands.
 #[cfg(feature = "gui")]
 pub fn uninstall_user_cli() -> std::io::Result<UserCliStatus> {
     for dir in user_path_dirs() {

@@ -2,7 +2,7 @@
 //!
 //! Grok discovers user-level hooks only from fixed files under `GROK_HOME`/`~/.grok`; it has no
 //! per-launch inline hook flag. Install one dedicated, namespaced file and leave every user-owned
-//! hook untouched. Commands invoke the current VelaTerm executable, which reads the dynamic
+//! hook untouched. Commands invoke the current heddle executable, which reads the dynamic
 //! `VLX_*` values inherited by Grok and quietly no-ops in ordinary, unmanaged Grok sessions.
 
 use std::path::{Path, PathBuf};
