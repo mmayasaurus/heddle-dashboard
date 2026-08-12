@@ -12,6 +12,9 @@ mod command_core;
 // Tauri command registry is compiled only for GUI builds.
 #[cfg(feature = "gui")]
 mod commands;
+// heddle orchestration stats (Fleet drawer): ccusage caps + dispatch ledger, read-only.
+#[cfg(feature = "gui")]
+mod heddle_stats;
 mod db;
 mod files;
 mod git;
@@ -837,6 +840,12 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             native_notify,
             native_notify_auth_status,
             native_notify_request_auth,
+            // heddle orchestration stats for the Fleet drawer (read-only): ccusage caps + ledger.
+            heddle_stats::heddle_caps,
+            heddle_stats::heddle_recent,
+            heddle_stats::heddle_in_flight,
+            heddle_stats::heddle_provider_usage,
+            heddle_stats::heddle_provider_limits,
         ])
         .build(tauri_context())
         .expect("error while building tauri application")

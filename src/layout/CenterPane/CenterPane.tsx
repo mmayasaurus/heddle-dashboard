@@ -15,6 +15,7 @@ import {
   type Rect,
 } from "./paneTree";
 import { BrowserView } from "./browser/BrowserView";
+import { FleetDrawer } from "./FleetDrawer";
 import { LiveTabsOverLimitDialog } from "./LiveTabsOverLimitDialog";
 import { SearchBar } from "./SearchBar";
 import { TabBar } from "./TabBar";
@@ -246,6 +247,7 @@ export function CenterPane() {
             <Divider key={d.paneId} info={d} tabId={activeTabId} stageRef={stageRef} />
           ))}
       </div>
+      <FleetDrawer />
       <LiveTabsOverLimitDialog />
     </div>
   );

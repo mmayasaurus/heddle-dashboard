@@ -123,6 +123,12 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "web_pairing_create",
   "web_devices_list",
   "web_device_revoke",
+  // heddle Fleet drawer: read-only ccusage caps + dispatch-ledger views.
+  "heddle_caps",
+  "heddle_recent",
+  "heddle_in_flight",
+  "heddle_provider_usage",
+  "heddle_provider_limits",
 ]);
 
 /** Invokes a backend command.

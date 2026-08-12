@@ -306,6 +306,56 @@ svg { display: block; }
 
 /* ============================ SPLIT PANES ========================== */
 .stage { flex: 1; min-height: 0; padding: var(--pane-gap); display: flex; }
+
+/* ===== Fleet drawer: heddle orchestration (ccusage caps + dispatch ledger) ===== */
+.fleet { flex: none; border-top: 1px solid var(--border); background: var(--bg-2); display: flex; flex-direction: column; min-height: 0; }
+.fleet-bar { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; cursor: pointer; user-select: none; font-size: 11.5px; }
+.fleet-bar:hover { background: var(--bg-hover); }
+.fleet-chevron { color: var(--text-dim); width: 10px; display: inline-block; }
+.fleet-title { font-weight: 700; letter-spacing: 0.4px; color: var(--accent); }
+.fleet-sum { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.fleet-tag { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); margin-right: 4px; }
+.fleet-dim { color: var(--text-dim); }
+.fleet-run { color: var(--accent); font-weight: 600; }
+.fleet-sp { flex: 1; }
+.fleet-refresh { color: var(--text-dim); font-size: 13px; padding: 0 5px; border-radius: 4px; }
+.fleet-refresh:hover { color: var(--text); background: var(--bg-hover); }
+.fleet-body { overflow-y: auto; max-height: 42vh; padding: 2px 10px 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
+.fleet-sec-title { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); font-weight: 600; margin: 9px 0 3px; }
+.fleet-err { color: var(--red); background: var(--accent-soft); padding: 4px 6px; border-radius: 5px; font-size: 11px; }
+.fleet-empty { padding: 2px 0; }
+.fleet-caps { display: flex; flex-direction: column; gap: 5px; }
+.fleet-cap { display: flex; align-items: center; gap: 8px; }
+.fleet-cap-label { width: 52px; flex: none; color: var(--text-mid); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; }
+.fleet-bar-track { flex: 1; height: 7px; background: var(--bg-active); border-radius: 4px; overflow: hidden; }
+.fleet-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; }
+.fleet-cap-val { flex: none; min-width: 172px; text-align: right; font-variant-numeric: tabular-nums; }
+.fleet-models { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.fleet-chip { font-size: 10px; padding: 1px 7px; border-radius: 10px; background: var(--accent-soft); color: var(--text-mid); }
+.fleet-drow { display: flex; align-items: center; gap: 7px; padding: 1.5px 0; }
+.fleet-drow.live .fleet-model { color: var(--accent); }
+.fleet-badge { width: 12px; flex: none; text-align: center; }
+.fleet-badge.ok { color: var(--green); }
+.fleet-badge.fail { color: var(--red); }
+.fleet-badge.run { color: var(--accent); }
+.fleet-orch { font-weight: 700; color: var(--text-mid); min-width: 20px; }
+.fleet-model { color: var(--text); font-variant-numeric: tabular-nums; }
+.fleet-issue { color: var(--accent); font-size: 10.5px; }
+.fleet-tok, .fleet-durn { font-variant-numeric: tabular-nums; }
+.fleet-durn { width: 60px; text-align: right; flex: none; }
+.fleet-prow { display: flex; align-items: center; gap: 8px; padding: 1.5px 0; }
+.fleet-prov { font-weight: 600; min-width: 62px; text-transform: capitalize; }
+/* per-provider rate-limit caps (ccusage-style segmented bars) */
+.fleet-provcaps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px 22px; }
+.fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 216px; }
+.fleet-provcap-name { font-weight: 700; text-transform: capitalize; font-size: 11px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 6px; }
+.fleet-provcap-model { font-weight: 400; font-size: 9.5px; text-transform: none; letter-spacing: 0; }
+.fleet-capline { display: flex; align-items: center; gap: 8px; }
+.fleet-capline-lbl { width: 20px; flex: none; color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
+.fleet-seg { font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fleet-seg-empty { opacity: 0.3; }
+.fleet-capline-pct { width: 34px; text-align: right; flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fleet-capline-reset { flex: 1; font-size: 10.5px; }
 .splitnode { display: flex; min-width: 0; min-height: 0; flex: 1; }
 .splitnode.sn-row { flex-direction: row; }
 .splitnode.sn-col { flex-direction: column; }
