@@ -15,11 +15,11 @@ fn main() {
         args.get(1).map(String::as_str),
         Some("--version") | Some("-V")
     ) {
-        velaterm_lib::print_version();
+        heddle_lib::print_version();
         return;
     }
     if args.get(1).map(String::as_str) == Some("--vela-help") {
-        velaterm_lib::print_vela_help();
+        heddle_lib::print_vela_help();
         return;
     }
     // Hidden lifecycle-hook/notify subcommands: forward the event and exit without starting the GUI.
@@ -28,9 +28,9 @@ fn main() {
         Some("--notify") | Some("--notify-env") | Some("--codex-hook") | Some("--grok-hook")
     ) {
         match args.get(1).map(String::as_str) {
-            Some("--codex-hook") => velaterm_lib::run_codex_hook(&args),
-            Some("--grok-hook") => velaterm_lib::run_grok_hook(&args),
-            _ => velaterm_lib::run_notify(&args),
+            Some("--codex-hook") => heddle_lib::run_codex_hook(&args),
+            Some("--grok-hook") => heddle_lib::run_grok_hook(&args),
+            _ => heddle_lib::run_notify(&args),
         }
         return;
     }
@@ -38,8 +38,8 @@ fn main() {
     // this binary as a cross-platform replacement for the old shell scripts, read injected VLX_*
     // variables, POST to the local hook service, and exit after forwarding.
     match args.get(1).map(String::as_str) {
-        Some("--spawn") => velaterm_lib::run_spawn(&args),
-        Some("--view") => velaterm_lib::run_view(&args),
+        Some("--spawn") => heddle_lib::run_spawn(&args),
+        Some("--view") => heddle_lib::run_view(&args),
         _ => {}
     }
     // Raise the process's open-file soft limit on paths that can launch PTY sessions: --serve and the
@@ -49,7 +49,7 @@ fn main() {
     // Headless server mode starts browser remote access (HTTPS, login, WebSocket, and PTY) from the CLI
     // without creating a window or requiring a display server.
     if args.get(1).map(String::as_str) == Some("--serve") {
-        velaterm_lib::run_serve(&args);
+        heddle_lib::run_serve(&args);
         return;
     }
     // Everything below is GUI-only. The minimal server either ran --serve above or reaches the
@@ -70,7 +70,7 @@ fn main() {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
-        let open_project = match velaterm_lib::open_project_from_args(
+        let open_project = match heddle_lib::open_project_from_args(
             &args,
             &std::env::current_dir().unwrap_or_default(),
         ) {
@@ -80,7 +80,7 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        velaterm_lib::run(open_project)
+        heddle_lib::run(open_project)
     }
     // The minimal server has no GUI. Reaching this branch means no valid server or shim subcommand was
     // supplied, so print the correct usage and exit with a nonzero status.
@@ -142,7 +142,7 @@ fn hydrate_path_from_login_shell() {
         let mut probe = std::process::Command::new(&shell);
         // Probe the shell with the system environment; otherwise the captured `PATH` would carry the
         // AppImage's bundle directories back into this process.
-        velaterm_lib::appimage::scrub_command(&mut probe);
+        heddle_lib::appimage::scrub_command(&mut probe);
         let out = probe
             .arg("-i")
             .arg("-l")

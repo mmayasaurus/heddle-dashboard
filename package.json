@@ -1,5 +1,5 @@
 {
-  "name": "velaterm",
+  "name": "heddle",
   "private": true,
   "version": "0.1.100",
   "description": "heddle — a terminal multiplexer GUI that manages terminals and AI agent sessions in one project/group/session tree",

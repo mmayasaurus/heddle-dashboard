@@ -566,12 +566,12 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                         "visit-website" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://velaterm.com", None::<&str>);
+                                .open_url("https://heddle.app", None::<&str>);
                         }
                         "send-feedback" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://velaterm.com/feedback", None::<&str>);
+                                .open_url("https://heddle.app/feedback", None::<&str>);
                         }
                         _ => {}
                     }

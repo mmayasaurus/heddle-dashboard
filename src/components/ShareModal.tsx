@@ -30,7 +30,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
 
 /** Public share URL and marketing text; always English rather than localized so shared posts are language-neutral. */
-const SHARE_URL = "https://velaterm.com";
+const SHARE_URL = "https://heddle.app";
 const SHARE_TEXT = "The best terminal for AI coding";
 const SHARE_COPY_TEXT = `${SHARE_TEXT} ${SHARE_URL}`;
 const XIAOHONGSHU_CREATOR_URL = "https://creator.xiaohongshu.com/publish/publish?source=official";

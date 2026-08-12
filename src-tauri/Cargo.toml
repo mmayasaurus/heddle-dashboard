@@ -1,5 +1,5 @@
 [package]
-name = "velaterm"
+name = "heddle"
 version = "0.1.100"
 description = "heddle multi-session terminal manager"
 authors = ["vlinx"]
@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 # The `_lib` suffix avoids a known Windows conflict with the binary name.
-name = "velaterm_lib"
+name = "heddle_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
