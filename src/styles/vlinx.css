@@ -2,7 +2,7 @@
    vlinx.css — Vlinx terminal/agent manager design system.
    Derived from the design handoff at port/src/styles/vlinx.css. CSS variables coexist with Tailwind.
    Theme, density, and layout switch through documentElement data attributes (see theme.ts).
-   [data-accent] provides green, blue, amber, and violet accent presets.
+   [data-accent] provides plum (heddle default), green, blue, amber, and violet accent presets.
    index.html loads JetBrains Mono through a link to avoid @import bundling-order issues.
    ============================================================================ */
 
@@ -13,10 +13,10 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, "VlxSymbols", "Symbola", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", monospace;
   --r-sm: 5px; --r-md: 8px; --r-lg: 12px;
   --pane-gap: 3px;
-  /* accent (overridden by [data-accent] and set inline by App.jsx) */
-  --accent: oklch(0.72 0.15 158);
-  --accent-soft: oklch(0.72 0.15 158 / 0.14);
-  --accent-line: oklch(0.72 0.15 158 / 0.5);
+  /* accent (overridden by [data-accent] and set inline by App.jsx). heddle default = plum. */
+  --accent: oklch(0.68 0.17 344);
+  --accent-soft: oklch(0.68 0.17 344 / 0.14);
+  --accent-line: oklch(0.68 0.17 344 / 0.5);
   /* Official monochrome Grok mark; the light-scheme fallback below reverses it before React mounts. */
   --grok-brand-color: #ffffff;
   /* density (overridden by [data-density]) */
@@ -38,6 +38,7 @@
 [data-accent="blue"]   { --accent: oklch(0.7 0.15 250);  --accent-soft: oklch(0.7 0.15 250/.16);  --accent-line: oklch(0.7 0.15 250/.5); }
 [data-accent="amber"]  { --accent: oklch(0.78 0.15 70);  --accent-soft: oklch(0.78 0.15 70/.16);  --accent-line: oklch(0.78 0.15 70/.5); }
 [data-accent="violet"] { --accent: oklch(0.72 0.15 300); --accent-soft: oklch(0.72 0.15 300/.16); --accent-line: oklch(0.72 0.15 300/.5); }
+[data-accent="plum"]   { --accent: oklch(0.68 0.17 344); --accent-soft: oklch(0.68 0.17 344/.16); --accent-line: oklch(0.68 0.17 344/.5); }
 
 [data-density="compact"]  { --row-h: 24px; --ui-fs: 12px;   --term-fs: 12.5px; --pane-gap: 2px; }
 [data-density="comfy"]    { --row-h: 32px; --ui-fs: 13px;   --term-fs: 14px;  --pane-gap: 4px; }

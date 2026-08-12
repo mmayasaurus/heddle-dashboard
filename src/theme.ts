@@ -15,8 +15,8 @@ export type ResolvedTheme = "dark" | "light";
 /** Legacy store name, equivalent to ThemeMode. */
 export type Theme = ThemeMode;
 
-/** Accent color: 'auto' follows the scheme (dark→green, light→blue); other choices are fixed. */
-export type AccentName = "green" | "blue" | "amber" | "violet";
+/** Accent color: 'auto' resolves to heddle's default plum; other choices are fixed. */
+export type AccentName = "green" | "blue" | "amber" | "violet" | "plum";
 export type AccentChoice = AccentName | "auto";
 /** Interface density. */
 export type Density = "compact" | "regular" | "comfy";
@@ -120,12 +120,12 @@ export function loadTheme(): ThemeMode {
   return v === "dark" || v === "light" ? v : "system";
 }
 
-/** Resolve the 'auto' accent from the current scheme: dark→green, light→blue. */
+/** Resolve the 'auto' accent to heddle's default (plum), scheme-independent; explicit choices win. */
 export function effectiveAccent(
   accent: AccentChoice,
-  resolved: ResolvedTheme,
+  _resolved: ResolvedTheme,
 ): AccentName {
-  if (accent === "auto") return resolved === "dark" ? "green" : "blue";
+  if (accent === "auto") return "plum";
   return accent;
 }
 
