@@ -2445,6 +2445,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "heddle"
+version = "0.1.100"
+dependencies = [
+ "axum",
+ "axum-server",
+ "base64 0.22.1",
+ "block2",
+ "crypto_box",
+ "dirs",
+ "futures-util",
+ "if-addrs",
+ "keyring",
+ "libc",
+ "minisign-verify",
+ "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
+ "pem",
+ "portable-pty",
+ "rcgen",
+ "reqwest",
+ "rlimit",
+ "rusqlite",
+ "russh",
+ "russh-sftp",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "time",
+ "tiny_http",
+ "tokio",
+ "tokio-rustls",
+ "toml_edit 0.25.13+spec-1.1.0",
+ "ureq",
+ "url",
+ "uuid",
+ "webview2-com",
+ "windows 0.61.3",
+ "windows-registry",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7075,59 +7128,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "velaterm"
-version = "0.1.100"
-dependencies = [
- "axum",
- "axum-server",
- "base64 0.22.1",
- "block2",
- "crypto_box",
- "dirs",
- "futures-util",
- "if-addrs",
- "keyring",
- "libc",
- "minisign-verify",
- "objc2",
- "objc2-foundation",
- "objc2-user-notifications",
- "pem",
- "portable-pty",
- "rcgen",
- "reqwest",
- "rlimit",
- "rusqlite",
- "russh",
- "russh-sftp",
- "rust-embed",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "time",
- "tiny_http",
- "tokio",
- "tokio-rustls",
- "toml_edit 0.25.13+spec-1.1.0",
- "ureq",
- "url",
- "uuid",
- "webview2-com",
- "windows 0.61.3",
- "windows-registry",
-]
 
 [[package]]
 name = "version-compare"
