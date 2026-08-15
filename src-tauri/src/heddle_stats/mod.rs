@@ -28,6 +28,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 use serde::Serialize;
 
+mod claude;
 mod codex;
 mod cursor;
 mod gemini;
@@ -276,8 +277,15 @@ pub struct NamedWindow {
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountLimit {
+    /// Stable key for this row within its provider (claude: registry id `acct1`; codex: the wham
+    /// `account_id`; cursor: the session source `cursor-ide` / `cursor-agent-keychain`).
+    pub id: String,
     pub label: String,
     pub plan: Option<String>,
+    /// When THIS account's numbers were captured, and whether that is older than the source's
+    /// freshness threshold (`None` when unknown / not applicable).
+    pub captured_at: Option<i64>,
+    pub stale: Option<bool>,
     pub five_hour: LimitWindow,
     pub seven_day: LimitWindow,
     pub windows: Vec<NamedWindow>,
@@ -323,6 +331,10 @@ pub struct ProviderLimit {
     pub note_codes: Option<Vec<String>>,
     /// Per-account rows for multi-account providers. `None` when the provider has no such notion.
     pub accounts: Option<Vec<AccountLimit>>,
+    /// The `accounts[].id` whose numbers the top-level `fiveHour`/`sevenDay` show — the account
+    /// this process is on (claude: `CLAUDE_CONFIG_DIR` → registry, else the default). `None` when
+    /// the top level is a binding view rather than one account (codex, cursor) or N/A.
+    pub active_account: Option<String>,
     /// Extra named windows beyond 5h/7d, binding (max) across accounts. `None` when the provider
     /// has no such notion; `[]` when it does but none are present right now.
     pub windows: Option<Vec<NamedWindow>>,
@@ -443,6 +455,7 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
         note: None,
         note_codes: None,
         accounts: None,
+        active_account: None,
         windows: None,
     })
 }
@@ -470,7 +483,9 @@ fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if DEDICATED_SOURCES.contains(&provider.as_str()) {
+        // Dedicated-source snapshots and per-account tap files (`claude-acct2.json`, read by
+        // `claude.rs`) are not generic tap entries.
+        if DEDICATED_SOURCES.contains(&provider.as_str()) || provider.contains('-') {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -541,6 +556,11 @@ pub async fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
 fn provider_limits_sync() -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
     let mut out = tap_limits(&usage_dir(), now);
+    // Claude: the per-account view (registry + claude-<id>.json) replaces the plain tap entry.
+    if let Some(c) = claude::limit(now) {
+        out.retain(|l| l.provider != "claude");
+        out.push(c);
+    }
     if let Some(c) = codex::limit(now) {
         out.push(c);
     }
@@ -653,6 +673,7 @@ mod tests {
             note: None,
             note_codes: None,
             accounts: None,
+            active_account: None,
             windows: None,
         };
         let j = serde_json::to_value(&l).unwrap();
@@ -670,6 +691,7 @@ mod tests {
             "note",
             "noteCodes",
             "accounts",
+            "activeAccount",
             "windows",
         ] {
             assert!(j[k].is_null(), "additive key {k} must be null when absent");
@@ -690,6 +712,7 @@ mod tests {
             note: None,
             note_codes: None,
             accounts: None,
+            active_account: None,
             windows: None,
         };
         let mut v = vec![mk("gemini"), mk("codex"), mk("cursor"), mk("claude")];

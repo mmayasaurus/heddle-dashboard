@@ -151,15 +151,26 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
     if raw.is_empty() {
         return None;
     }
+    let captured_at = v["fetched_at"].as_f64().map(|f| f as i64);
+    let stale = is_stale(captured_at, now, STALE_AFTER_SECS);
     let accounts: Vec<AccountLimit> = raw
         .into_iter()
-        .map(|(label, data)| account_from_wham(label, data))
+        .enumerate()
+        .map(|(i, (label, data))| {
+            let mut a = account_from_wham(label, data);
+            a.id = data["account_id"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("acct{}", i + 1));
+            a.captured_at = captured_at;
+            a.stale = stale;
+            a
+        })
         .collect();
 
     let five_hour = binding(accounts.iter().map(|a| &a.five_hour));
     let seven_day = binding(accounts.iter().map(|a| &a.seven_day));
     let windows = binding_named(&accounts);
-    let captured_at = v["fetched_at"].as_f64().map(|f| f as i64);
     let (note_codes, note) = provider_notes(&accounts, mode);
 
     Some(ProviderLimit {
@@ -169,11 +180,12 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
         five_hour,
         seven_day,
         source: Some(SOURCE.to_string()),
-        stale: is_stale(captured_at, now, STALE_AFTER_SECS),
+        stale,
         stale_after_secs: Some(STALE_AFTER_SECS),
         note,
         note_codes: Some(note_codes),
         accounts: Some(accounts),
+        active_account: None,
         windows: Some(windows),
     })
 }
@@ -226,8 +238,11 @@ fn account_label(email: Option<&str>, index: usize) -> String {
 fn account_from_wham(label: String, data: &Value) -> AccountLimit {
     if !data.is_object() {
         return AccountLimit {
+            id: String::new(),
             label,
             plan: None,
+            captured_at: None,
+            stale: None,
             five_hour: LimitWindow::default(),
             seven_day: LimitWindow::default(),
             windows: Vec::new(),
@@ -244,8 +259,11 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
     let (five_hour, seven_day) = windows_from_rate_limit(rl);
     let (note_codes, note) = account_notes(data);
     AccountLimit {
+        id: String::new(),
         label,
         plan: data["plan_type"].as_str().map(str::to_string),
+        captured_at: None,
+        stale: None,
         five_hour,
         seven_day,
         windows: additional_windows(data),

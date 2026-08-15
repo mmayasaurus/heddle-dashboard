@@ -25,6 +25,7 @@
 //!     for the Claude Code item in `agent/usage.rs`) pops a macOS "allow access" prompt the first
 //!     time, so it is OPT-IN: `~/.heddle/usage-sources.json` → `{"cursor": {"keychainCli": true}}`,
 //!     default off, and a failed read backs off for an hour (a 30s poll must never nag).
+//!
 //! Tokens never leave this module: not logged, not written to the snapshot, not in error text.
 //! We never refresh tokens ourselves (mirror the provider's auth, never reimplement it): an expired
 //! session shows up as a note telling Maya to open Cursor / run `cursor-agent login`.
@@ -98,7 +99,10 @@ pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
     let last_attempt = snap
         .as_ref()
         .and_then(|v| v["lastAttemptAt"].as_i64().max(v["capturedAt"].as_i64()));
-    if last_attempt.map(|t| now - t > REFRESH_AFTER_SECS).unwrap_or(true) {
+    if last_attempt
+        .map(|t| now - t > REFRESH_AFTER_SECS)
+        .unwrap_or(true)
+    {
         maybe_spawn_refresh(now, false);
     }
     parse_snapshot(&snap?, now)
@@ -124,11 +128,7 @@ fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
         let ok = fetch_and_write();
         let now = now_secs();
         NEXT_ATTEMPT_AT.store(
-            if ok {
-                0
-            } else {
-                now + FAILURE_BACKOFF_SECS
-            },
+            if ok { 0 } else { now + FAILURE_BACKOFF_SECS },
             Ordering::SeqCst,
         );
         REFRESHING.store(false, Ordering::SeqCst);
@@ -193,11 +193,9 @@ fn ide_session() -> Result<Option<Session>, String> {
     .map_err(|e| format!("cannot open Cursor state.vscdb read-only: {e}"))?;
     conn.busy_timeout(Duration::from_secs(2)).ok();
     let get = |key: &str| -> Option<String> {
-        conn.query_row(
-            "SELECT value FROM ItemTable WHERE key = ?1",
-            [key],
-            |r| r.get::<_, String>(0),
-        )
+        conn.query_row("SELECT value FROM ItemTable WHERE key = ?1", [key], |r| {
+            r.get::<_, String>(0)
+        })
         .ok()
         .filter(|v| !v.is_empty())
     };
@@ -309,9 +307,9 @@ fn fetch_usage_summary(token: &str) -> Result<Value, String> {
             serde_json::from_str::<Value>(&body)
                 .map_err(|e| format!("usage-summary: invalid JSON: {e}"))
         }
-        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
-            Err("usage-summary: HTTP 401/403 — session rejected (expired or signed out)".to_string())
-        }
+        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => Err(
+            "usage-summary: HTTP 401/403 — session rejected (expired or signed out)".to_string(),
+        ),
         Err(ureq::Error::Status(429, _)) => {
             Err("usage-summary: HTTP 429 — rate limited by cursor.com".to_string())
         }
@@ -505,7 +503,9 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
         });
         if enabled
             && limit.map(|l| l > 0.0).unwrap_or(false)
-            && cents(&on_demand["remaining"]).map(|r| r <= 0.0).unwrap_or(false)
+            && cents(&on_demand["remaining"])
+                .map(|r| r <= 0.0)
+                .unwrap_or(false)
         {
             on_demand_hard_stop = true;
             codes.push(CODE_ON_DEMAND_LIMIT_REACHED.to_string());
@@ -527,7 +527,10 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             texts.push("session token expired — sign in to Cursor again".to_string());
         } else if exp - now < TOKEN_EXPIRY_WARN_SECS {
             codes.push(CODE_TOKEN_EXPIRING_SOON.to_string());
-            texts.push(format!("session token expires in {}d", (exp - now) / 86_400));
+            texts.push(format!(
+                "session token expires in {}d",
+                (exp - now) / 86_400
+            ));
         }
     }
     if let Some(err) = acct["error"].as_str() {
@@ -535,8 +538,12 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
         texts.push(format!("last fetch failed: {err}"));
     }
 
+    let fetched_at = acct["fetchedAt"].as_i64();
     AccountLimit {
+        id: source.clone(),
         label,
+        captured_at: fetched_at,
+        stale: is_stale(fetched_at, now, STALE_AFTER_SECS),
         plan: summary["membershipType"]
             .as_str()
             .or(acct["membershipHint"].as_str())

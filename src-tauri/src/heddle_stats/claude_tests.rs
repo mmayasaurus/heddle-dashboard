@@ -1,0 +1,196 @@
+//! Unit tests for `claude.rs` (kept in a sibling file so the source file stays readable).
+
+use super::*;
+
+/// The registry shape the tap and window-keeper use (fake identities).
+const REGISTRY: &str = r#"{
+  "claude": [
+    {"id": "acct1", "configDir": null, "email": "one@example.com", "loggedIn": true},
+    {"id": "acct2", "configDir": "/tmp/heddle-claude-tests/.claude-acct2", "email": "two@example.org", "loggedIn": true},
+    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": true}
+  ]
+}"#;
+
+fn tap_file(model: &str, five: f64, seven: f64, captured: i64, acct: &str) -> String {
+    format!(
+        r#"{{"model":"{model}","rate_limits":{{"five_hour":{{"used_percentage":{five},"resets_at":1786846200}},"seven_day":{{"used_percentage":{seven},"resets_at":1786892400}}}},"capturedAt":{captured},"account":"{acct}","configDir":null}}"#
+    )
+}
+
+/// A scratch usage dir under the OS temp dir, unique per test, removed on drop.
+struct Scratch(PathBuf);
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("heddle-claude-tests-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Scratch(dir)
+    }
+    fn write(&self, name: &str, text: &str) {
+        std::fs::write(self.0.join(name), text).unwrap();
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn registry() -> Vec<Account> {
+    parse_registry(&serde_json::from_str(REGISTRY).unwrap())
+}
+
+#[test]
+fn registry_parses_ids_config_dirs_and_emails() {
+    let r = registry();
+    assert_eq!(r.len(), 3);
+    assert_eq!(r[0].id, "acct1");
+    assert_eq!(r[0].config_dir, None);
+    assert_eq!(
+        r[1].config_dir.as_deref(),
+        Some(Path::new("/tmp/heddle-claude-tests/.claude-acct2"))
+    );
+    assert_eq!(r[2].email.as_deref(), Some("three@example.net"));
+    assert!(parse_registry(&serde_json::json!({})).is_empty());
+}
+
+#[test]
+fn active_account_follows_claude_config_dir_else_the_default() {
+    let r = registry();
+    assert_eq!(
+        active_account(&r, None).map(|a| a.id.as_str()),
+        Some("acct1")
+    );
+    assert_eq!(
+        active_account(
+            &r,
+            Some(Path::new("/tmp/heddle-claude-tests/.claude-acct3"))
+        )
+        .map(|a| a.id.as_str()),
+        Some("acct3")
+    );
+    // Unregistered dir → the default account.
+    assert_eq!(
+        active_account(&r, Some(Path::new("/tmp/heddle-claude-tests/.claude-nope")))
+            .map(|a| a.id.as_str()),
+        Some("acct1")
+    );
+    assert!(active_account(&[], None).is_none());
+}
+
+#[test]
+fn without_a_registry_the_entry_is_the_plain_tap_file() {
+    let s = Scratch::new("noreg");
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 20.0, 9.0, 1_786_822_375, "acct1"),
+    );
+    let l = build(&s.0, &[], None, 1_786_822_400).unwrap();
+    assert_eq!(l.five_hour.used_percentage, Some(20.0));
+    assert!(l.accounts.is_none() && l.active_account.is_none());
+    assert!(build(&Scratch::new("empty").0, &[], None, 0).is_none());
+}
+
+#[test]
+fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_account() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("rows");
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write(
+        "claude-acct2.json",
+        &tap_file("claude-haiku-4-5", 100.0, 2.0, now - 700, "acct2"),
+    );
+    // acct3: no capture yet.
+    let l = build(&s.0, &registry(), None, now).unwrap();
+    assert_eq!(l.provider, "claude");
+    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 3 acct"));
+    assert_eq!(l.active_account.as_deref(), Some("acct1"));
+    assert_eq!(l.five_hour.used_percentage, Some(32.0));
+    assert_eq!(l.source.as_deref(), Some("statusline-tap"));
+    assert_eq!(l.stale, Some(false));
+    let rows = l.accounts.unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].id, "acct1");
+    assert_eq!(rows[0].label, "o…@example.com");
+    assert_eq!(rows[0].five_hour.used_percentage, Some(32.0));
+    assert_eq!(rows[0].captured_at, Some(now - 60));
+    assert_eq!(rows[0].stale, Some(false));
+    assert_eq!(rows[0].limit_reached, Some(false));
+    assert_eq!(rows[0].detail.as_ref().unwrap()["model"], "claude-fable-5");
+    // acct2: at 100% → limitReached + code; captured 700s ago → stale.
+    assert_eq!(rows[1].id, "acct2");
+    assert_eq!(rows[1].limit_reached, Some(true));
+    assert_eq!(rows[1].note_codes, vec![CODE_LIMIT_REACHED]);
+    assert_eq!(rows[1].stale, Some(true));
+    // acct3: no file → explained, unknown.
+    assert_eq!(rows[2].id, "acct3");
+    assert_eq!(rows[2].label, "t…@example.net");
+    assert_eq!(rows[2].five_hour, LimitWindow::default());
+    assert_eq!(rows[2].limit_reached, None);
+    assert_eq!(rows[2].note_codes, vec![CODE_NO_CAPTURE]);
+    // Full emails never leak.
+    let js = serde_json::to_string(&rows).unwrap();
+    assert!(
+        !js.contains("one@") && !js.contains("two@") && !js.contains("three@"),
+        "{js}"
+    );
+}
+
+#[test]
+fn active_account_switches_the_top_level_and_falls_back_to_the_legacy_file() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("active");
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write(
+        "claude-acct2.json",
+        &tap_file("claude-haiku-4-5", 7.0, 2.0, now - 30, "acct2"),
+    );
+    // Running as acct2 → its file is the top level.
+    let l = build(
+        &s.0,
+        &registry(),
+        Some(Path::new("/tmp/heddle-claude-tests/.claude-acct2")),
+        now,
+    )
+    .unwrap();
+    assert_eq!(l.active_account.as_deref(), Some("acct2"));
+    assert_eq!(l.five_hour.used_percentage, Some(7.0));
+    assert!(l.model.as_deref().unwrap().starts_with("claude-haiku-4-5"));
+    // Running as acct3 (no file yet) → legacy last-seen file keeps the summary populated.
+    let l = build(
+        &s.0,
+        &registry(),
+        Some(Path::new("/tmp/heddle-claude-tests/.claude-acct3")),
+        now,
+    )
+    .unwrap();
+    assert_eq!(l.active_account.as_deref(), Some("acct3"));
+    assert_eq!(l.five_hour.used_percentage, Some(32.0));
+}
+
+#[test]
+fn unregistered_per_account_files_are_appended_as_extra_rows() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("extra");
+    s.write(
+        "claude-unknown-claude-x.json",
+        &tap_file("claude-sonnet-5", 3.0, 1.0, now - 10, "unknown-claude-x"),
+    );
+    let l = build(&s.0, &registry(), None, now).unwrap();
+    let rows = l.accounts.unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[3].id, "unknown-claude-x");
+    assert_eq!(rows[3].label, "unknown-claude-x");
+    assert_eq!(rows[3].five_hour.used_percentage, Some(3.0));
+}
