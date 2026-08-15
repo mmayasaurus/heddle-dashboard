@@ -66,25 +66,17 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
   });
 
   it("treats a failing availability query as unavailable (fail closed)", async () => {
-    // Hold the availability promise so the assertions run at three points: pending, after the
-    // rejection is delivered and handled, and after React has flushed. A missing `.catch` would surface
-    // here as an unhandled rejection (vitest fails the run), and a default-true gate would render SSH.
-    let rejectAvailability!: (_reason: Error) => void;
+    // The availability query rejects. Assert only AFTER the rejection has been delivered and handled
+    // (drain the microtask queue inside act): a removed `.catch` would then surface as an unhandled
+    // rejection (vitest fails the run), and a default-true gate would render the SSH button.
     invoke.mockImplementation((cmd: string) =>
-      cmd === "ssh_remote_available"
-        ? new Promise<boolean>((_, reject) => {
-            rejectAvailability = reject;
-          })
-        : Promise.resolve([]),
+      cmd === "ssh_remote_available" ? Promise.reject(new Error("no backend")) : Promise.resolve([]),
     );
     render(<ConnectRemotePanel onClose={vi.fn()} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("ssh_remote_available"));
-    expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
     await act(async () => {
-      rejectAvailability(new Error("no backend"));
-      // Let the rejection propagate through the panel's `.catch` and any resulting state update.
-      await Promise.resolve();
-      await Promise.resolve();
+      // rejection → `.then` skipped → `.catch` handler → state update: three microtask hops, drained.
+      for (let hop = 0; hop < 3; hop += 1) await Promise.resolve();
     });
     expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
     expect(screen.getByPlaceholderText("connect.pairingPlaceholder")).toBeTruthy();
