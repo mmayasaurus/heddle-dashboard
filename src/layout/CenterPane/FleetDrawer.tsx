@@ -12,6 +12,20 @@ import { invoke, isTauri } from "../../ipc/transport";
 interface LimitWindow {
   usedPercentage: number | null;
   resetsAt: number | null; // epoch SECONDS
+  id?: string;
+  label?: string;
+  usedAmount?: number | null;
+  limitAmount?: number | null;
+  unit?: string | null;
+}
+interface ProviderAccount {
+  label?: string;
+  plan?: string;
+  fiveHour?: LimitWindow;
+  sevenDay?: LimitWindow;
+  windows?: LimitWindow[];
+  limitReached?: boolean;
+  note?: string;
 }
 interface ProviderLimit {
   provider: string;
@@ -19,6 +33,12 @@ interface ProviderLimit {
   capturedAt: number | null;
   fiveHour: LimitWindow;
   sevenDay: LimitWindow;
+  source?: string;
+  stale?: boolean;
+  staleAfterSecs?: number;
+  note?: string;
+  accounts?: ProviderAccount[];
+  windows?: LimitWindow[];
 }
 interface Dispatch {
   id: number;
@@ -262,11 +282,13 @@ function CapLine({
   win,
   color,
   now,
+  note,
 }: {
   label: string;
   win: LimitWindow;
   color: string;
   now: number;
+  note?: string;
 }) {
   const pct = win?.usedPercentage;
   return (
@@ -274,7 +296,7 @@ function CapLine({
       <span className="fleet-capline-lbl">{label}</span>
       <SegBar pct={pct} color={color} />
       <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
-      <span className="fleet-dim fleet-capline-reset">
+      <span className="fleet-dim fleet-capline-reset" title={pct == null ? note : undefined}>
         {pct == null ? "no active window" : win?.resetsAt ? `↻ ${fmtReset(win.resetsAt, now)}` : ""}
       </span>
     </div>
@@ -292,8 +314,13 @@ function ProviderCapBlock({
 }) {
   const color = providerColor(p.provider);
   const [refreshing, setRefreshing] = useState(false);
+  const [accountsExpanded, setAccountsExpanded] = useState(false);
   const capturedMinutes = p.capturedAt == null ? null : Math.max(0, Math.floor((now - p.capturedAt * 1_000) / 60_000));
-  const isStale = capturedMinutes != null && capturedMinutes > 30;
+  const isStale = p.stale ?? (capturedMinutes != null && capturedMinutes > 30);
+  const accounts = p.accounts ?? [];
+  const extraWindows = (p.windows ?? []).filter(
+    (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
+  );
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -305,10 +332,11 @@ function ProviderCapBlock({
   };
 
   return (
-    <div className="fleet-provcap">
+    <div className={"fleet-provcap" + (isStale ? " stale" : "")}>
       <div className="fleet-provcap-header">
         <div className="fleet-provcap-name" style={{ color }}>
           {p.provider}
+          {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
           {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
           <button
             className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
@@ -322,12 +350,47 @@ function ProviderCapBlock({
         </div>
         {capturedMinutes != null && (
           <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
-            captured {capturedMinutes}m ago
+            captured {capturedMinutes}m ago{isStale ? " · stale" : ""}
           </span>
         )}
       </div>
-      <CapLine label="5h" win={p.fiveHour} color={color} now={now} />
+      <CapLine label="5h" win={p.fiveHour} color={color} now={now} note={p.note} />
       <CapLine label="7d" win={p.sevenDay} color={color} now={now} />
+      {accounts.length > 1 && (
+        <div className="fleet-provcap-accounts">
+          <button
+            className="fleet-provcap-account-toggle"
+            onClick={() => setAccountsExpanded((expanded) => !expanded)}
+            type="button"
+          >
+            {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
+          </button>
+          {accountsExpanded && accounts.map((account, index) => (
+            <div className="fleet-provcap-account" key={`${account.label ?? "account"}-${index}`}>
+              <span className="fleet-provcap-account-label">{account.label ?? "account"}</span>
+              {account.plan && <span className="fleet-provcap-account-plan">· {account.plan}</span>}
+              <span className="fleet-provcap-account-caps">
+                <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
+                {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
+                {account.fiveHour?.usedPercentage != null && (
+                  <>
+                    <span className="fleet-provcap-account-separator">·</span>
+                    <SegBar pct={account.fiveHour.usedPercentage} color={color} segments={6} /> {Math.round(account.fiveHour.usedPercentage)}%
+                  </>
+                )}
+              </span>
+              {account.limitReached && <span className="fleet-provcap-limit-reached">limit reached</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {extraWindows.map((win, index) => (
+        <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
+          <span>{win.label ?? win.id ?? "window"}</span>
+          <span>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
+          {win.resetsAt && <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now)}</span>}
+        </div>
+      ))}
     </div>
   );
 }

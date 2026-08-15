@@ -348,8 +348,10 @@ svg { display: block; }
 /* per-provider rate-limit caps (ccusage-style segmented bars) */
 .fleet-provcaps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px 22px; }
 .fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 216px; }
+.fleet-provcap.stale { opacity: 0.55; }
 .fleet-provcap-header { display: flex; flex-direction: column; }
 .fleet-provcap-name { font-weight: 700; text-transform: capitalize; font-size: 11px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 6px; }
+.fleet-provcap-note { color: var(--text-faint); cursor: help; font-size: 10px; text-transform: none; }
 .fleet-provcap-model { font-weight: 400; font-size: 9.5px; text-transform: none; letter-spacing: 0; }
 .fleet-provcap-refresh { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-refresh:hover { color: var(--accent); background: var(--bg-hover); }
@@ -363,6 +365,16 @@ svg { display: block; }
 .fleet-seg-empty { opacity: 0.3; }
 .fleet-capline-pct { width: 34px; text-align: right; flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fleet-capline-reset { flex: 1; font-size: 10.5px; }
+.fleet-provcap-accounts { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.fleet-provcap-account-toggle { align-self: flex-start; color: var(--text-dim); font-size: 10px; padding: 0 2px; }
+.fleet-provcap-account-toggle:hover { color: var(--text-faint); background: var(--bg-hover); }
+.fleet-provcap-account { display: flex; align-items: baseline; gap: 3px; color: var(--text-dim); font-size: 10px; }
+.fleet-provcap-account-label { color: var(--text-faint); }
+.fleet-provcap-account-plan { color: var(--text-dim); }
+.fleet-provcap-account-caps { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
+.fleet-provcap-account-separator { color: var(--text-faint); margin-left: 2px; }
+.fleet-provcap-limit-reached { color: var(--red); margin-left: 2px; }
+.fleet-provcap-window { display: flex; align-items: baseline; gap: 6px; color: var(--text-dim); font-size: 10px; }
 @keyframes fleet-spin { to { transform: rotate(360deg); } }
 .splitnode { display: flex; min-width: 0; min-height: 0; flex: 1; }
 .splitnode.sn-row { flex-direction: row; }
