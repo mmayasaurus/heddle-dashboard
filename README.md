@@ -151,4 +151,4 @@ this fork builds on. Both notices are retained in [LICENSE](LICENSE); everything
 [MIT License](LICENSE).
 
 You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of heddle, for
-any purpose, as long as both copyright notices and the licence text travel with it.
+any purpose, as long as both copyright notices and the license text travel with it.
