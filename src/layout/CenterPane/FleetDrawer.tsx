@@ -69,11 +69,21 @@ function fmtDur(ms: number | null | undefined): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return now;
+}
 /** Countdown to a reset time given as epoch SECONDS: "3h 30m" / "2d 22h" / "5m". */
-function fmtReset(resetsAtSec: number | null | undefined): string {
+function fmtReset(resetsAtSec: number | null | undefined, now: number): string {
   if (!resetsAtSec) return "";
-  let s = resetsAtSec - Math.floor(Date.now() / 1000);
-  if (s <= 0) return "now";
+  let s = resetsAtSec - Math.floor(now / 1000);
+  if (s <= 0) return "resetting…";
   const d = Math.floor(s / 86400);
   s -= d * 86400;
   const h = Math.floor(s / 3600);
@@ -85,6 +95,7 @@ function fmtReset(resetsAtSec: number | null | undefined): string {
 }
 
 export function FleetDrawer() {
+  const now = useNow();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
   const [limits, setLimits] = useState<ProviderLimit[]>([]);
   const [inFlight, setInFlight] = useState<Dispatch[]>([]);
@@ -149,7 +160,7 @@ export function FleetDrawer() {
             </span>
             <b style={{ color: providerColor("claude") }}>{Math.round(c5)}%</b>
             {claude.fiveHour.resetsAt ? (
-              <span className="fleet-dim">&nbsp;· {fmtReset(claude.fiveHour.resetsAt)}</span>
+              <span className="fleet-dim">&nbsp;· {fmtReset(claude.fiveHour.resetsAt, now)}</span>
             ) : null}
           </span>
         ) : (
@@ -181,7 +192,7 @@ export function FleetDrawer() {
           ) : (
             <div className="fleet-provcaps">
               {limits.map((p) => (
-                <ProviderCapBlock key={p.provider} p={p} />
+                <ProviderCapBlock key={p.provider} p={p} now={now} onRefresh={refresh} />
               ))}
             </div>
           )}
@@ -246,37 +257,77 @@ function SegBar({
   );
 }
 
-function CapLine({ label, win, color }: { label: string; win: LimitWindow; color: string }) {
+function CapLine({
+  label,
+  win,
+  color,
+  now,
+}: {
+  label: string;
+  win: LimitWindow;
+  color: string;
+  now: number;
+}) {
   const pct = win?.usedPercentage;
   return (
     <div className="fleet-capline">
       <span className="fleet-capline-lbl">{label}</span>
       <SegBar pct={pct} color={color} />
-      <span className="fleet-capline-pct">{pct == null ? "—" : `${Math.round(pct)}%`}</span>
+      <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
       <span className="fleet-dim fleet-capline-reset">
-        {win?.resetsAt ? `↻ ${fmtReset(win.resetsAt)}` : ""}
+        {pct == null ? "no active window" : win?.resetsAt ? `↻ ${fmtReset(win.resetsAt, now)}` : ""}
       </span>
     </div>
   );
 }
 
-function ProviderCapBlock({ p }: { p: ProviderLimit }) {
+function ProviderCapBlock({
+  p,
+  now,
+  onRefresh,
+}: {
+  p: ProviderLimit;
+  now: number;
+  onRefresh: () => Promise<void>;
+}) {
   const color = providerColor(p.provider);
-  const has = p.fiveHour?.usedPercentage != null || p.sevenDay?.usedPercentage != null;
+  const [refreshing, setRefreshing] = useState(false);
+  const capturedMinutes = p.capturedAt == null ? null : Math.max(0, Math.floor((now - p.capturedAt * 1_000) / 60_000));
+  const isStale = capturedMinutes != null && capturedMinutes > 30;
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="fleet-provcap">
-      <div className="fleet-provcap-name" style={{ color }}>
-        {p.provider}
-        {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+      <div className="fleet-provcap-header">
+        <div className="fleet-provcap-name" style={{ color }}>
+          {p.provider}
+          {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+          <button
+            className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
+            disabled={refreshing}
+            onClick={() => void handleRefresh()}
+            title={`Refresh ${p.provider} caps`}
+            type="button"
+          >
+            ⟳
+          </button>
+        </div>
+        {capturedMinutes != null && (
+          <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
+            captured {capturedMinutes}m ago
+          </span>
+        )}
       </div>
-      {has ? (
-        <>
-          <CapLine label="5h" win={p.fiveHour} color={color} />
-          <CapLine label="7d" win={p.sevenDay} color={color} />
-        </>
-      ) : (
-        <div className="fleet-dim fleet-empty">no rate-limit data in payload</div>
-      )}
+      <CapLine label="5h" win={p.fiveHour} color={color} now={now} />
+      <CapLine label="7d" win={p.sevenDay} color={color} now={now} />
     </div>
   );
 }
