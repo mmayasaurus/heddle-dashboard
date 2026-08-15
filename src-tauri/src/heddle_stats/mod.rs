@@ -7,7 +7,8 @@
 //!     how it turned out (orchestrator, task class, model, tokens, pass/fail, in-flight).
 //!   - **provider rate-limit caps** (`heddle_provider_limits`) → the TRUE per-provider cap numbers,
 //!     one source per provider (see `docs/USAGE_TAP.md`): Claude from the statusline tap
-//!     (`~/.heddle/usage/claude.json`), Codex from the claudex-usage cache (`codex.rs`).
+//!     (`~/.heddle/usage/claude.json`), Codex from the claudex-usage cache (`codex.rs`), Gemini
+//!     from `agy -p /quota` cached to `~/.heddle/usage/gemini.json` (`gemini.rs`).
 //!
 //! Everything here is read-only and best-effort: a missing ccusage or ledger yields an empty/typed
 //! result rather than an error, so the drawer degrades gracefully instead of failing the whole app.
@@ -18,42 +19,25 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 use serde::Serialize;
 
 mod codex;
+mod gemini;
 pub mod roster;
+mod util;
+
+pub(crate) use util::{
+    augmented_path, is_stale, mask_email, now_secs, run_with_timeout, usage_dir, write_json_atomic,
+    RefreshGate,
+};
 
 fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
 }
 
 // ─────────────────────────── ccusage (provider caps) ───────────────────────────
-
-/// GUI apps launched from Finder/Dock don't inherit the shell PATH, so `ccusage` / `claudex-usage` /
-/// `agy` (installed via bun/npm/brew/curl) won't resolve by bare name. APPEND the usual install homes
-/// (after the inherited PATH, so a user's own ordering still wins) using the platform's separator.
-fn augmented_path() -> std::ffi::OsString {
-    let h = home();
-    let extra = [
-        h.join(".bun/bin"),
-        h.join(".npm-global/bin"),
-        h.join(".local/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ];
-    let current = std::env::var_os("PATH").unwrap_or_default();
-    let mut dirs: Vec<PathBuf> = std::env::split_paths(&current).collect();
-    for p in extra {
-        if !dirs.contains(&p) {
-            dirs.push(p);
-        }
-    }
-    // join_paths only fails if a dir contains the separator itself; keep the inherited PATH then.
-    std::env::join_paths(dirs).unwrap_or(current)
-}
 
 /// Run `ccusage <args…> --json` and parse stdout. Best-effort: `Null` when ccusage is absent or
 /// errors, so the UI shows "usage unavailable" instead of failing the whole drawer.
@@ -323,31 +307,6 @@ pub struct ProviderLimit {
 /// present an old number as live.
 const TAP_STALE_AFTER_SECS: i64 = 600;
 
-pub(crate) fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// `Some(true)` when the capture is older than `after` seconds; `None` when there is nothing to
-/// judge (no capture time).
-pub(crate) fn is_stale(captured_at: Option<i64>, now: i64, after: i64) -> Option<bool> {
-    captured_at.map(|t| now - t > after)
-}
-
-/// Mask an email for display: first character of the local part + the full domain
-/// ("alice@example.com" → "a…@example.com"). Anything that isn't `local@domain` is returned as-is.
-pub(crate) fn mask_email(email: &str) -> String {
-    match email.split_once('@') {
-        Some((local, domain)) if !local.is_empty() && !domain.is_empty() => {
-            let first = local.chars().next().unwrap_or('?');
-            format!("{first}…@{domain}")
-        }
-        _ => email.to_string(),
-    }
-}
-
 /// Parse one statusline-tap snapshot (`~/.heddle/usage/<provider>.json`, written by
 /// `~/.heddle/usage-tap.mjs`): `{model, rate_limits:{five_hour,seven_day}, capturedAt}` where
 /// `capturedAt` / `resets_at` are epoch seconds. `None` when the file isn't a tap snapshot.
@@ -374,8 +333,13 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
     })
 }
 
-/// Read every tap snapshot in `dir`. Best-effort: unreadable/non-tap files are skipped. Codex is
-/// deliberately not read from a tap file — its source is the claudex-usage cache (`codex.rs`).
+/// Providers whose snapshot in `~/.heddle/usage/` is owned by a dedicated source module rather than
+/// the tap: `codex.json` (never written; Codex reads the claudex-usage cache directly) and
+/// `gemini.json` (written by `gemini.rs`, which also reads it back with its extras).
+const DEDICATED_SOURCES: [&str; 2] = ["codex", "gemini"];
+
+/// Read every tap snapshot in `dir`. Best-effort: unreadable/non-tap files are skipped; providers
+/// with a dedicated source module are skipped here and appended by that module.
 fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -391,7 +355,7 @@ fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if provider == "codex" {
+        if DEDICATED_SOURCES.contains(&provider.as_str()) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -422,18 +386,32 @@ pub(crate) fn sort_limits(out: &mut [ProviderLimit]) {
 }
 
 /// Every provider's live rate-limit snapshot: the statusline tap files in `~/.heddle/usage/`
-/// (claude) plus Codex from the claudex-usage cache. Best-effort — absent sources simply yield
-/// fewer entries. Cheap (file reads only); slow sources refresh themselves out-of-band.
+/// (claude), Codex from the claudex-usage cache, Gemini from the agy snapshot. Best-effort — absent
+/// sources simply yield fewer entries. Cheap (file reads only); slow sources refresh themselves
+/// out-of-band (detached, never blocking this call) when their snapshot is getting old.
 #[tauri::command]
-pub async fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
-    blocking(provider_limits_sync).await
+pub async fn heddle_provider_limits(app: tauri::AppHandle) -> Result<Vec<ProviderLimit>, String> {
+    blocking(move || provider_limits_sync(&crate::host::AppCtx::Tauri(app))).await
 }
 
-fn provider_limits_sync() -> Result<Vec<ProviderLimit>, String> {
+/// The Antigravity executable to refresh Gemini quota with: the path configured for Antigravity
+/// sessions (Settings → agent defaults), else a located install, else bare `agy` resolved on the
+/// augmented PATH — the same order session launches use, so the dashboard queries the SAME agy
+/// (and login) as the terminals.
+fn agy_bin(ctx: &crate::host::AppCtx) -> String {
+    crate::pty::manager::agent_bin_path(ctx, crate::models::SessionKind::Antigravity)
+        .or_else(|| crate::agent::install::locate_installed_bin("antigravity"))
+        .unwrap_or_else(|| "agy".to_string())
+}
+
+fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
-    let mut out = tap_limits(&home().join(".heddle").join("usage"), now);
+    let mut out = tap_limits(&usage_dir(), now);
     if let Some(c) = codex::limit(now) {
         out.push(c);
+    }
+    if let Some(g) = gemini::limit(now, &agy_bin(ctx)) {
+        out.push(g);
     }
     sort_limits(&mut out);
     Ok(out)
@@ -445,126 +423,28 @@ fn provider_limits_sync() -> Result<Vec<ProviderLimit>, String> {
 /// tap-driven (a session must render its statusline), so it is never in the list.
 #[tauri::command]
 pub async fn heddle_refresh_provider_limits(
+    app: tauri::AppHandle,
     provider: Option<String>,
 ) -> Result<Vec<String>, String> {
-    blocking(move || refresh_provider_limits_sync(provider)).await
+    blocking(move || refresh_provider_limits_sync(&crate::host::AppCtx::Tauri(app), provider)).await
 }
 
-fn refresh_provider_limits_sync(provider: Option<String>) -> Result<Vec<String>, String> {
+fn refresh_provider_limits_sync(
+    ctx: &crate::host::AppCtx,
+    provider: Option<String>,
+) -> Result<Vec<String>, String> {
     let want = |p: &str| provider.as_deref().map(|w| w == p).unwrap_or(true);
     let mut kicked = Vec::new();
-    if want("codex") && codex::force_refresh(now_secs()) {
+    let now = now_secs();
+    if want("codex") && codex::force_refresh(now) {
         kicked.push("codex".to_string());
+    }
+    if want("gemini") && gemini::force_refresh(now, &agy_bin(ctx)) {
+        kicked.push("gemini".to_string());
     }
     Ok(kicked)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn mask_email_keeps_first_char_and_domain() {
-        assert_eq!(mask_email("alice@example.com"), "a…@example.com");
-        assert_eq!(
-            mask_email("6@privaterelay.appleid.com"),
-            "6…@privaterelay.appleid.com"
-        );
-        assert_eq!(mask_email("?"), "?");
-        assert_eq!(mask_email("@example.com"), "@example.com");
-        assert_eq!(mask_email(""), "");
-    }
-
-    #[test]
-    fn staleness_is_judged_against_the_source_threshold() {
-        assert_eq!(is_stale(Some(1_000), 1_100, 300), Some(false));
-        assert_eq!(is_stale(Some(1_000), 1_301, 300), Some(true));
-        assert_eq!(is_stale(None, 1_000, 300), None);
-    }
-
-    #[test]
-    fn tap_snapshot_parses_to_the_original_shape_plus_source_and_staleness() {
-        let v: serde_json::Value = serde_json::from_str(
-            r#"{"model":"claude-fable-5","rate_limits":{"five_hour":{"used_percentage":20,"resets_at":1786828200},"seven_day":{"used_percentage":9,"resets_at":1786892400}},"capturedAt":1786822375}"#,
-        )
-        .unwrap();
-        let l = tap_limit("claude", &v, 1786822375 + 60).unwrap();
-        assert_eq!(l.provider, "claude");
-        assert_eq!(l.model.as_deref(), Some("claude-fable-5"));
-        assert_eq!(l.captured_at, Some(1786822375));
-        assert_eq!(l.five_hour.used_percentage, Some(20.0));
-        assert_eq!(l.five_hour.resets_at, Some(1786828200));
-        assert_eq!(l.seven_day.used_percentage, Some(9.0));
-        assert_eq!(l.source.as_deref(), Some("statusline-tap"));
-        assert_eq!(l.stale, Some(false));
-        assert!(l.accounts.is_none() && l.windows.is_none() && l.note.is_none());
-        // Ten minutes later with no re-render: flagged, not hidden.
-        let old = tap_limit("claude", &v, 1786822375 + 601).unwrap();
-        assert_eq!(old.stale, Some(true));
-    }
-
-    #[test]
-    fn non_tap_json_is_ignored_by_the_tap_reader() {
-        let v: serde_json::Value = serde_json::json!({"anything": "else"});
-        assert!(tap_limit("gemini", &v, 0).is_none());
-    }
-
-    #[test]
-    fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
-        let l = ProviderLimit {
-            provider: "claude".into(),
-            model: None,
-            captured_at: None,
-            five_hour: LimitWindow::default(),
-            seven_day: LimitWindow::default(),
-            source: None,
-            stale: None,
-            stale_after_secs: None,
-            note: None,
-            note_codes: None,
-            accounts: None,
-            windows: None,
-        };
-        let j = serde_json::to_value(&l).unwrap();
-        for k in ["provider", "model", "capturedAt", "fiveHour", "sevenDay"] {
-            assert!(j.get(k).is_some(), "original key {k} must stay");
-        }
-        assert_eq!(
-            j["fiveHour"],
-            serde_json::json!({"usedPercentage": null, "resetsAt": null})
-        );
-        for k in [
-            "source",
-            "stale",
-            "staleAfterSecs",
-            "note",
-            "noteCodes",
-            "accounts",
-            "windows",
-        ] {
-            assert!(j[k].is_null(), "additive key {k} must be null when absent");
-        }
-    }
-
-    #[test]
-    fn drawer_order_is_claude_codex_then_alphabetical() {
-        let mk = |p: &str| ProviderLimit {
-            provider: p.into(),
-            model: None,
-            captured_at: None,
-            five_hour: LimitWindow::default(),
-            seven_day: LimitWindow::default(),
-            source: None,
-            stale: None,
-            stale_after_secs: None,
-            note: None,
-            note_codes: None,
-            accounts: None,
-            windows: None,
-        };
-        let mut v = vec![mk("gemini"), mk("codex"), mk("cursor"), mk("claude")];
-        sort_limits(&mut v);
-        let order: Vec<&str> = v.iter().map(|l| l.provider.as_str()).collect();
-        assert_eq!(order, ["claude", "codex", "cursor", "gemini"]);
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;
