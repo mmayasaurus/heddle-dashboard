@@ -24,7 +24,7 @@ Working with coding agents breaks the assumptions traditional terminals were bui
 - **Tied to one desk.** Long-running tasks keep going after you walk away, with no way to check in.
 
 heddle addresses each of these directly: a persistent session tree, live per-session agent status,
-transcripts that survive restarts, and remote access from a browser or over SSH.
+transcripts that survive restarts, and remote access from a browser.
 
 ## Features
 
@@ -40,8 +40,9 @@ transcripts that survive restarts, and remote access from a browser or over SSH.
 - **Document, image, and browser tabs** — open Markdown in a WYSIWYG editor, source files with syntax
   highlighting, images in a viewer, and URLs in a built-in browser tab.
 - **Git integration** — branch, ahead/behind, and change counts per session, plus common actions.
-- **Remote access** — reach your sessions from a browser with end-to-end encrypted device pairing, or
-  connect to a remote machine over SSH and run sessions there.
+- **Remote access** — reach your sessions from a browser with end-to-end encrypted device pairing.
+  (Upstream's SSH remote development — which provisions VelaTerm's server binary onto the remote host —
+  is disabled in heddle builds until heddle ships its own server; the code stays, gated off.)
 - **Mobile view** — a browser layout tuned for phones, served by the same remote access stack.
 - **Themes and i18n** — light/dark themes that follow the system, and a fully translated interface.
 

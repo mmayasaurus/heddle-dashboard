@@ -234,6 +234,12 @@ pub const GIT_COMMIT: &str = match option_env!("VLX_GIT_COMMIT") {
 /// Binary semver from Cargo.toml.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// heddle's home on GitHub — the only external destinations the Help menu opens (HED-38: no
+/// auto-updater, no VelaTerm/heddle.app hosts).
+pub const HEDDLE_REPO_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard";
+pub const HEDDLE_ISSUES_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard/issues";
+pub const HEDDLE_RELEASES_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard/releases";
+
 /// Print stable version/commit output for --version/-V and exit without windows or services.
 ///
 /// SSH provisioning parses line one as `velaterm <semver>` and line two as `commit: <hash>` to decide
@@ -392,10 +398,8 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        // Desktop updater checks latest.json and installs signed packages; process supports relaunch.
-        // Endpoint/key live in tauri.conf.json, and release.sh enables artifacts only with a signing key.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        // No auto-updater: heddle never phones an update endpoint (HED-38). Releases are published on
+        // GitHub; the Help menu links there. (The updater + process plugins were removed with it.)
         .manage(PtyManager::new())
         .manage(WebServer::new())
         .manage(browser::BrowserManager::new())
@@ -441,8 +445,9 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     .version(Some(app.package_info().version.to_string()))
                     .copyright(Some("A product by VLINX"))
                     .build();
-                let check_update_item =
-                    MenuItemBuilder::with_id("check-update", "Check for Updates…").build(app)?;
+                // No in-app updater (HED-38): point users at the GitHub releases page instead.
+                let releases_item =
+                    MenuItemBuilder::with_id("releases", "Releases on GitHub…").build(app)?;
                 let settings_item = MenuItemBuilder::with_id("settings", "Settings…")
                     .accelerator("CmdOrCtrl+,")
                     .build(app)?;
@@ -460,7 +465,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 .build(app)?;
                 let app_menu = SubmenuBuilder::new(app, &app_name)
                     .about(Some(about_meta))
-                    .item(&check_update_item)
+                    .item(&releases_item)
                     .separator()
                     .item(&settings_item)
                     .separator()
@@ -519,7 +524,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     let id = event.id().0.as_str();
                     match id {
                         // Forward custom application and terminal commands to the frontend.
-                        "settings" | "check-update" | "share" | "split-right" | "split-down" => {
+                        "settings" | "share" | "split-right" | "split-down" => {
                             let _ = app_handle.emit("menu://action", id);
                         }
                         // Like VS Code, install/remove the PATH shim only on explicit user action and
@@ -565,16 +570,22 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                                 .kind(kind)
                                 .show(|_| {});
                         }
-                        // Open help URLs directly through the Rust-side opener.
+                        // Open help URLs directly through the Rust-side opener. All of them point at the
+                        // heddle GitHub repository — the app never contacts a VelaTerm/heddle.app host.
                         "visit-website" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://heddle.app", None::<&str>);
+                                .open_url(HEDDLE_REPO_URL, None::<&str>);
                         }
                         "send-feedback" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://heddle.app/feedback", None::<&str>);
+                                .open_url(HEDDLE_ISSUES_URL, None::<&str>);
+                        }
+                        "releases" => {
+                            let _ = app_handle
+                                .opener()
+                                .open_url(HEDDLE_RELEASES_URL, None::<&str>);
                         }
                         _ => {}
                     }
@@ -822,6 +833,8 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             commands::url_trust_fingerprint,
             commands::open_devtools,
             // Desktop-only SSH connection, provisioning, serve, forwarding, and auto-login.
+            // (Disabled in heddle builds — HED-42; `ssh_remote_available` tells the UI.)
+            commands::ssh_remote_available,
             commands::ssh_probe_host,
             commands::ssh_trust_host,
             commands::ssh_connect,

@@ -612,9 +612,26 @@ pub fn open_devtools(window: tauri::WebviewWindow) {
 
 // SSH commands are async plus spawn_blocking because network/SSH/scp I/O must never occupy the UI thread.
 
+/// Whether SSH remote development (provision + serve on a remote host) exists in this build. heddle
+/// ships it disabled (HED-42); the Connect panel hides the SSH mode when this is false.
+#[tauri::command]
+pub fn ssh_remote_available() -> bool {
+    crate::ssh_remote::SSH_REMOTE_ENABLED
+}
+
+/// Refuse SSH-remote entry points while the feature is disabled (HED-42), before any network I/O.
+fn ssh_remote_gate() -> Result<(), String> {
+    if crate::ssh_remote::SSH_REMOTE_ENABLED {
+        Ok(())
+    } else {
+        Err(crate::ssh_remote::SSH_REMOTE_DISABLED_MSG.to_string())
+    }
+}
+
 /// Probe a remote host key and compare known_hosts so the frontend can confirm new/changed hosts.
 #[tauri::command]
 pub async fn ssh_probe_host(host: String) -> Result<crate::ssh_remote::HostKeyProbe, String> {
+    ssh_remote_gate()?;
     tauri::async_runtime::spawn_blocking(move || crate::ssh_remote::probe_host_key(&host))
         .await
         .map_err(|e| format!("fingerprint probe task failed: {e}"))?
@@ -623,6 +640,7 @@ pub async fn ssh_probe_host(host: String) -> Result<crate::ssh_remote::HostKeyPr
 /// Store a user-confirmed fingerprint in known_hosts, replacing the old entry when changed.
 #[tauri::command]
 pub async fn ssh_trust_host(host: String, was_changed: bool) -> Result<(), String> {
+    ssh_remote_gate()?;
     tauri::async_runtime::spawn_blocking(move || crate::ssh_remote::trust_host(&host, was_changed))
         .await
         .map_err(|e| format!("trust-write task failed: {e}"))?
@@ -646,6 +664,7 @@ pub async fn ssh_connect(
     remember: Option<bool>,
     shared_db: Option<bool>,
 ) -> Result<String, String> {
+    ssh_remote_gate()?;
     // Data mode defaults to an isolated database; true reuses the remote desktop release database.
     let shared_db = shared_db.unwrap_or(false);
     let data_dir = app

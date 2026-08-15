@@ -21,10 +21,9 @@ gui = [
     "dep:tauri-plugin-dialog",
     "dep:tauri-plugin-notification",
     "dep:tauri-plugin-clipboard-manager",
-    "dep:tauri-plugin-updater",
-    "dep:tauri-plugin-process",
     "dep:tauri-plugin-single-instance",
-    # GUI SSH client verification of vela-server minisign signatures using the updater public key.
+    # GUI SSH client verification of vela-server minisign signatures (server_supply.rs embeds the key;
+    # the whole SSH-remote provisioning path is disabled — HED-42).
     "dep:minisign-verify",
     # Pure-Rust russh transport required only by the GUI SSH client.
     "dep:russh",
@@ -48,9 +47,7 @@ tauri-plugin-notification = { version = "2", optional = true }
 # Remote wry windows use the clipboard plugin because macOS WebView rejects asynchronous gesture-free
 # navigator.clipboard writes. Runtime capabilities authorize write_text in the remote context.
 tauri-plugin-clipboard-manager = { version = "2", optional = true }
-# Desktop updater checks latest.json, installs signed packages, and relaunches through the process plugin.
-tauri-plugin-updater = { version = "2", optional = true }
-tauri-plugin-process = { version = "2", optional = true }
+# No auto-updater plugin (HED-38): heddle never checks an update endpoint; releases live on GitHub.
 # A second `vela <path>` process forwards the path to the running window and exits immediately.
 tauri-plugin-single-instance = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
