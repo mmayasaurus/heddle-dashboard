@@ -7,7 +7,9 @@
 #   semgrep   — registry rulesets p/typescript + p/react + p/rust. DIFF-AWARE on PRs
 #               (--baseline-commit = the PR's base SHA: only findings this PR
 #               introduces), FULL on pushes to main (so the Security tab holds
-#               the whole picture, not just deltas).
+#               the whole picture, not just deltas). PR-controlled
+#               suppressions (.semgrepignore, inline nosemgrep) are
+#               neutralised — see the Scan step.
 #   gitleaks  — secrets in exactly the PR's commit range (base.sha..head.sha),
 #               values REDACTED. Runs the official gitleaks CLI image directly
 #               rather than gitleaks-action: the action lists PR commits with
@@ -46,7 +48,10 @@ name: Deterministic Review
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    # `edited` is here for ONE reason: retargeting the PR's base branch moves
+    # semgrep's baseline and gitleaks' commit range, so the scans must re-run.
+    # `edited` also fires on title/body edits — the job guards below skip those.
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   push:
     branches: [main]
 
@@ -64,11 +69,14 @@ jobs:
     # Every push to main is scanned. PRs: skip drafts and Dependabot's own PRs
     # (Dependabot gets a read-only token that cannot upload SARIF — semgrep's
     # sample config skips them too); the guard is PR-only so a main push whose
-    # actor happens to be dependabot is still scanned.
+    # actor happens to be dependabot is still scanned. `edited` events run only
+    # when the BASE branch changed (payload carries changes.base) — title/body
+    # edits do not move the baseline.
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.draft == false &&
-       github.actor != 'dependabot[bot]')
+       github.actor != 'dependabot[bot]' &&
+       (github.event.action != 'edited' || github.event.changes.base.ref.from != ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -95,10 +103,30 @@ jobs:
         # POSIX sh on purpose: inside a `container:` the runner defaults to
         # `sh -e`, not bash (first run of this workflow proved it — a bash
         # array here failed with "syntax error: unexpected (").
+        #
+        # PR-controlled suppressions are neutralised (CodeRabbit, r3): every
+        # `.semgrepignore` in the PR tree is replaced by the BASE branch's copy
+        # (or removed if the base has none) and that swap is committed LOCALLY —
+        # `--baseline-commit` refuses a dirty tree, and the commit never leaves
+        # the runner (no credentials in .git). Inline `nosemgrep` comments are
+        # ignored via --disable-nosem. `.gitignore` is not a vector: semgrep
+        # only applies it to UNTRACKED files, and PR files are tracked.
         run: |
           set -u
+          if [ -n "$BASELINE" ]; then
+            git ls-files -- '.semgrepignore' '*/.semgrepignore' | while IFS= read -r f; do
+              git rm -q -- "$f"
+            done
+            git ls-tree -r --name-only "$BASELINE" | grep -E '(^|/)\.semgrepignore$' | while IFS= read -r f; do
+              mkdir -p "$(dirname "$f")"; git show "$BASELINE:$f" > "$f"; git add -- "$f"
+            done
+            if ! git diff --cached --quiet; then
+              git -c user.name=ci -c user.email=ci@localhost commit -q -m "ci: base-branch .semgrepignore for the diff-aware scan"
+              echo "::notice::.semgrepignore differs from the base branch — scanned with the base branch's copy"
+            fi
+          fi
           set -- scan --config p/typescript --config p/react --config p/rust \
-                 --metrics=off --sarif-output=semgrep.sarif \
+                 --metrics=off --disable-nosem --sarif-output=semgrep.sarif \
                  --exclude node_modules --exclude dist --exclude src-tauri/target --exclude src-tauri/gen
           if [ -n "$BASELINE" ]; then
             echo "diff-aware scan: baseline $BASELINE"
@@ -109,8 +137,9 @@ jobs:
           # No --error: report-only tier. A tool crash / unparseable output is
           # still an honest red (the upload step needs the file).
           semgrep "$@"
-          # One-line receipt in the job summary (jq ships in the image).
-          N=$(jq '.runs[0].results | length' semgrep.sarif)
+          # One-line receipt in the job summary. python3 is guaranteed in the
+          # image (the semgrep CLI is a Python package); jq is not (qodo, r3).
+          N=$(python3 -c 'import json; print(len(json.load(open("semgrep.sarif"))["runs"][0]["results"]))')
           echo "semgrep: **$N** finding(s) (${BASELINE:+new vs base}${BASELINE:-full scan})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SARIF to code scanning
@@ -127,8 +156,11 @@ jobs:
   gitleaks:
     name: gitleaks (secrets in the PR's commits)
     # PRs only — drafts INCLUDED (a leaked secret does not wait for
-    # ready_for_review). Push-to-main coverage is GitHub secret scanning.
-    if: github.event_name == 'pull_request'
+    # ready_for_review); `edited` only when the base branch changed (the
+    # scanned range moves). Push-to-main coverage is GitHub secret scanning.
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action != 'edited' || github.event.changes.base.ref.from != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -153,24 +185,53 @@ jobs:
         # POSIX sh (container job — see the semgrep step). Exit code 2 = leaks
         # found (job goes red); anything else non-zero = tool/infra error.
         # --redact keeps values out of logs AND out of the report; the report
-        # is uploaded to code scanning below (rule/file/line only). Suppression
-        # files (.gitleaks.toml / .gitleaksignore) are PR-controlled: a PR that
-        # touches them is flagged in the summary so a "clean" result on such a
-        # PR is reviewed by hand (Spinventory det-tier finding, #2077).
+        # is uploaded to code scanning below (rule/file/line only).
+        #
+        # Suppressions are PR-CONTROLLED (.gitleaks.toml, .gitleaksignore,
+        # inline `gitleaks:allow` comments) — a PR (or fork) that ships a
+        # lenient config would otherwise scan itself green. So the scan always
+        # uses the BASE branch's suppression files (a default-rules stub when
+        # the base has none), never the PR's, and inline allow-comments are
+        # ignored. Consequence: a suppression must land on main first (its own
+        # config-only PR, reviewed by a human) before a PR can benefit from it.
+        # A PR that touches those files is additionally flagged in the summary
+        # (Spinventory det-tier finding, #2077).
         run: |
           set -u
           echo "scanning $BASE..$HEAD"
+          S="${RUNNER_TEMP:-/tmp}/gitleaks-base"; mkdir -p "$S/ignore"
+          if git cat-file -e "$BASE:.gitleaks.toml" 2>/dev/null; then
+            git show "$BASE:.gitleaks.toml" > "$S/gitleaks.toml"
+            echo "using .gitleaks.toml from the base branch"
+          else
+            printf '[extend]\nuseDefault = true\n' > "$S/gitleaks.toml"
+          fi
+          if git cat-file -e "$BASE:.gitleaksignore" 2>/dev/null; then
+            git show "$BASE:.gitleaksignore" > "$S/ignore/.gitleaksignore"
+            echo "using .gitleaksignore from the base branch"
+          fi
+          # gitleaks ALSO merges <source>/.gitleaksignore unconditionally
+          # (cmd/root.go, v8.30.1) and would read <source>/.gitleaks.toml
+          # without --config — so the PR's working-tree copies are moved out
+          # of the way (the scan reads git HISTORY, not the working tree, so
+          # this changes nothing about what is scanned). (cubic P1, r3)
+          for f in .gitleaksignore .gitleaks.toml; do
+            [ -e "$f" ] && mv -f -- "$f" "$S/pr-copy-$f"
+          done
           # `|| rc=$?` — the runner's `sh -e` would otherwise abort on the
           # exit-2 hit before the summary line below is written.
           rc=0
           gitleaks git --log-opts="$BASE..$HEAD" --redact --no-banner \
+            --config="$S/gitleaks.toml" --gitleaks-ignore-path="$S/ignore" \
+            --ignore-gitleaks-allow \
             --exit-code 2 --report-format sarif --report-path gitleaks.sarif . || rc=$?
-          if git diff --name-only "$BASE" "$HEAD" -- .gitleaks.toml .gitleaksignore | grep -q .; then
-            echo "⚠️ this PR modifies a gitleaks suppression file (.gitleaks.toml / .gitleaksignore) — review the change by hand before trusting a clean result." >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::this PR modifies a gitleaks suppression file — review by hand before trusting a clean result."
+          # Three-dot: files changed BY THIS PR (merge-base..head), not base-vs-head.
+          if git diff --name-only "$BASE...$HEAD" -- .gitleaks.toml .gitleaksignore | grep -q .; then
+            echo "⚠️ this PR modifies a gitleaks suppression file (.gitleaks.toml / .gitleaksignore). The scan above used the BASE branch's copy, so this verdict is unaffected — but review the suppression change itself by hand." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::this PR modifies a gitleaks suppression file — the scan used the base branch's copy; review the change by hand."
           fi
           case "$rc" in
-            0) echo "gitleaks: no secrets found in $BASE..$HEAD" >> "$GITHUB_STEP_SUMMARY" ;;
+            0) echo "gitleaks: no secrets found in $BASE..$HEAD (base-branch suppressions, inline allows ignored)" >> "$GITHUB_STEP_SUMMARY" ;;
             2) echo "gitleaks: 🔑 **possible secret(s) found** in this PR's commits — see the job log (values redacted); rotate anything real." >> "$GITHUB_STEP_SUMMARY" ;;
             *) echo "gitleaks: tool error (exit $rc) — NOT a clean pass" >> "$GITHUB_STEP_SUMMARY" ;;
           esac
