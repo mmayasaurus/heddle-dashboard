@@ -1,0 +1,170 @@
+# Gate — the required merge check for heddle-dashboard (Tauri v2 / Rust + React).
+#
+# What it proves: the frontend compiles (`tsc` + `vite build`), 170 vitest tests
+# pass (`pnpm test`), `cargo check` succeeds for both feature sets (default
+# `gui` and `--no-default-features` minimal vela-server), and `cargo test`
+# passes on Linux (353 tests; 8 ignored by design — they need real ~/.claude /
+# SSH state).
+#
+# What it does NOT prove: eslint is non-required and red until HED-14 (`lint`
+# job — deliberately outside the aggregator). No packaged `tauri build`,
+# nothing runs the app, no clippy/fmt.
+#
+# Runs on GitHub-hosted runners — the repo is public, so minutes are free. The
+# job NAME `gate` is the required-status-check context string for the "Protect
+# main" ruleset (HED-13); renaming it silently un-requires the gate.
+#
+# Hardening (zizmor-clean): every action hash-pinned (Dependabot bumps the pins,
+# see .github/dependabot.yml), workflow-level `permissions: {}`, checkout without
+# persisted credentials (nothing here pushes, so build steps never see a token),
+# runner pinned to an Ubuntu series (not `-latest`) so the environment only
+# moves when we move it.
+name: Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Break-glass manual run, e.g. to re-check main after a runner-side outage.
+  workflow_dispatch: {}
+
+permissions: {}
+
+# A superseded run is dead weight: cancel it and let the newest commit's run
+# report. The gate is a per-commit required check, so a cancelled stale run
+# never reds the PR verdict — only the latest commit's run counts.
+concurrency:
+  group: gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web (pnpm build + vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      - name: Test (vitest)
+        run: pnpm test
+
+  rust:
+    name: rust (cargo check)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Tauri Linux deps + pnpm/Node + frontend build + rustup + cargo cache —
+      # shared with `rust-test` (one place to maintain the dependency list).
+      - name: Tauri + Rust setup
+        uses: ./.github/actions/tauri-rust-setup
+
+      - name: cargo check (default features = gui)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      # Both configurations are real build targets — the crate's Cargo.toml
+      # documents `--no-default-features` for the minimal vela-server build.
+      - name: cargo check (--no-default-features = minimal server)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+
+  rust-test:
+    name: rust (cargo test)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Tauri + Rust setup
+        uses: ./.github/actions/tauri-rust-setup
+
+      # 353 pass / 8 ignored on macOS (Agent T, 2026-08-15) AND green on the
+      # first Linux run of this workflow (7 min cold cache) — so it is in the
+      # `gate` aggregator. The 8 ignored tests need real ~/.claude / SSH state
+      # and stay ignored in CI by design. Runs in parallel with `rust`
+      # (separate job) rather than serially after it: wall-clock over minutes.
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  lint:
+    name: lint (eslint) — NON-required, red until HED-14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm lint` fails on main today with 2 errors in src/remote/ConnectionBanner.tsx
+      # inherited byte-identical from upstream VelaTerm (HED-14); this job is
+      # deliberately NOT in the aggregator's needs — flip it in when HED-14 lands.
+      # Its red is honest, not hidden.
+      - name: Lint (eslint)
+        run: pnpm lint
+
+  gate:
+    # Required-check context string — do not rename (see header; HED-13).
+    name: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [web, rust, rust-test]
+    # `if: always()` so a failed/cancelled/skipped dependency yields a red gate
+    # instead of a skipped (which GitHub would treat as pass for a required check).
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        # jq is preinstalled on ubuntu runners.
+        run: |
+          echo "$RESULTS"
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null || { echo "::error::a required job did not succeed"; exit 1; }

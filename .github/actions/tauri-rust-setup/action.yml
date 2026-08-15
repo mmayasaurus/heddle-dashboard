@@ -1,0 +1,58 @@
+# Shared setup for the Rust jobs in gate.yml (`rust`, `rust-test`) — one place
+# for the Tauri Linux dependency list, the pnpm/Node setup, the frontend build
+# that tauri-build requires, the Rust toolchain, and the cargo cache. Local
+# composite action (`uses: ./.github/actions/tauri-rust-setup`), so it needs no
+# pin and cannot drift from the workflow that calls it. Callers check out first.
+name: tauri-rust-setup
+description: Tauri v2 Linux deps + pnpm/Node + frontend build + rustup stable + cargo cache
+
+runs:
+  using: composite
+  steps:
+    # The list from Tauri v2 docs "distribute/pipelines/github" (ubuntu-22.04).
+    - name: Install Tauri Linux dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+    # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+    # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+    # v11+ action.
+    - name: Setup pnpm + Node
+      uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+      with:
+        runtime: node@22
+        cache: true
+        install: false
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # src-tauri/build.rs runs tauri_build::build() for the default `gui`
+    # feature, which requires the `frontendDist` directory (../dist) to exist;
+    # `cargo check` fails on a fresh checkout without it.
+    - name: Build frontend (tsc + vite) — required by tauri-build
+      shell: bash
+      run: pnpm build
+
+    # The runner image ships rustup + a recent stable; this pulls CURRENT
+    # stable (the image's copy lags by weeks) with plain rustup rather than a
+    # third-party toolchain action — one fewer pin to maintain (zizmor
+    # superfluous-actions). --no-self-update: never touch the runner's rustup.
+    # Deliberately tracks the moving `stable` channel: the crate declares no
+    # rust-version/MSRV, developers build on whatever stable they have, and a
+    # frozen compiler would silently rot; if an MSRV is ever set in Cargo.toml,
+    # add a second toolchain here that checks it.
+    - name: Setup Rust toolchain (stable, via rustup)
+      shell: bash
+      run: |
+        rustup toolchain install stable --profile minimal --no-self-update
+        rustup default stable
+        rustc --version && cargo --version
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        workspaces: "src-tauri -> target"
