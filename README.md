@@ -53,7 +53,7 @@ macOS (Apple Silicon and Intel), Windows (x64 and arm64), and Linux (x86_64 and 
 
 | Layer | Choice |
 |-------|--------|
-| Desktop shell | Tauri 2.x (Rust backend + system WebView); an Electron shell also lives in `electron/` |
+| Desktop shell | Tauri 2.x (Rust backend + system WebView) |
 | PTY | `portable-pty` (wezterm) |
 | Frontend | React 19 + TypeScript + Vite |
 | Terminal | xterm.js with the fit, web-links, search, image, and unicode11 addons |
@@ -77,7 +77,6 @@ Other development modes:
 ```bash
 pnpm dev:web          # headless backend + Vite, driven from a normal browser
 pnpm dev:mobile       # same, with the mobile layout
-pnpm dev:electron     # the Electron shell instead of Tauri
 pnpm dev:ls           # list running dev instances
 pnpm dev:stop <label> # stop one instance by label
 ```
@@ -113,7 +112,6 @@ src-tauri/src/    Rust backend
   agent/          agent detection, status, transcripts, spawning
   web/            embedded web server and command dispatch
   git.rs          git status probing
-electron/         Electron shell
 skills/           agent skills exposed inside heddle sessions
 docs/manuals/     user manuals
 ```
