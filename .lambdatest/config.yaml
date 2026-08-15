@@ -1,0 +1,15 @@
+# LambdaTest Configuration
+
+# Project and folder configuration
+project_id: "01M03VR9CMAT5CC9638FHEJKHN"
+folder_id: "01M03VR9HD80PG8360640YJ3J9"
+
+# Test Run configuration
+assignee: 3444209
+configuration_id: your_test_run_configuration_id
+
+# Test URL for automation
+# test_url: "https://demo.lambdatestinternal.com"
+
+# Tunnel configuration (optional)
+# tunnel_name: "your_tunnel_name"
