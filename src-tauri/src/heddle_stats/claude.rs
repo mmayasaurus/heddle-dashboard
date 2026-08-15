@@ -12,10 +12,6 @@
 //! you're on"; `accounts[]` carries every registered account (masked email, own windows, own
 //! capture time / staleness, `limitReached` at ≥100%), and `activeAccount` names the row.
 //! Without a registry this degrades to the plain single-file tap entry (`accounts: None`).
-//!
-//! Each poll also folds every account's capture into its Fable weekly attribution
-//! (`claude-<acct>.attrib.json`, see `fable_attrib.rs`) and exposes `fableWeeklyEstimatePct` /
-//! `fableWeeklySamples` per row and for the active account at the top level.
 
 use std::path::{Path, PathBuf};
 
@@ -106,117 +102,52 @@ fn read_json(path: &Path) -> Option<Value> {
 }
 
 /// Build the claude entry from `dir` (tap files) and the registry. Pure given the filesystem.
-pub(super) fn build(
-    dir: &Path,
-    registry: &[Account],
-    env_dir: Option<&Path>,
-    now: i64,
-) -> Option<ProviderLimit> {
-    let legacy = read_json(&dir.join("claude.json")).and_then(|v| tap_limit("claude", &v, now));
-    if registry.is_empty() {
-        return legacy;
-    }
-    let active = active_account(registry, env_dir);
+/// One row per registered account (registry order), plus rows for recent unregistered
+/// `claude-<id>.json` files the tap wrote (a one-off `CLAUDE_CONFIG_DIR`); stale one-offs are
+/// skipped so they can't haunt the roster forever.
+fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit> {
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
         let file = read_json(&dir.join(format!("claude-{}.json", a.id)));
         let attrib = attribute(dir, &a.id, file.as_ref(), now);
         rows.push(row(a, file.as_ref(), now, attrib.as_ref()));
     }
-    // Per-account files the tap wrote for config dirs that aren't registered (`unknown-<dir>`).
-    // Only recent ones: nothing prunes old files, so a one-off dir from weeks ago must not haunt
-    // the roster forever.
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        let mut extra: Vec<String> = entries
-            .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                let id = name
-                    .strip_prefix("claude-")?
-                    .strip_suffix(".json")?
-                    .to_string();
-                // `claude-<id>.attrib.json` (attribution state) is not an account file.
-                if id.contains('.') {
-                    return None;
-                }
-                (!registry.iter().any(|a| a.id == id)).then_some(id)
-            })
-            .collect();
-        extra.sort();
-        for id in extra {
-            let file = read_json(&dir.join(format!("claude-{id}.json")));
-            let recent = file
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return rows;
+    };
+    let mut extra: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let id = name
+                .strip_prefix("claude-")?
+                .strip_suffix(".json")?
+                .to_string();
+            (!registry.iter().any(|a| a.id == id)).then_some(id)
+        })
+        .collect();
+    extra.sort();
+    for id in extra {
+        let file = read_json(&dir.join(format!("claude-{id}.json")));
+        let recent = file
+            .as_ref()
+            .and_then(|v| v["capturedAt"].as_i64())
+            .map(|t| now - t <= UNREGISTERED_MAX_AGE_SECS)
+            .unwrap_or(false);
+        if !recent {
+            continue;
+        }
+        let acct = Account {
+            id: id.clone(),
+            config_dir: file
                 .as_ref()
-                .and_then(|v| v["capturedAt"].as_i64())
-                .map(|t| now - t <= UNREGISTERED_MAX_AGE_SECS)
-                .unwrap_or(false);
-            if !recent {
-                continue;
-            }
-            let acct = Account {
-                id: id.clone(),
-                config_dir: file
-                    .as_ref()
-                    .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
-                email: None,
-            };
-            let attrib = attribute(dir, &id, file.as_ref(), now);
-            rows.push(row(&acct, file.as_ref(), now, attrib.as_ref()));
-        }
+                .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
+            email: None,
+        };
+        let attrib = attribute(dir, &id, file.as_ref(), now);
+        rows.push(row(&acct, file.as_ref(), now, attrib.as_ref()));
     }
-    // Top level = the active account's own file; fall back to the legacy last-seen file so the
-    // summary never blanks just because the active account hasn't rendered since install — but
-    // then `activeAccount` names the account the legacy capture actually came from (its `account`
-    // field), never the selected one, so the label can't disagree with the numbers.
-    let active_file = active.and_then(|a| read_json(&dir.join(format!("claude-{}.json", a.id))));
-    let (top_from_active, legacy_account) = match &active_file {
-        Some(_) => (true, None),
-        None => (
-            false,
-            read_json(&dir.join("claude.json"))
-                .and_then(|v| v["account"].as_str().map(str::to_string)),
-        ),
-    };
-    let mut top = active_file
-        .and_then(|v| tap_limit("claude", &v, now))
-        .or(legacy)
-        .unwrap_or_else(|| ProviderLimit {
-            provider: "claude".to_string(),
-            model: None,
-            captured_at: None,
-            five_hour: LimitWindow::default(),
-            seven_day: LimitWindow::default(),
-            source: Some("statusline-tap".to_string()),
-            stale: None,
-            stale_after_secs: Some(TAP_STALE_AFTER_SECS),
-            note: None,
-            note_codes: None,
-            accounts: None,
-            active_account: None,
-            windows: None,
-            fable_weekly_estimate_pct: None,
-            fable_weekly_samples: None,
-        });
-    top.model = top
-        .model
-        .map(|m| format!("{m} · {} acct", rows.len()))
-        .or_else(|| Some(format!("{} acct", rows.len())));
-    top.active_account = if top_from_active {
-        active.map(|a| a.id.clone())
-    } else {
-        legacy_account
-    };
-    top.note_codes = Some(Vec::new());
-    // The top-level Fable estimate belongs to whichever account the top level shows.
-    if let Some(id) = top.active_account.clone() {
-        if let Some(r) = rows.iter().find(|r| r.id == id) {
-            top.fable_weekly_estimate_pct = r.fable_weekly_estimate_pct;
-            top.fable_weekly_samples = r.fable_weekly_samples;
-        }
-    }
-    top.accounts = Some(rows);
-    top.windows = Some(Vec::new());
-    Some(top)
+    rows
 }
 
 /// Load this account's attribution state, fold in the current capture (if any), persist when it
@@ -237,7 +168,112 @@ fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Att
             let _ = write_json_atomic(&path, &v);
         }
     }
-    (state.last_captured_at.is_some()).then_some(state)
+    state.last_captured_at.is_some().then_some(state)
+}
+
+/// The tap-shaped empty entry, for when neither the active account nor the legacy file has data.
+fn empty_top() -> ProviderLimit {
+    ProviderLimit {
+        provider: "claude".to_string(),
+        model: None,
+        captured_at: None,
+        five_hour: LimitWindow::default(),
+        seven_day: LimitWindow::default(),
+        source: Some("statusline-tap".to_string()),
+        stale: None,
+        stale_after_secs: Some(TAP_STALE_AFTER_SECS),
+        note: None,
+        note_codes: None,
+        accounts: None,
+        active_account: None,
+        windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
+    }
+}
+
+pub(super) fn build(
+    dir: &Path,
+    registry: &[Account],
+    env_dir: Option<&Path>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let legacy = read_json(&dir.join("claude.json")).and_then(|v| tap_limit("claude", &v, now));
+    if registry.is_empty() {
+        return legacy;
+    }
+    let active = active_account(registry, env_dir);
+    let rows = account_rows(dir, registry, now);
+    // Top level = the active account's own file; fall back to the legacy last-seen file so the
+    // summary never blanks just because the active account hasn't rendered since install — but
+    // then `activeAccount` names the account the legacy capture actually came from (its `account`
+    // field), never the selected one, so the label can't disagree with the numbers.
+    let active_file = active.and_then(|a| read_json(&dir.join(format!("claude-{}.json", a.id))));
+    let (top_from_active, legacy_account) = match &active_file {
+        Some(_) => (true, None),
+        None => (
+            false,
+            read_json(&dir.join("claude.json"))
+                .and_then(|v| v["account"].as_str().map(str::to_string)),
+        ),
+    };
+    let mut top = active_file
+        .and_then(|v| tap_limit("claude", &v, now))
+        .or(legacy)
+        .unwrap_or_else(empty_top);
+    top.model = top
+        .model
+        .map(|m| format!("{m} · {} acct", rows.len()))
+        .or_else(|| Some(format!("{} acct", rows.len())));
+    // On legacy fallback, only name an account that actually has a row — a stale/unknown id in
+    // the legacy capture must not produce an `activeAccount` no consumer can resolve.
+    top.active_account = if top_from_active {
+        active.map(|a| a.id.clone())
+    } else {
+        legacy_account.filter(|id| rows.iter().any(|r| &r.id == id))
+    };
+    top.note_codes = Some(Vec::new());
+    // The top-level Fable estimate belongs to whichever account the top level shows.
+    if let Some(id) = top.active_account.clone() {
+        if let Some(r) = rows.iter().find(|r| r.id == id) {
+            top.fable_weekly_estimate_pct = r.fable_weekly_estimate_pct;
+            top.fable_weekly_samples = r.fable_weekly_samples;
+        }
+    }
+    top.accounts = Some(rows);
+    top.windows = Some(Vec::new());
+    Some(top)
+}
+
+/// One account row from its tap file (or none yet).
+/// The row for an account with no tap file yet: everything unknown, explained by a note.
+fn row_no_capture(
+    a: &Account,
+    label: String,
+    detail: Value,
+    fable_est: Option<f64>,
+    fable_samples: Option<i64>,
+) -> AccountLimit {
+    AccountLimit {
+        id: a.id.clone(),
+        label,
+        plan: None,
+        captured_at: None,
+        stale: None,
+        five_hour: LimitWindow::default(),
+        seven_day: LimitWindow::default(),
+        windows: Vec::new(),
+        limit_reached: None,
+        note: Some(
+            "no capture yet — no session on this account has rendered a statusline since the \
+             tap was installed"
+                .to_string(),
+        ),
+        note_codes: vec![CODE_NO_CAPTURE.to_string()],
+        detail: Some(detail),
+        fable_weekly_estimate_pct: fable_est,
+        fable_weekly_samples: fable_samples,
+    }
 }
 
 /// One account row from its tap file (or none yet) plus its Fable attribution state.
@@ -256,26 +292,7 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
     let fable_est = attrib.and_then(fable_attrib::estimate);
     let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
-        return AccountLimit {
-            id: a.id.clone(),
-            label,
-            plan: None,
-            captured_at: None,
-            stale: None,
-            five_hour: LimitWindow::default(),
-            seven_day: LimitWindow::default(),
-            windows: Vec::new(),
-            limit_reached: None,
-            note: Some(
-                "no capture yet — no session on this account has rendered a statusline since the \
-                 tap was installed"
-                    .to_string(),
-            ),
-            note_codes: vec![CODE_NO_CAPTURE.to_string()],
-            detail: Some(detail),
-            fable_weekly_estimate_pct: fable_est,
-            fable_weekly_samples: fable_samples,
-        };
+        return row_no_capture(a, label, detail, fable_est, fable_samples);
     };
     let rl = &v["rate_limits"];
     let win = |k: &str| LimitWindow {
@@ -288,12 +305,6 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
     let has_data = five_hour.used_percentage.is_some() || seven_day.used_percentage.is_some();
     let reached = five_hour.used_percentage.unwrap_or(0.0) >= 100.0
         || seven_day.used_percentage.unwrap_or(0.0) >= 100.0;
-    let mut codes = Vec::new();
-    let mut texts = Vec::new();
-    if reached {
-        codes.push(CODE_LIMIT_REACHED.to_string());
-        texts.push("rate limit reached (a window is at 100%)".to_string());
-    }
     AccountLimit {
         id: a.id.clone(),
         label,
@@ -304,12 +315,12 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
         seven_day,
         windows: Vec::new(),
         limit_reached: if has_data { Some(reached) } else { None },
-        note: if texts.is_empty() {
-            None
+        note: reached.then(|| "rate limit reached (a window is at 100%)".to_string()),
+        note_codes: if reached {
+            vec![CODE_LIMIT_REACHED.to_string()]
         } else {
-            Some(texts.join("; "))
+            Vec::new()
         },
-        note_codes: codes,
         detail: Some(detail),
         fable_weekly_estimate_pct: fable_est,
         fable_weekly_samples: fable_samples,

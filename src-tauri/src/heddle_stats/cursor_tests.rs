@@ -1,5 +1,10 @@
 //! Unit tests for `cursor.rs` (kept in a sibling file so the source file stays readable).
 
+use std::time::Duration;
+
+use base64::Engine;
+
+use super::super::now_secs;
 use super::*;
 
 /// A real `GET cursor.com/api/usage-summary` answer for an Ultra account (2026-08-15; no PII —
@@ -240,6 +245,23 @@ fn snapshot_parses_to_a_cursor_entry_with_binding_windows_across_accounts() {
     let accounts = l.accounts.unwrap();
     assert_eq!(accounts.len(), 2);
     assert_eq!(accounts[1].plan.as_deref(), Some("pro"));
+    // Old snapshot → stale.
+    assert_eq!(
+        parse_snapshot(&snap, now + STALE_AFTER_SECS + 1)
+            .unwrap()
+            .stale,
+        Some(true)
+    );
+}
+
+#[test]
+fn account_labels_are_masked_in_the_serialized_rows() {
+    let now = 1_786_830_000;
+    let mut second = ide_account(now);
+    second["label"] = json!("m…@example.org");
+    second["source"] = json!(SOURCE_CLI_KEYCHAIN);
+    let snap = snapshot_with(vec![ide_account(now), second], Some(now), None);
+    let accounts = parse_snapshot(&snap, now).unwrap().accounts.unwrap();
     // Masked labels present, unmasked variants absent.
     let js = serde_json::to_string(&accounts).unwrap();
     assert!(
@@ -251,13 +273,6 @@ fn snapshot_parses_to_a_cursor_entry_with_binding_windows_across_accounts() {
         "{js}"
     );
     assert!(!js.contains("victoria@") && !js.contains("maya@"), "{js}");
-    // Old snapshot → stale.
-    assert_eq!(
-        parse_snapshot(&snap, now + STALE_AFTER_SECS + 1)
-            .unwrap()
-            .stale,
-        Some(true)
-    );
 }
 
 #[test]
