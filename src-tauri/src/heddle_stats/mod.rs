@@ -30,6 +30,7 @@ mod claude;
 mod codex;
 mod cursor;
 mod gemini;
+pub mod roster;
 mod util;
 
 pub(crate) use util::{
