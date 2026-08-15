@@ -59,6 +59,9 @@ will drive heddle lanes.
 ## New heddle agents + Linear
 - New Linear team (proposal: key **HED**) in the spinventory workspace — SPI stays Spinventory-only.
 - New agent identities for heddle lanes (A–Q are mid-Spinventory-work; R = this orchestrator).
+  **Stay with letter tags (S, T, U…) for now** (Maya 2026-08-15) — letters are baked into Linear,
+  GitHub, and the identity hooks; human-ish display names are a later cosmetic pass. **Randomly
+  generated sprites: approved** — cute as heck is a feature.
   Per agent: Linear OAuth app with **client-credentials toggle** (runbook:
   memory `reference_linear_add_fleet_agent`), entry in `~/.claude/spinventory-fleet/linear-agents.json`.
 - `lin.sh` needs a team parameter (currently hardcoded TEAM_KEY="SPI").
