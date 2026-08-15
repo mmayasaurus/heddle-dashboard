@@ -1,0 +1,75 @@
+# DeepSource configuration — heddle-dashboard (Tauri v2 / Rust + React). HED-13 / HED-12.
+#
+# WHY THIS EXISTS BEFORE THE APP IS INSTALLED: on Spinventory, DeepSource was
+# enabled repo-wide with no config, analysed the codebase on stock defaults and
+# opened ~118 inline threads on a single PR — none of them defects — and under a
+# `required_review_thread_resolution` ruleset every one of those blocks merge.
+# This file describes the codebase accurately FIRST (Maya's decision 2026-08-15:
+# DeepSource yes, toml merged first); the app install is a HED-13 action item.
+#
+# ⚠️ DeepSource does NOT support ignoring specific issue codes from this file
+# (open feature request). Per-issue suppression = inline `skipcq: <CODE>`
+# comments or dashboard Ignore rules (Repository Settings → Ignore rules).
+# Docs: https://docs.deepsource.com/docs/analyzers-javascript
+#       https://docs.deepsource.com/docs/analyzers-rust
+#       https://docs.deepsource.com/docs/analyzers-secrets
+# NOTE: this file only takes effect once it is on the DEFAULT branch (main).
+# NOTE: the Rust crate lives at src-tauri/Cargo.toml, not the repo root; the
+# Rust analyzer docs do not describe non-root manifests — verify on the first
+# analysis that src-tauri/ is actually covered, and adjust here if it is not.
+
+version = 1
+
+# vitest suites are colocated `src/**/*.test.{ts,tsx}` (vitest.config.ts) plus
+# the jsdom setup file; tests/_mh is a hand-run browser harness. Rust unit tests
+# are inline `#[cfg(test)]` modules — the Rust analyzer handles those itself.
+test_patterns = [
+  "src/**/*.test.ts",
+  "src/**/*.test.tsx",
+  "vitest.setup.ts",
+  "tests/**",
+]
+
+exclude_patterns = [
+  # Build output / vendored / generated — never hand-edited.
+  "dist/**",
+  "**/node_modules/**",
+  "src-tauri/target/**",
+  "src-tauri/gen/**",          # tauri-generated schemas
+  # CommonJS: `module_system` is one global setting with no per-path scoping;
+  # package.json is "type": "module", so these four legitimately use
+  # require/module.exports and would be misreported under es-modules.
+  # (The Electron shell is slated for removal — HED-41 — drop these lines then.)
+  "electron/**",
+  "scripts/dev-instances.cjs",
+  "scripts/run-sh.cjs",
+]
+
+# React 19 + Vite + TypeScript ES modules; runs in a WebView (browser env) with
+# Node-side scripts; vitest is the runner (its globals are legitimate).
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  plugins = ["react"]
+  module_system = "es-modules"
+  dialect = "typescript"
+  environment = ["browser", "nodejs", "vitest"]
+
+# Tauri backend crate (src-tauri/). msrv left at the default ("stable") — the
+# crate has no rust-version pin and CI checks on current stable.
+[[analyzers]]
+name = "rust"
+enabled = true
+
+# scripts/*.sh (dev launchers) — kept analysed.
+[[analyzers]]
+name = "shell"
+enabled = true
+
+# Project non-negotiable: no credentials are ever hardcoded — keep the secrets
+# analyzer on (it reports only in non-test files).
+[[analyzers]]
+name = "secrets"
+enabled = true
