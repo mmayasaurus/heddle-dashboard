@@ -40,9 +40,21 @@ keys they don't know.
 | `source` | string? | `statusline-tap` · `claudex-usage-cache` · … |
 | `stale` | bool? | `capturedAt` is older than `staleAfterSecs` (judged at read time; `null` when there is no capture time) — render dimmed/flagged, don't present as live |
 | `staleAfterSecs` | int? | the freshness expectation used (tap 600s, Codex 300s) so the UI can tick it live |
-| `note` | string? | human caveat about the payload (e.g. a window the provider stopped exposing) |
-| `accounts` | `AccountLimit[]?` | per-account rows for multi-account providers: `{label, plan?, fiveHour, sevenDay, windows[], limitReached?, note?}` — `label` is a **masked** email (`m…@example.com`) or `acct N` |
-| `windows` | `NamedWindow[]?` | extra named windows beyond 5h/7d, binding across accounts: `{id, label, usedPercentage?, resetsAt?, usedAmount?, limitAmount?, unit?}` |
+| `note` | string? | English diagnostic caveat about the payload (e.g. a window the provider stopped exposing) — same category as backend error strings; for UI copy localize via `noteCodes` |
+| `noteCodes` | string[]? | stable dot-namespaced codes for every condition in `note` (`codex.no5hWindow`, `codex.noData`, `codex.legacyMode`) — the translation-key layer; `null` when the source has no notes concept |
+| `accounts` | `AccountLimit[]?` | per-account rows for multi-account providers: `{label, plan?, fiveHour, sevenDay, windows[], limitReached?, note?, noteCodes[]}` — `label` is a **masked** email (`m…@example.com`) or `acct N`; account codes: `codex.accountFetchFailed`, `codex.rateLimitReached`, `codex.spendControlReached`, `codex.overageLimitReached` |
+| `windows` | `NamedWindow[]?` | extra named windows beyond 5h/7d, binding across accounts: `{id, label, usedPercentage?, resetsAt?, usedAmount?, limitAmount?, unit?}` — `null` when the provider has no such notion, `[]` when it does but none are present |
+
+All of these commands touch the filesystem (and the ledger's SQLite), so they are `async` and run on
+the blocking pool — never on the main thread (README "Contributing").
+
+### `heddle_refresh_provider_limits(provider?)` → `string[]`
+
+Forces an out-of-band refresh of a provider's source (or all refreshable ones when `provider` is
+omitted), ignoring the staleness thresholds; returns the providers a refresh was kicked for. It is
+non-blocking — re-poll `heddle_provider_limits` a few seconds later. Claude is tap-driven (a session
+must render its statusline) so it is never in the list. This is the backend for per-provider refresh
+buttons.
 
 ## Codex source (`heddle_stats/codex.rs`)
 
@@ -57,9 +69,14 @@ keys they don't know.
   Nothing is hard-coded: if a 5-hour window reappears in either slot it shows again automatically and
   the note clears (unit-tested with a fixture).
 - **Staleness**: `capturedAt` = the cache's `fetched_at`; heddle kicks `claudex-usage --refresh lb`
-  when it is >90s old, and flags `stale: true` if it hasn't refreshed in 300s (network down, expired
+  when it is >90s old (one child at a time, reaped, at most once a minute so a broken helper can't
+  pile up processes), and flags `stale: true` if it hasn't refreshed in 300s (network down, expired
   login, helper missing). An account whose fetch failed (`data: null`) keeps its row with a note
   instead of vanishing.
+- **Named windows**: `additional_rate_limits[]` buckets are keyed by the provider's stable
+  `metered_feature` (fallback: slug of `limit_name`, then position) + `-5h`/`-7d`, so display-name
+  changes never merge unrelated buckets. Windows without a positive `limit_window_seconds` are
+  skipped rather than guessed into a slot; two windows landing in the same slot keep the higher %.
 - **Fixtures/tests**: `src-tauri/tests/fixtures/heddle_stats/claudex-usage-cache.*.json` (fake
   identities) + `cargo test --lib heddle_stats`. A machine-dependent live smoke test prints the real
   JSON: `cargo test --lib heddle_stats::codex -- --ignored --nocapture`.
@@ -78,3 +95,12 @@ the statusline command at startup. New/cycled agents populate `claude.json` auto
 `cp ~/.claude/settings.json.bak-heddle-<timestamp> ~/.claude/settings.json` — or just delete the
 `"$BUN" .../usage-tap.mjs | ` prefix from the `statusLine.command`. The tap is a pure passthrough, so
 removing it changes nothing about how the statusline renders.
+
+## Working on this repo from an agent worktree (fleet note)
+
+`heddle-dashboard` is a fork: `origin` = `mmayasaurus/heddle-dashboard`, `upstream` = `vlinx-io/VelaTerm`.
+`gh` resolves the **upstream** as the default repo unless told otherwise, so `gh pr create`,
+`gh pr list`, and `pr-linear-sync.sh` silently target VelaTerm. Run once per clone (worktrees share
+it): `gh repo set-default mmayasaurus/heddle-dashboard`. A fresh worktree also needs an empty `dist/`
+before `cargo check` (rust-embed requires the folder), and can share the main checkout's compiled
+deps with `CARGO_TARGET_DIR=<main checkout>/src-tauri/target`.

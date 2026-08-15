@@ -846,6 +846,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             heddle_stats::heddle_in_flight,
             heddle_stats::heddle_provider_usage,
             heddle_stats::heddle_provider_limits,
+            heddle_stats::heddle_refresh_provider_limits,
         ])
         .build(tauri_context())
         .expect("error while building tauri application")

@@ -31,10 +31,10 @@ fn home() -> PathBuf {
 
 // ─────────────────────────── ccusage (provider caps) ───────────────────────────
 
-/// GUI apps launched from Finder/Dock don't inherit the shell PATH, so `ccusage` (installed via
-/// bun/npm/brew) won't resolve by bare name. Prepend the usual install homes; `ccusage` also needs
-/// `bun`/`node`, which live in the same dirs.
-fn augmented_path() -> String {
+/// GUI apps launched from Finder/Dock don't inherit the shell PATH, so `ccusage` / `claudex-usage` /
+/// `agy` (installed via bun/npm/brew/curl) won't resolve by bare name. APPEND the usual install homes
+/// (after the inherited PATH, so a user's own ordering still wins) using the platform's separator.
+fn augmented_path() -> std::ffi::OsString {
     let h = home();
     let extra = [
         h.join(".bun/bin"),
@@ -43,12 +43,15 @@ fn augmented_path() -> String {
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
     ];
-    let mut path = std::env::var("PATH").unwrap_or_default();
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&current).collect();
     for p in extra {
-        path.push(':');
-        path.push_str(&p.to_string_lossy());
+        if !dirs.contains(&p) {
+            dirs.push(p);
+        }
     }
-    path
+    // join_paths only fails if a dir contains the separator itself; keep the inherited PATH then.
+    std::env::join_paths(dirs).unwrap_or(current)
 }
 
 /// Run `ccusage <args…> --json` and parse stdout. Best-effort: `Null` when ccusage is absent or
@@ -150,9 +153,24 @@ fn map_dispatch(r: &rusqlite::Row) -> rusqlite::Result<Dispatch> {
     })
 }
 
+/// Run a blocking read on the blocking pool. Every command here touches the filesystem or SQLite,
+/// and synchronous Tauri commands run on the main thread (see README "Contributing"), so a slow
+/// disk or a busy ledger must never stall the UI.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Most recent dispatches, newest first (default 25, capped 200).
 #[tauri::command]
-pub fn heddle_recent(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
+pub async fn heddle_recent(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
+    blocking(move || recent_sync(limit)).await
+}
+
+fn recent_sync(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
     let Some(conn) = ledger()? else {
         return Ok(vec![]);
     };
@@ -169,7 +187,11 @@ pub fn heddle_recent(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
 
 /// Dispatches that started but never finished — the drawer's "running now" strip.
 #[tauri::command]
-pub fn heddle_in_flight() -> Result<Vec<Dispatch>, String> {
+pub async fn heddle_in_flight() -> Result<Vec<Dispatch>, String> {
+    blocking(in_flight_sync).await
+}
+
+fn in_flight_sync() -> Result<Vec<Dispatch>, String> {
     let Some(conn) = ledger()? else {
         return Ok(vec![]);
     };
@@ -185,7 +207,11 @@ pub fn heddle_in_flight() -> Result<Vec<Dispatch>, String> {
 
 /// Per-provider usage rollup for the "by provider" summary alongside the cap bars.
 #[tauri::command]
-pub fn heddle_provider_usage() -> Result<Vec<ProviderUsage>, String> {
+pub async fn heddle_provider_usage() -> Result<Vec<ProviderUsage>, String> {
+    blocking(provider_usage_sync).await
+}
+
+fn provider_usage_sync() -> Result<Vec<ProviderUsage>, String> {
     let Some(conn) = ledger()? else {
         return Ok(vec![]);
     };
@@ -249,7 +275,11 @@ pub struct AccountLimit {
     pub seven_day: LimitWindow,
     pub windows: Vec<NamedWindow>,
     pub limit_reached: Option<bool>,
+    /// English diagnostic text (see `note_codes` for the localizable form).
     pub note: Option<String>,
+    /// Stable, dot-namespaced codes for every condition in `note` (e.g. `codex.rateLimitReached`)
+    /// so the frontend can localize instead of showing the English `note`.
+    pub note_codes: Vec<String>,
 }
 
 /// A provider's live rate-limit state. These are the TRUE cap numbers — the exact values the
@@ -273,11 +303,17 @@ pub struct ProviderLimit {
     pub stale: Option<bool>,
     /// The freshness expectation this source was judged against, so the UI can tick it live.
     pub stale_after_secs: Option<i64>,
-    /// Human-readable caveat about the payload (e.g. a window the provider stopped exposing).
+    /// Human-readable (English) caveat about the payload, e.g. a window the provider stopped
+    /// exposing. Diagnostic detail, same category as backend error strings; localize via
+    /// `note_codes` when rendering as UI copy.
     pub note: Option<String>,
+    /// Stable, dot-namespaced codes for every condition in `note` (e.g. `codex.no5hWindow`) —
+    /// the translation-key layer for `note`. `None` when the source has no notes concept.
+    pub note_codes: Option<Vec<String>>,
     /// Per-account rows for multi-account providers. `None` when the provider has no such notion.
     pub accounts: Option<Vec<AccountLimit>>,
-    /// Extra named windows beyond 5h/7d, binding (max) across accounts. `None` when N/A.
+    /// Extra named windows beyond 5h/7d, binding (max) across accounts. `None` when the provider
+    /// has no such notion; `[]` when it does but none are present right now.
     pub windows: Option<Vec<NamedWindow>>,
 }
 
@@ -331,6 +367,7 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
         stale: is_stale(captured_at, now, TAP_STALE_AFTER_SECS),
         stale_after_secs: Some(TAP_STALE_AFTER_SECS),
         note: None,
+        note_codes: None,
         accounts: None,
         windows: None,
     })
@@ -387,7 +424,11 @@ pub(crate) fn sort_limits(out: &mut [ProviderLimit]) {
 /// (claude) plus Codex from the claudex-usage cache. Best-effort — absent sources simply yield
 /// fewer entries. Cheap (file reads only); slow sources refresh themselves out-of-band.
 #[tauri::command]
-pub fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
+pub async fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
+    blocking(provider_limits_sync).await
+}
+
+fn provider_limits_sync() -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
     let mut out = tap_limits(&home().join(".heddle").join("usage"), now);
     if let Some(c) = codex::limit(now) {
@@ -395,6 +436,26 @@ pub fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
     }
     sort_limits(&mut out);
     Ok(out)
+}
+
+/// Force an out-of-band refresh of one provider's source (or every refreshable one when `provider`
+/// is `None`), ignoring the staleness thresholds. Returns the providers a refresh was kicked for.
+/// Non-blocking: re-poll `heddle_provider_limits` a few seconds later to read the result. Claude is
+/// tap-driven (a session must render its statusline), so it is never in the list.
+#[tauri::command]
+pub async fn heddle_refresh_provider_limits(
+    provider: Option<String>,
+) -> Result<Vec<String>, String> {
+    blocking(move || refresh_provider_limits_sync(provider)).await
+}
+
+fn refresh_provider_limits_sync(provider: Option<String>) -> Result<Vec<String>, String> {
+    let want = |p: &str| provider.as_deref().map(|w| w == p).unwrap_or(true);
+    let mut kicked = Vec::new();
+    if want("codex") && codex::force_refresh(now_secs()) {
+        kicked.push("codex".to_string());
+    }
+    Ok(kicked)
 }
 
 #[cfg(test)]
@@ -459,6 +520,7 @@ mod tests {
             stale: None,
             stale_after_secs: None,
             note: None,
+            note_codes: None,
             accounts: None,
             windows: None,
         };
@@ -475,6 +537,7 @@ mod tests {
             "stale",
             "staleAfterSecs",
             "note",
+            "noteCodes",
             "accounts",
             "windows",
         ] {
@@ -494,6 +557,7 @@ mod tests {
             stale: None,
             stale_after_secs: None,
             note: None,
+            note_codes: None,
             accounts: None,
             windows: None,
         };
