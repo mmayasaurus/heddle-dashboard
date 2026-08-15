@@ -2,8 +2,9 @@
 
 **heddle** is the cockpit of the [heddle](https://github.com/mmayasaurus/heddle) agent-orchestration
 system: a desktop terminal manager for fleets of coding agents (Claude Code, Codex, Gemini/Antigravity,
-Cursor) that shows, next to the terminals themselves, what the fleet is doing and what it costs — live
-per-provider rate-limit windows, who is running what, and every sub-task heddle routed to a worker.
+Cursor) that shows, next to the terminals themselves, what the fleet is doing and how much of each
+provider's rate-limit window it has used — live per-provider windows, who is running what, and the recent
+sub-tasks heddle routed to workers.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -18,14 +19,15 @@ per-provider rate-limit windows, who is running what, and every sub-task heddle 
 The **Fleet drawer** under the terminal stage (`src/layout/CenterPane/FleetDrawer.tsx`,
 `src-tauri/src/heddle_stats/`) — read-only, desktop-only, refreshed on a timer:
 
-- **Provider caps** — the *true* rolling 5-hour / 7-day rate-limit usage per provider and per account,
-  with live reset countdowns and per-provider refresh. Claude numbers come from a **passthrough statusline
-  tap** (`docs/USAGE_TAP.md`, `scripts/heddle-usage-tap.mjs`) that records the exact payload Claude Code
-  hands its statusline; Codex from the `claudex-usage` cache; Gemini and Cursor sources are in progress.
-  A summary bar shows one chip per provider (tightest window % + reset).
+- **Provider caps** — the *true* rolling 5-hour / 7-day rate-limit usage per provider, with live reset
+  countdowns and a refresh button. Claude numbers come from a **passthrough statusline tap**
+  (`docs/USAGE_TAP.md`, `scripts/heddle-usage-tap.mjs`) that records the exact payload Claude Code hands
+  its statusline (per-account snapshots appear as their own rows); Codex from the `claudex-usage` cache;
+  Gemini and Cursor sources are in progress. A summary bar shows one chip per provider (5-hour window %
+  + reset).
 - **Fleet roster** — named agents with their in-flight workers, scoped to the current project or all agents.
-- **Dispatch ledger** — what heddle routed to which model (`~/.heddle/ledger.db`), outcome, tokens,
-  duration, fallbacks.
+- **Dispatch ledger** — the most recent dispatches heddle routed to workers (`~/.heddle/ledger.db`):
+  model, outcome, tokens, duration.
 - **Window keeper** (`scripts/heddle-window-keeper.py`) — keeps each Claude account's 5-hour window
   ticking on a staggered schedule so a fresh window opens around the clock.
 
@@ -65,7 +67,7 @@ contacts a VelaTerm or heddle.app host.
 | Frontend | React 19 + TypeScript + Vite |
 | Terminal | xterm.js with the fit, web-links, search, image, and unicode11 addons |
 | State | Zustand |
-| Persistence | SQLite via `rusqlite` (bundled) — `heddle.db` in the app data dir |
+| Persistence | SQLite via `rusqlite` (bundled), in the app data dir |
 | Styling | Tailwind v4 with CSS-variable themes |
 
 ## Getting started
@@ -84,7 +86,7 @@ Other development modes:
 ```bash
 pnpm dev:web          # headless backend + Vite, driven from a normal browser
 pnpm dev:mobile       # same, with the mobile layout
-pnpm dev:server       # build the headless server binary (used by the SSH-remote feature, currently gated off)
+pnpm dev:server       # cross-build the headless server binary and launch the desktop app against it (--build-only to just build)
 pnpm dev:ls           # list running dev instances
 pnpm dev:stop <label> # stop one instance by label
 ```
@@ -104,7 +106,7 @@ cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
 ```
 
 CI runs the same gate on every PR (`docs/CI.md`); reviewer bots comment on PRs and every comment is
-addressed before merge (`docs/TESTING-BAR.md` describes the test bar — landing next).
+addressed before merge.
 
 ## Project layout
 
@@ -155,7 +157,8 @@ Two conventions matter most in this codebase:
 2. **All code comments are written in English.**
 
 Any command touching the network or the filesystem must be asynchronous — synchronous Tauri commands
-run on the main thread and freeze the UI. Tests must be behavioral — the switch must be shown to turn the function on, not just the toggle (`docs/TESTING-BAR.md`, landing next).
+run on the main thread and freeze the UI. Tests must be behavioral — the switch must be shown to turn
+the function on, not just the toggle.
 
 ## License
 
