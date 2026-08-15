@@ -66,7 +66,11 @@ pub(crate) fn write_json_atomic(path: &Path, v: &serde_json::Value) -> Result<()
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     }
-    let tmp = path.with_extension("json.tmp");
+    // Unique temp name: two overlapping writers of the same target (e.g. two polls mirroring
+    // limits.json) must never clobber each other's temp file.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_vec(v).map_err(|e| e.to_string())?)
         .map_err(|e| format!("write {}: {e}", tmp.display()))?;
     // `rename` replaces an existing destination on every platform std supports (MoveFileEx with
@@ -137,4 +141,70 @@ pub(crate) fn run_with_timeout(
     let stderr = err_t.join().unwrap_or_default();
     let st = status?;
     Ok((st.success(), stdout, stderr))
+}
+
+/// One-at-a-time out-of-band refresh with failure backoff, shared by the slow sources (Gemini,
+/// Cursor): the work runs on a detached thread; a second caller while one is in flight is a no-op;
+/// after a failed run callers back off for `backoff_secs` unless they force. The in-flight flag is
+/// cleared by a Drop guard (panic-safe) and thread-spawn failure clears it too.
+pub(crate) struct RefreshGate {
+    refreshing: std::sync::atomic::AtomicBool,
+    next_attempt_at: std::sync::atomic::AtomicI64,
+}
+
+impl RefreshGate {
+    pub(crate) const fn new() -> Self {
+        Self {
+            refreshing: std::sync::atomic::AtomicBool::new(false),
+            next_attempt_at: std::sync::atomic::AtomicI64::new(0),
+        }
+    }
+
+    /// `true` when a refresh thread was started. `work` returns whether the refresh succeeded.
+    pub(crate) fn spawn(
+        &'static self,
+        now: i64,
+        force: bool,
+        backoff_secs: i64,
+        work: impl FnOnce() -> bool + Send + 'static,
+    ) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        if !force && now < self.next_attempt_at.load(SeqCst) {
+            return false;
+        }
+        if self
+            .refreshing
+            .compare_exchange(false, true, SeqCst, SeqCst)
+            .is_err()
+        {
+            return false;
+        }
+        struct Guard(&'static RefreshGate);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.refreshing.store(false, SeqCst);
+            }
+        }
+        let spawned = std::thread::Builder::new()
+            .name("heddle-usage-refresh".into())
+            .spawn(move || {
+                let _guard = Guard(self);
+                let ok = work();
+                let done = now_secs();
+                self.next_attempt_at
+                    .store(if ok { 0 } else { done + backoff_secs }, SeqCst);
+            });
+        if spawned.is_err() {
+            self.refreshing.store(false, SeqCst);
+            self.next_attempt_at.store(now + backoff_secs, SeqCst);
+            return false;
+        }
+        true
+    }
+
+    /// Whether a refresh is currently running (tests).
+    #[cfg(test)]
+    pub(crate) fn in_flight(&self) -> bool {
+        self.refreshing.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }

@@ -30,6 +30,7 @@ mod util;
 
 pub(crate) use util::{
     augmented_path, is_stale, mask_email, now_secs, run_with_timeout, usage_dir, write_json_atomic,
+    RefreshGate,
 };
 
 fn home() -> PathBuf {
@@ -399,7 +400,7 @@ pub async fn heddle_provider_limits(app: tauri::AppHandle) -> Result<Vec<Provide
 /// (and login) as the terminals.
 fn agy_bin(ctx: &crate::host::AppCtx) -> String {
     crate::pty::manager::agent_bin_path(ctx, crate::models::SessionKind::Antigravity)
-        .or_else(|| crate::agent::install::locate_installed_bin("agy"))
+        .or_else(|| crate::agent::install::locate_installed_bin("antigravity"))
         .unwrap_or_else(|| "agy".to_string())
 }
 
