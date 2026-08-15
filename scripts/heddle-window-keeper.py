@@ -24,7 +24,7 @@ What it does (per run, safe to run every 5 min from launchd):
 
 Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never uses Fable/Opus.
 """
-import json, os, sys, time, subprocess, datetime as dt
+import json, os, re, sys, time, subprocess, datetime as dt
 
 HOME = os.path.expanduser("~")
 REG = os.path.join(HOME, ".heddle", "accounts.json")
@@ -58,10 +58,15 @@ def load(path, default):
 
 
 def write_json_atomic(path, obj):
-    tmp = path + ".tmp"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(obj, f)
     os.replace(tmp, path)
+
+
+def safe_segment(acct_id):
+    return re.sub(r"[^A-Za-z0-9._-]", "_", str(acct_id))
 
 
 def window(acct_id):
@@ -71,8 +76,9 @@ def window(acct_id):
         windows (verified 2026-08-15); the keeper must remember what it started;
       - the statusline tap capture (claude-<id>.json), which exists only when a LIVE interactive session
         on that account renders — when present and fresher, it carries the real used_percentage."""
-    tap = load(os.path.join(USAGE, f"claude-{acct_id}.json"), None)
-    own = load(os.path.join(USAGE, f"claude-{acct_id}.keeper.json"), None)
+    segment = safe_segment(acct_id)
+    tap = load(os.path.join(USAGE, f"claude-{segment}.json"), None)
+    own = load(os.path.join(USAGE, f"claude-{segment}.keeper.json"), None)
     cands = []
     if tap:
         fh = (tap.get("rate_limits") or {}).get("five_hour") or {}
@@ -155,9 +161,10 @@ def main():
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
         if ok:
             # Remember the window WE just started (the tap can't see headless pings).
-            write_json_atomic(os.path.join(USAGE, f"claude-{a['id']}.keeper.json"),
+            write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.keeper.json"),
                               {"account": a["id"], "startedAt": int(now), "resets_at": int(now) + 5 * 3600,
-                               "used": None, "source": "keeper-ping"})
+                               "used": None, "source": "keeper-ping",
+                               "note": "upper bound — a pre-existing live window this keeper could not see may reset earlier; a fresher tap capture supersedes this anchor"})
             state = {"last_ping_ts": now, "last_ping_acct": a["id"]}
             write_json_atomic(STATE, state)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN

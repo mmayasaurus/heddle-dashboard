@@ -16,10 +16,11 @@ const registry = {
   ],
 };
 
-function mkHome(): string {
+function mkHome({ usageDir = true }: { usageDir?: boolean } = {}): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "heddle-test-"));
   homes.push(home);
-  fs.mkdirSync(path.join(home, ".heddle", "usage"), { recursive: true });
+  if (usageDir) fs.mkdirSync(path.join(home, ".heddle", "usage"), { recursive: true });
+  else fs.mkdirSync(path.join(home, ".heddle"), { recursive: true });
   fs.writeFileSync(path.join(home, ".heddle", "accounts.json"), JSON.stringify(registry));
   const fakeClaude = path.join(home, "fake-claude");
   fs.writeFileSync(
@@ -56,7 +57,13 @@ function writeTap(home: string, account: string, capturedAt: number, used: numbe
 }
 
 function tempFiles(root: string): string[] {
-  return fs.readdirSync(root, { recursive: true }).filter((entry) => String(entry).endsWith(".tmp")).map(String);
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...tempFiles(entryPath));
+    else if (entry.name.endsWith(".tmp")) files.push(entryPath);
+  }
+  return files;
 }
 
 afterEach(() => {
@@ -102,6 +109,13 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(state.last_ping_acct).toBe("acct1");
     expect(tempFiles(path.join(home, ".heddle"))).toEqual([]);
     expect(tempFiles(usage)).toEqual([]);
+  });
+
+  it("creates the usage directory when absent", () => {
+    const home = mkHome({ usageDir: false });
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.keeper.json"))).toBe(true);
   });
 
   it("does not re-ping a keeper-started live window and observes the stagger", () => {

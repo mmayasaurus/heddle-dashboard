@@ -6,7 +6,7 @@
 //!   - DISPATCH LEDGER (~/.heddle/ledger.db): what heddle itself routed + how it turned out.
 //! Read-only, desktop-only, polls on a timer. Degrades to "waiting…" when a source is absent.
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { invoke, isTauri } from "../../ipc/transport";
 import { useT } from "../../i18n";
 import { useTermStore } from "../../store/termStore";
@@ -98,6 +98,31 @@ const OPEN_KEY = "heddle-fleet-open";
 const SCOPE_KEY = "heddle-fleet-roster-scope";
 type RosterScope = "project" | "all";
 
+const nowSubscribers = new Set<() => void>();
+let sharedNow = Math.floor(Date.now() / 1000) * 1000;
+let nowTicker: number | undefined;
+
+function subscribeToSharedNow(onStoreChange: () => void): () => void {
+  nowSubscribers.add(onStoreChange);
+  if (nowSubscribers.size === 1) {
+    nowTicker = window.setInterval(() => {
+      sharedNow = Math.floor(Date.now() / 1000) * 1000;
+      nowSubscribers.forEach((subscriber) => subscriber());
+    }, 1_000);
+  }
+  return () => {
+    nowSubscribers.delete(onStoreChange);
+    if (nowSubscribers.size === 0 && nowTicker !== undefined) {
+      window.clearInterval(nowTicker);
+      nowTicker = undefined;
+    }
+  };
+}
+
+function useSharedNow(): number {
+  return useSyncExternalStore(subscribeToSharedNow, () => sharedNow, () => sharedNow);
+}
+
 // Distinct per-provider accent for the usage bars.
 const PROVIDER_COLOR: Record<string, string> = {
   claude: "#b07cf0",
@@ -121,17 +146,7 @@ function fmtDur(ms: number | null | undefined): string {
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
 function LiveClock({ render }: { render: (now: number) => ReactNode }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1_000);
-    return () => {
-      window.clearInterval(id);
-    };
-  }, []);
-
+  const now = useSharedNow();
   return <>{render(now)}</>;
 }
 
@@ -247,7 +262,6 @@ export function FleetDrawer() {
         role="button"
         tabIndex={0}
         title="heddle Fleet — provider caps & dispatches"
-        aria-label={t("fleet.title")}
       >
         <span className="fleet-chevron">{open ? "▾" : "▸"}</span>
         <span className="fleet-title">{t("fleet.title")}</span>
@@ -268,7 +282,7 @@ export function FleetDrawer() {
                 >
                   <span className="fleet-tag" style={{ color }}>{p.provider}</span>
                   <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                  {win.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                 </span>
               );
             })}
@@ -448,7 +462,13 @@ function ProviderCapBlock({
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await invoke<string[]>("heddle_refresh_provider_limits", { provider: p.provider });
+      try {
+        await invoke<string[]>("heddle_refresh_provider_limits", { provider: p.provider });
+      } catch (err) {
+        console.error("heddle: provider refresh failed", err);
+      }
+      await onRefresh();
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
       await onRefresh();
     } finally {
       setRefreshing(false);
@@ -565,7 +585,6 @@ function AgentRow({ a }: { a: FleetAgent }) {
         className={"fleet-agent-row" + (hasChildren ? " has-children" : "")}
         onClick={() => hasChildren && setOpenRow((o) => !o)}
         role={hasChildren ? "button" : undefined}
-        aria-label={hasChildren ? `${a.name} workers` : undefined}
         title={`${a.name} · pid ${a.pid} · ${a.status} · ${a.cwd}`}
       >
         <span className={"fleet-agent-chev" + (hasChildren ? "" : " none")}>{hasChildren ? (openRow ? "▾" : "▸") : "·"}</span>

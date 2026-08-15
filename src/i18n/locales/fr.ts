@@ -17,7 +17,7 @@ const fr: typeof en = {
   "common.copied": "Copié", // Copied
   "common.retry": "Réessayer", // Retry
   "common.refresh": "Actualiser", // Refresh
-  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
+  "fleet.title": "Flotte", "fleet.refresh": "Actualiser", "fleet.capsWaiting": "plafonds : en attente d’un rendu de barre d’état…", "fleet.usageUnavailable": "utilisation indisponible", "fleet.noActiveWindow": "aucune fenêtre active", "fleet.capturedMinutesAgo": (n) => `capturé il y a ${n} min`, "fleet.stale": "obsolète", "fleet.limitReached": "plafond atteint", "fleet.resetting": "réinitialisation…", "fleet.currentProject": "Projet actuel", "fleet.allAgents": "Tous les agents",
   "common.loading": "Chargement…", // Loading…
   "common.prev": "Précédent", // Previous
   "common.next": "Suivant", // Next

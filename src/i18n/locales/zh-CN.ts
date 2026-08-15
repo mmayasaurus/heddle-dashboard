@@ -17,7 +17,7 @@ const zhCN: typeof en = {
   "common.copied": "已复制",
   "common.retry": "重试",
   "common.refresh": "刷新",
-  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
+  "fleet.title": "集群", "fleet.refresh": "刷新", "fleet.capsWaiting": "限额：等待状态栏渲染…", "fleet.usageUnavailable": "使用量不可用", "fleet.noActiveWindow": "无活动窗口", "fleet.capturedMinutesAgo": (n) => `${n} 分钟前捕获`, "fleet.stale": "已过期", "fleet.limitReached": "已达限额", "fleet.resetting": "正在重置…", "fleet.currentProject": "当前项目", "fleet.allAgents": "所有智能体",
   "common.loading": "加载中…",
   "common.prev": "上一个",
   "common.next": "下一个",

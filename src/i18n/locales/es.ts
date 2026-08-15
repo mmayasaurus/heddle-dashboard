@@ -17,7 +17,7 @@ const es: typeof en = {
   "common.copied": "Copiado", // Copied
   "common.retry": "Reintentar", // Retry
   "common.refresh": "Actualizar", // Refresh
-  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
+  "fleet.title": "Flota", "fleet.refresh": "Actualizar", "fleet.capsWaiting": "límites: esperando el renderizado de la barra de estado…", "fleet.usageUnavailable": "uso no disponible", "fleet.noActiveWindow": "sin ventana activa", "fleet.capturedMinutesAgo": (n) => `capturado hace ${n} min`, "fleet.stale": "desactualizado", "fleet.limitReached": "límite alcanzado", "fleet.resetting": "restableciendo…", "fleet.currentProject": "Proyecto actual", "fleet.allAgents": "Todos los agentes",
   "common.loading": "Cargando…", // Loading…
   "common.prev": "Anterior", // Previous
   "common.next": "Siguiente", // Next
