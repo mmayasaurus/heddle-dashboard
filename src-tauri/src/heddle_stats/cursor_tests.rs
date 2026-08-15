@@ -193,13 +193,20 @@ fn snapshot_parses_to_a_cursor_entry_with_binding_windows_across_accounts() {
     assert_eq!(l.stale_after_secs, Some(STALE_AFTER_SECS));
     assert!(l.note.is_none());
     assert_eq!(l.note_codes.as_deref(), Some(&[][..]));
-    // Binding: monthly = the exhausted Ultra pool (100%), usage-based = the Pro account (84%).
+    // The cursor-agent login is what heddle bills → it is the active account and supplies the
+    // top-level windows (monthly 25% / usage-based 84%), NOT the binding max.
+    assert_eq!(l.active_account.as_deref(), Some(SOURCE_CLI_KEYCHAIN));
     let windows = l.windows.unwrap();
     assert_eq!(windows[0].id, "monthly");
-    assert_eq!(windows[0].used_percentage, Some(100.0));
+    assert_eq!(windows[0].used_percentage, Some(25.0));
     assert_eq!(windows[1].id, "usage-based");
     assert_eq!(windows[1].used_percentage, Some(84.0));
     assert_eq!(windows[1].used_amount, Some(42.0));
+    // With only the IDE login known: binding view, active unknown.
+    let ide_only = snapshot_with(vec![ide_account(now)], Some(now), None);
+    let l2 = parse_snapshot(&ide_only, now + 60).unwrap();
+    assert_eq!(l2.active_account, None);
+    assert_eq!(l2.windows.unwrap()[0].used_percentage, Some(100.0));
     let accounts = l.accounts.unwrap();
     assert_eq!(accounts.len(), 2);
     assert_eq!(accounts[1].plan.as_deref(), Some("pro"));

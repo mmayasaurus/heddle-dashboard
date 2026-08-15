@@ -30,6 +30,9 @@
 //! We never refresh tokens ourselves (mirror the provider's auth, never reimplement it): an expired
 //! session shows up as a note telling Maya to open Cursor / run `cursor-agent login`.
 //!
+//! ACTIVE ACCOUNT: heddle dispatches through the cursor-agent CLI, so that login (when readable) is
+//! `activeAccount` and supplies the top-level windows; otherwise the top level is the binding view.
+//!
 //! CADENCE: the snapshot `~/.heddle/usage/cursor.json` is refreshed out-of-band when older than
 //! `REFRESH_AFTER_SECS` (one detached thread, atomic write), stale after `STALE_AFTER_SECS`.
 
@@ -587,7 +590,19 @@ pub(super) fn parse_snapshot(snap: &Value, now: i64) -> Option<ProviderLimit> {
         .map(|a| a.iter().map(|acct| account_row(acct, now)).collect())
         .unwrap_or_default();
     l.model = Some(format!("cursor.com · {} acct", accounts.len()));
-    l.windows = Some(binding_named(&accounts));
+    // The account heddle's dispatches bill is the cursor-agent CLI login, so when its row exists it
+    // is the ACTIVE account and the top-level windows are its own (like Claude's "the account you're
+    // on"); with only the IDE login known, the top level is the binding view of what we have and
+    // `activeAccount` stays unknown (the CLI account's numbers aren't visible).
+    let active = accounts
+        .iter()
+        .find(|a| a.id == SOURCE_CLI_KEYCHAIN)
+        .map(|a| (a.id.clone(), a.windows.clone()));
+    l.active_account = active.as_ref().map(|(id, _)| id.clone());
+    l.windows = Some(match active {
+        Some((_, windows)) => windows,
+        None => binding_named(&accounts),
+    });
     let mut codes = Vec::new();
     let mut texts = Vec::new();
     if accounts.is_empty() {
