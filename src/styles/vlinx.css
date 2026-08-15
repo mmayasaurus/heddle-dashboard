@@ -347,6 +347,11 @@ svg { display: block; }
 .fleet-prov { font-weight: 600; min-width: 62px; text-transform: capitalize; }
 /* fleet roster: named agents → expandable in-flight workers */
 .fleet-roster { display: flex; flex-direction: column; gap: 1px; }
+.fleet-roster-head { display: flex; align-items: center; gap: 10px; }
+.fleet-scope { display: inline-flex; gap: 2px; margin-left: auto; text-transform: none; letter-spacing: 0; }
+.fleet-scope-btn { font-size: 10px; padding: 1px 7px; border-radius: 10px; color: var(--text-dim); border: 1px solid var(--border); background: transparent; }
+.fleet-scope-btn:hover { color: var(--text); background: var(--bg-hover); }
+.fleet-scope-btn.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
 .fleet-agent-row { display: flex; align-items: center; gap: 7px; padding: 2px 4px; border-radius: 4px; }
 .fleet-agent-row.has-children { cursor: pointer; }
 .fleet-agent-row.has-children:hover { background: var(--bg-hover); }

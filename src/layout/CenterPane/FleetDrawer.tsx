@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { invoke, isTauri } from "../../ipc/transport";
+import { useTermStore } from "../../store/termStore";
 
 interface LimitWindow {
   usedPercentage: number | null;
@@ -90,6 +91,11 @@ interface FleetAgent {
 
 const POLL_MS = 30_000;
 const OPEN_KEY = "heddle-fleet-open";
+// Roster scope: "project" = only agents whose cwd is inside the currently-open project (the active
+// session's project root); "all" = every fleet-tagged session on the machine. Persisted. Default =
+// project, so several projects can be worked at once without clutter (Maya, 2026-08-15).
+const SCOPE_KEY = "heddle-fleet-roster-scope";
+type RosterScope = "project" | "all";
 
 // Distinct per-provider accent for the usage bars.
 const PROVIDER_COLOR: Record<string, string> = {
@@ -141,6 +147,16 @@ function fmtReset(resetsAtSec: number | null | undefined, now: number): string {
 export function FleetDrawer() {
   const now = useNow();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
+  const [scope, setScope] = useState<RosterScope>(() =>
+    localStorage.getItem(SCOPE_KEY) === "all" ? "all" : "project",
+  );
+  // The "current project" = the project that owns the active session (same resolution CenterPane uses).
+  const currentProjectRoot = useTermStore((s) => {
+    const sid = s.activeSessionId;
+    const sess = sid ? s.sessions.find((x) => x.id === sid) ?? s.ephemeralSessions[sid] : undefined;
+    const proj = sess ? s.projects.find((p) => p.id === sess.projectId) : undefined;
+    return proj?.rootPath ?? sess?.cwd ?? null;
+  });
   const [limits, setLimits] = useState<ProviderLimit[]>([]);
   const [roster, setRoster] = useState<FleetAgent[]>([]);
   const [recent, setRecent] = useState<Dispatch[]>([]);
@@ -182,9 +198,25 @@ export function FleetDrawer() {
 
   const claude = limits.find((l) => l.provider === "claude");
   const c5 = claude?.fiveHour?.usedPercentage;
-  const liveAgents = roster.filter((a) => a.alive);
+  // Scope filter: an agent belongs to the current project when its cwd is the project root or inside it
+  // (worktrees like Rebuild-Project-Root.forms count as inside their sibling root's project by prefix on
+  // the root's basename, so a fleet spread across worktrees still groups under one project).
+  const inCurrentProject = (a: FleetAgent): boolean => {
+    if (!currentProjectRoot) return true;
+    const root = currentProjectRoot.replace(/\/+$/, "");
+    if (a.cwd === root || a.cwd.startsWith(root + "/")) return true;
+    const base = root.split("/").filter(Boolean).slice(-1)[0] ?? "";
+    return base.length > 0 && a.cwd.split("/").some((seg) => seg === base || seg.startsWith(base + "."));
+  };
+  const scopedRoster = scope === "project" ? roster.filter(inCurrentProject) : roster;
+  const hiddenCount = roster.length - scopedRoster.length;
+  const liveAgents = scopedRoster.filter((a) => a.alive);
   const busyAgents = liveAgents.filter((a) => a.status === "busy" || a.workers.some((w) => !w.stale));
   const running = busyAgents.length;
+  const setScopePersist = (s: RosterScope) => {
+    localStorage.setItem(SCOPE_KEY, s);
+    setScope(s);
+  };
   // Hide TEST-orchestrator rows (heddle-core verification dispatches, not real work).
   const shownRecent = recent.filter((d) => d.orchestrator !== "TEST");
 
@@ -249,13 +281,38 @@ export function FleetDrawer() {
 
           {roster.length > 0 && (
             <>
-              <div className="fleet-sec-title">
-                Fleet roster · {liveAgents.length} agents ({running} busy) — click an agent to see its workers
+              <div className="fleet-sec-title fleet-roster-head">
+                <span>
+                  Fleet roster · {liveAgents.length} agents ({running} busy) — click an agent to see its workers
+                </span>
+                <span className="fleet-scope" role="tablist" aria-label="roster scope">
+                  <button
+                    className={"fleet-scope-btn" + (scope === "project" ? " on" : "")}
+                    onClick={() => setScopePersist("project")}
+                    title={currentProjectRoot ? `Agents in ${shortCwd(currentProjectRoot)}` : "No project open — showing all"}
+                    type="button"
+                  >
+                    Current project
+                  </button>
+                  <button
+                    className={"fleet-scope-btn" + (scope === "all" ? " on" : "")}
+                    onClick={() => setScopePersist("all")}
+                    title="Every fleet-tagged agent on this machine, across projects"
+                    type="button"
+                  >
+                    All agents{hiddenCount > 0 && scope === "project" ? ` (+${hiddenCount})` : ""}
+                  </button>
+                </span>
               </div>
               <div className="fleet-roster">
-                {roster.map((a) => (
+                {scopedRoster.map((a) => (
                   <AgentRow key={`${a.name}:${a.pid}`} a={a} now={now} />
                 ))}
+                {scopedRoster.length === 0 && (
+                  <div className="fleet-dim fleet-empty">
+                    No agents in the current project — switch to “All agents” to see the other {roster.length}.
+                  </div>
+                )}
               </div>
             </>
           )}
