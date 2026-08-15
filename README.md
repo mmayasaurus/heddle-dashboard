@@ -155,6 +155,6 @@ any purpose, as long as both copyright notices and the license text travel with 
 
 Bundled third-party assets keep their own licenses and are **not** relicensed as MIT: the Noto Sans
 Symbols 2 subset (`src/assets/fonts/vlx-symbols.woff2`, SIL OFL 1.1 —
-`src/assets/fonts/LICENSE-noto-sans-symbols-2.txt`), Noto Sans SC (`src/assets/fonts/NotoSansSC-*.ttf`,
-SIL OFL 1.1 — `src/assets/fonts/NotoSansSC-OFL.txt`), and JetBrains Mono (`@fontsource/jetbrains-mono`,
+`src/assets/fonts/LICENSE-noto-sans-symbols-2.txt`), Noto Sans SC (`src/assets/fonts/NotoSansSC-*.ttf`, (c) Adobe with Reserved Font
+Name 'Source', SIL OFL 1.1 — `src/assets/fonts/NotoSansSC-OFL.txt`), and JetBrains Mono (`@fontsource/jetbrains-mono`,
 SIL OFL 1.1). Other npm/crate dependencies carry their own licenses per their packages.
