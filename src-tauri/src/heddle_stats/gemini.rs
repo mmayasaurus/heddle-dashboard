@@ -125,7 +125,9 @@ const NULL_LOG: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 /// dir (created first) so agy never picks up a project's config from the app's own cwd.
 fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
     let dir = usage_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    // The usage dir is the isolated cwd for agy (never a project dir); if it can't exist, stop
+    // rather than silently running agy somewhere it could read a project's config.
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let mut cmd = std::process::Command::new(agy_bin);
     cmd.args([
         "-p",
@@ -135,10 +137,8 @@ fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
         "--log-file",
         NULL_LOG,
     ])
-    .env("PATH", augmented_path());
-    if dir.is_dir() {
-        cmd.current_dir(&dir);
-    }
+    .env("PATH", augmented_path())
+    .current_dir(&dir);
     let (ok, stdout, stderr) = run_with_timeout(cmd, AGY_TIMEOUT)?;
     if !ok {
         let tail: String = stderr
