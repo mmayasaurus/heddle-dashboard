@@ -1,0 +1,239 @@
+# Gate — the required merge check for heddle-dashboard (Tauri v2 / Rust + React).
+#
+# What it proves: the frontend compiles (`tsc` + `vite build`), 170 vitest tests
+# pass (`pnpm test`), and `cargo check` succeeds for both feature sets (default
+# `gui` and `--no-default-features` minimal vela-server).
+#
+# What it does NOT prove: eslint is non-required and red until HED-14 (`lint`
+# job — deliberately outside the aggregator). `cargo test` is observing only
+# (`rust-test` job — not in the gate's needs yet). No packaged `tauri build`,
+# nothing runs the app.
+#
+# Runs on GitHub-hosted runners — the repo is public, so minutes are free. The
+# job NAME `gate` is the required-status-check context string for the "Protect
+# main" ruleset (HED-13); renaming it silently un-requires the gate.
+#
+# Hardening (zizmor-clean): every action hash-pinned (Dependabot bumps the pins,
+# see .github/dependabot.yml), workflow-level `permissions: {}`, checkout without
+# persisted credentials (nothing here pushes, so build steps never see a token),
+# runner pinned to an Ubuntu series (not `-latest`) so the environment only
+# moves when we move it.
+name: Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Break-glass manual run, e.g. to re-check main after a runner-side outage.
+  workflow_dispatch: {}
+
+permissions: {}
+
+# A superseded run is dead weight: cancel it and let the newest commit's run
+# report. The gate is a per-commit required check, so a cancelled stale run
+# never reds the PR verdict — only the latest commit's run counts.
+concurrency:
+  group: gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web (pnpm build + vitest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      - name: Test (vitest)
+        run: pnpm test
+
+  rust:
+    name: rust (cargo check)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The list from Tauri v2 docs "distribute/pipelines/github".
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # src-tauri/build.rs runs tauri_build::build() for the default `gui`
+      # feature, which requires the `frontendDist` directory (../dist) to exist;
+      # `cargo check` fails on a fresh checkout without it.
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      # The runner image ships rustup + a recent stable; this pulls CURRENT
+      # stable (the image's copy lags by weeks) with plain rustup rather than a
+      # third-party toolchain action — one fewer pin to maintain (zizmor
+      # superfluous-actions). --no-self-update: never touch the runner's rustup.
+      - name: Setup Rust toolchain (stable, via rustup)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: cargo check (default features = gui)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      # Both configurations are real build targets — the crate's Cargo.toml
+      # documents `--no-default-features` for the minimal vela-server build.
+      - name: cargo check (--no-default-features = minimal server)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+
+  rust-test:
+    name: rust (cargo test) — observing, not yet in the gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The list from Tauri v2 docs "distribute/pipelines/github".
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # src-tauri/build.rs runs tauri_build::build() for the default `gui`
+      # feature, which requires the `frontendDist` directory (../dist) to exist;
+      # `cargo check` fails on a fresh checkout without it.
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      # The runner image ships rustup + a recent stable; this pulls CURRENT
+      # stable (the image's copy lags by weeks) with plain rustup rather than a
+      # third-party toolchain action — one fewer pin to maintain (zizmor
+      # superfluous-actions). --no-self-update: never touch the runner's rustup.
+      - name: Setup Rust toolchain (stable, via rustup)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # 353 tests pass / 8 ignored locally on macOS (Agent T, 2026-08-15); Linux
+      # behaviour unverified until this job has run, so it is NOT in the `gate`
+      # aggregator's needs yet — promote it once it is proven green.
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  lint:
+    name: lint (eslint) — NON-required, red until HED-14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # pnpm version comes from package.json `packageManager: pnpm@11.5.2`;
+      # pnpm/action-setup does NOT support pnpm 11 — pnpm/setup is the official
+      # v11+ action.
+      - name: Setup pnpm + Node
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm lint` fails on main today with 2 errors in src/remote/ConnectionBanner.tsx
+      # inherited byte-identical from upstream VelaTerm (HED-14); this job is
+      # deliberately NOT in the aggregator's needs — flip it in when HED-14 lands.
+      # Its red is honest, not hidden.
+      - name: Lint (eslint)
+        run: pnpm lint
+
+  gate:
+    # Required-check context string — do not rename (see header; HED-13).
+    name: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [web, rust]
+    # `if: always()` so a failed/cancelled/skipped dependency yields a red gate
+    # instead of a skipped (which GitHub would treat as pass for a required check).
+    if: always()
+    permissions: {}
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        # jq is preinstalled on ubuntu runners.
+        run: |
+          echo "$RESULTS"
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null || { echo "::error::a required job did not succeed"; exit 1; }
