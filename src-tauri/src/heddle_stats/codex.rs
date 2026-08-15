@@ -28,8 +28,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use serde_json::Value;
 
 use super::{
-    augmented_path, home, is_stale, mask_email, AccountLimit, LimitWindow, NamedWindow,
-    ProviderLimit,
+    augmented_path, binding, binding_named, home, is_stale, mask_email, AccountLimit, LimitWindow,
+    NamedWindow, ProviderLimit,
 };
 
 /// claudex-usage's cache file, relative to `$HOME`.
@@ -237,6 +237,7 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
                     .to_string(),
             ),
             note_codes: vec![CODE_ACCOUNT_FETCH_FAILED.to_string()],
+            detail: None,
         };
     }
     let rl = &data["rate_limit"];
@@ -251,6 +252,7 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
         limit_reached: rl["limit_reached"].as_bool(),
         note,
         note_codes,
+        detail: None,
     }
 }
 
@@ -345,35 +347,6 @@ fn windows_from_rate_limit(rl: &Value) -> (LimitWindow, LimitWindow) {
         }
     }
     (five, seven)
-}
-
-/// The binding view of one window across accounts: the highest used % wins (with that account's
-/// reset time). Accounts without the window don't participate.
-fn binding<'a>(windows: impl Iterator<Item = &'a LimitWindow>) -> LimitWindow {
-    let mut best = LimitWindow::default();
-    for w in windows {
-        if w.used_percentage.unwrap_or(-1.0) > best.used_percentage.unwrap_or(-1.0) {
-            best = w.clone();
-        }
-    }
-    best
-}
-
-/// Binding view of the named (additional) windows: per `id`, the account with the highest used %.
-/// Order follows first appearance so the drawer is stable between polls.
-fn binding_named(accounts: &[AccountLimit]) -> Vec<NamedWindow> {
-    let mut out: Vec<NamedWindow> = Vec::new();
-    for w in accounts.iter().flat_map(|a| a.windows.iter()) {
-        match out.iter_mut().find(|o| o.id == w.id) {
-            Some(existing) => {
-                if w.used_percentage.unwrap_or(-1.0) > existing.used_percentage.unwrap_or(-1.0) {
-                    *existing = w.clone();
-                }
-            }
-            None => out.push(w.clone()),
-        }
-    }
-    out
 }
 
 /// "GPT-5.3-Codex-Spark" → "gpt-5-3-codex-spark": a readable fallback id for a provider bucket
