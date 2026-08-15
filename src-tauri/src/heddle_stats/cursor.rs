@@ -12,10 +12,15 @@
 //!                                autoPercentUsed, apiPercentUsed, totalPercentUsed},
 //!                        onDemand: {enabled, used, limit, remaining},   // legacy name: overall
 //!                      }, teamUsage: {…}}`
-//! Money is in CENTS. `plan` is the included monthly pool the endpoint reports (for an Ultra
-//! account `limit` = 40000¢ = the $400 "Other Models" allowance from Cursor's pricing page);
-//! `onDemand` is usage-based spend against the spend limit. Cursor's separate "Cursor Models"
-//! pool (Grok/Composer) is NOT reported by this endpoint — we don't invent it.
+//! Money is in CENTS. Cursor's included allowance is TWO pools and the payload carries both as
+//! percentages: `plan.totalPercentUsed` = the included TOTAL pool that Auto and Cursor models (Grok,
+//! Composer — heddle's default Cursor routes) draw from ("You've used 17% of your included total
+//! usage"), and `plan.apiPercentUsed` = the included API sub-pool that named third-party models
+//! (kimi, …) draw from ("You've used 87% of your included API usage"); `plan.used/limit/remaining`
+//! (for an Ultra account `limit` = 40000¢ = the $400 "Other Models" allowance on the pricing page)
+//! describe that API sub-pool in dollars. `onDemand` is usage-based spend against the spend limit.
+//! We surface all three as windows and Cursor's own display strings as the note — never our own
+//! arithmetic where the provider already states the number.
 //!
 //! ACCOUNTS (Maya has two):
 //!   - **Cursor IDE** login — token in the IDE's `state.vscdb` (`cursorAuth/accessToken`, plus
@@ -76,7 +81,11 @@ const SOURCES_CONFIG_REL: &str = ".heddle/usage-sources.json";
 pub(super) const CODE_NO_ACCOUNTS: &str = "cursor.noAccounts";
 pub(super) const CODE_REFRESH_FAILED: &str = "cursor.refreshFailed";
 pub(super) const CODE_NO_DATA_YET: &str = "cursor.noDataYet";
-pub(super) const CODE_PLAN_EXHAUSTED: &str = "cursor.planExhausted";
+/// The included API/named-model pool (`plan.remaining` 0 or `apiPercentUsed` ≥ 100): kimi-class
+/// named third-party models bill on-demand from here on.
+pub(super) const CODE_INCLUDED_API_EXHAUSTED: &str = "cursor.includedApiExhausted";
+/// The included TOTAL pool (`totalPercentUsed` ≥ 100): Auto and Cursor models (Grok, Composer) too.
+pub(super) const CODE_INCLUDED_TOTAL_EXHAUSTED: &str = "cursor.includedTotalExhausted";
 pub(super) const CODE_ON_DEMAND_LIMIT_REACHED: &str = "cursor.onDemandLimitReached";
 pub(super) const CODE_TOKEN_EXPIRED: &str = "cursor.tokenExpired";
 pub(super) const CODE_TOKEN_EXPIRING_SOON: &str = "cursor.tokenExpiringSoon";
@@ -453,33 +462,66 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
     let mut codes = Vec::new();
     let mut texts = Vec::new();
 
+    let mut api_exhausted = false;
+    let mut total_exhausted = false;
     if plan.is_object() {
         let used = cents(&plan["used"]);
         let limit = cents(&plan["limit"]);
-        let pct = match (used, limit) {
-            (Some(u), Some(l)) if l > 0.0 => Some((u / l * 100.0).clamp(0.0, 100.0)),
-            _ => None,
-        };
+        let total_pct = plan["totalPercentUsed"].as_f64();
+        let api_pct = plan["apiPercentUsed"].as_f64();
+        // Included TOTAL pool: Auto + Cursor models (Grok, Composer). Cursor states the percentage
+        // itself; it does not expose this pool's dollar size, so no amounts here.
         windows.push(NamedWindow {
-            id: "monthly".to_string(),
-            label: "included plan (monthly)".to_string(),
-            used_percentage: pct,
+            id: "included-total".to_string(),
+            label: "included total (Auto / Cursor models)".to_string(),
+            used_percentage: total_pct.map(|p| p.clamp(0.0, 100.0)),
+            resets_at: cycle_end,
+            used_amount: None,
+            limit_amount: None,
+            unit: None,
+        });
+        // Included API sub-pool: named third-party models. Percentage is Cursor's; the amounts are
+        // Cursor's `plan.used` / `plan.limit` for the same pool.
+        windows.push(NamedWindow {
+            id: "included-api".to_string(),
+            label: "included API (named 3rd-party models)".to_string(),
+            used_percentage: api_pct.map(|p| p.clamp(0.0, 100.0)),
             resets_at: cycle_end,
             used_amount: used.map(|c| c / 100.0),
             limit_amount: limit.map(|c| c / 100.0),
             unit: Some("usd".to_string()),
         });
-        if plan["enabled"].as_bool() != Some(false)
-            && cents(&plan["remaining"]).map(|r| r <= 0.0).unwrap_or(false)
-            && limit.map(|l| l > 0.0).unwrap_or(false)
-        {
-            codes.push(CODE_PLAN_EXHAUSTED.to_string());
+        let plan_on = plan["enabled"].as_bool() != Some(false);
+        api_exhausted = plan_on
+            && (api_pct.map(|p| p >= 100.0).unwrap_or(false)
+                || (limit.map(|l| l > 0.0).unwrap_or(false)
+                    && cents(&plan["remaining"]).map(|r| r <= 0.0).unwrap_or(false)));
+        total_exhausted = plan_on && total_pct.map(|p| p >= 100.0).unwrap_or(false);
+        // Cursor's own words first.
+        for key in [
+            "autoModelSelectedDisplayMessage",
+            "namedModelSelectedDisplayMessage",
+        ] {
+            if let Some(m) = summary[key].as_str().filter(|m| !m.is_empty()) {
+                texts.push(m.to_string());
+            }
+        }
+        if api_exhausted {
+            codes.push(CODE_INCLUDED_API_EXHAUSTED.to_string());
             texts.push(format!(
-                "included pool used up (${:.2} of ${:.2}) — named third-party models bill on-demand \
-                 until the cycle resets",
+                "included API pool used up (${:.2} of ${:.2}) — named third-party models bill \
+                 on-demand until the cycle resets",
                 used.unwrap_or(0.0) / 100.0,
                 limit.unwrap_or(0.0) / 100.0
             ));
+        }
+        if total_exhausted {
+            codes.push(CODE_INCLUDED_TOTAL_EXHAUSTED.to_string());
+            texts.push(
+                "included total pool used up — Auto and Cursor models bill on-demand until the \
+                 cycle resets"
+                    .to_string(),
+            );
         }
     }
     let mut on_demand_hard_stop = false;
@@ -515,14 +557,16 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             texts.push("on-demand spend limit reached".to_string());
         }
     }
-    let plan_exhausted = codes.iter().any(|c| c == CODE_PLAN_EXHAUSTED);
     let on_demand_enabled = on_demand["enabled"].as_bool().unwrap_or(false);
-    // "Requests will fail": on-demand is capped out, or it's off and the included pool is gone.
+    // "heddle's default Cursor routes (Grok/Composer) will fail here": on-demand is capped out, or
+    // it's off and the included TOTAL pool is gone. (The API sub-pool only gates named 3P models —
+    // see `cursor.includedApiExhausted`.)
     let limit_reached = if has_summary {
-        Some(on_demand_hard_stop || (!on_demand_enabled && plan_exhausted))
+        Some(on_demand_hard_stop || (!on_demand_enabled && total_exhausted))
     } else {
         None
     };
+    let _ = api_exhausted;
 
     if let Some(exp) = acct["tokenExpiresAt"].as_i64() {
         if exp <= now {

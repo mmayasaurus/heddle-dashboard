@@ -67,7 +67,7 @@ fn jwt_sub_and_exp_are_decoded_without_verification() {
 }
 
 #[test]
-fn account_row_maps_the_two_pools_to_named_windows_in_dollars() {
+fn account_row_maps_cursors_two_included_pools_and_on_demand_to_named_windows() {
     let now = 1_786_830_000;
     let a = account_row(&ide_account(now), now);
     assert_eq!(a.label, "v…@example.com");
@@ -75,23 +75,39 @@ fn account_row_maps_the_two_pools_to_named_windows_in_dollars() {
     assert_eq!(a.five_hour, LimitWindow::default());
     assert_eq!(a.seven_day, LimitWindow::default());
     let ids: Vec<&str> = a.windows.iter().map(|w| w.id.as_str()).collect();
-    assert_eq!(ids, ["monthly", "usage-based"]);
-    let monthly = &a.windows[0];
-    assert_eq!(monthly.used_percentage, Some(100.0));
-    assert_eq!(monthly.used_amount, Some(400.0));
-    assert_eq!(monthly.limit_amount, Some(400.0));
-    assert_eq!(monthly.unit.as_deref(), Some("usd"));
-    // Both pools reset with the billing cycle: 2026-08-25T22:24:48Z.
-    assert_eq!(monthly.resets_at, Some(1_787_696_688));
-    let on_demand = &a.windows[1];
-    assert_eq!(on_demand.used_percentage, Some(0.0));
-    assert_eq!(on_demand.used_amount, Some(0.0));
-    assert_eq!(on_demand.limit_amount, Some(100.0));
-    assert_eq!(on_demand.resets_at, Some(1_787_696_688));
-    // Included pool exhausted but on-demand is on with room → requests still work.
+    assert_eq!(ids, ["included-total", "included-api", "usage-based"]);
+    // Included TOTAL pool (Auto / Grok / Composer): Cursor's own totalPercentUsed, no dollar size.
+    let total = &a.windows[0];
+    assert!((total.used_percentage.unwrap() - 17.3376).abs() < 1e-9);
+    assert_eq!(total.used_amount, None);
+    assert_eq!(total.resets_at, Some(1_787_696_688)); // 2026-08-25T22:24:48Z
+                                                      // Included API sub-pool (named 3P models): Cursor's apiPercentUsed + plan.used/limit dollars.
+    let api = &a.windows[1];
+    assert!((api.used_percentage.unwrap() - 86.688).abs() < 1e-9);
+    assert_eq!(api.used_amount, Some(400.0));
+    assert_eq!(api.limit_amount, Some(400.0));
+    assert_eq!(api.unit.as_deref(), Some("usd"));
+    assert_eq!(api.resets_at, Some(1_787_696_688));
+    // On-demand: $0 of the $100 spend limit.
+    let od = &a.windows[2];
+    assert_eq!(od.used_percentage, Some(0.0));
+    assert_eq!(od.used_amount, Some(0.0));
+    assert_eq!(od.limit_amount, Some(100.0));
+    // API pool exhausted (remaining 0) → code; total pool at 17% → Grok/Composer still fine.
+    assert!(a
+        .note_codes
+        .contains(&CODE_INCLUDED_API_EXHAUSTED.to_string()));
+    assert!(!a
+        .note_codes
+        .contains(&CODE_INCLUDED_TOTAL_EXHAUSTED.to_string()));
     assert_eq!(a.limit_reached, Some(false));
-    assert!(a.note_codes.contains(&CODE_PLAN_EXHAUSTED.to_string()));
-    assert!(a.note.as_deref().unwrap().contains("$400.00 of $400.00"));
+    // Cursor's own display strings lead the note.
+    let note = a.note.clone().unwrap();
+    assert!(
+        note.starts_with("You've used 17% of your included total usage; You've used 87% of your included API usage"),
+        "{note}"
+    );
+    assert!(note.contains("$400.00 of $400.00"));
     // Raw facts for the router (cents, percentages, cycle, token expiry).
     let d = a.detail.unwrap();
     assert_eq!(d["plan"]["totalPercentUsed"], 17.337600000000002);
@@ -103,9 +119,9 @@ fn account_row_maps_the_two_pools_to_named_windows_in_dollars() {
 }
 
 #[test]
-fn on_demand_hard_stop_and_disabled_on_demand_set_limit_reached() {
+fn on_demand_hard_stop_and_total_pool_exhaustion_set_limit_reached() {
     let now = 1_786_830_000;
-    // On-demand capped out.
+    // On-demand capped out → requests fail.
     let mut acct = ide_account(now);
     acct["summary"]["individualUsage"]["onDemand"] =
         json!({"enabled": true, "used": 10000, "limit": 10000, "remaining": 0});
@@ -114,24 +130,35 @@ fn on_demand_hard_stop_and_disabled_on_demand_set_limit_reached() {
     assert!(a
         .note_codes
         .contains(&CODE_ON_DEMAND_LIMIT_REACHED.to_string()));
-    assert_eq!(a.windows[1].used_percentage, Some(100.0));
-    // On-demand off + included pool gone → requests fail.
+    assert_eq!(a.windows[2].used_percentage, Some(100.0));
+    // On-demand off + API pool gone but TOTAL pool at 17% → Grok/Composer still work.
     let mut acct = ide_account(now);
     acct["summary"]["individualUsage"]["onDemand"] =
         json!({"enabled": false, "used": 0, "limit": 0, "remaining": 0});
     let a = account_row(&acct, now);
+    assert_eq!(a.limit_reached, Some(false));
+    assert_eq!(a.windows[2].used_percentage, None);
+    assert!(a.windows[2].label.contains("off"));
+    // On-demand off + TOTAL pool exhausted → the account can't serve heddle's Cursor routes.
+    let mut acct = ide_account(now);
+    acct["summary"]["individualUsage"]["onDemand"]["enabled"] = json!(false);
+    acct["summary"]["individualUsage"]["plan"]["totalPercentUsed"] = json!(100);
+    let a = account_row(&acct, now);
     assert_eq!(a.limit_reached, Some(true));
-    assert_eq!(a.windows[1].used_percentage, None);
-    assert!(a.windows[1].label.contains("off"));
-    // Plenty of included pool left, on-demand off → fine.
+    assert!(a
+        .note_codes
+        .contains(&CODE_INCLUDED_TOTAL_EXHAUSTED.to_string()));
+    // Plenty of both pools left → clean.
     let mut acct = ide_account(now);
     acct["summary"]["individualUsage"]["plan"]["used"] = json!(1000);
     acct["summary"]["individualUsage"]["plan"]["remaining"] = json!(39000);
-    acct["summary"]["individualUsage"]["onDemand"]["enabled"] = json!(false);
+    acct["summary"]["individualUsage"]["plan"]["apiPercentUsed"] = json!(2.5);
     let a = account_row(&acct, now);
     assert_eq!(a.limit_reached, Some(false));
-    assert!(!a.note_codes.contains(&CODE_PLAN_EXHAUSTED.to_string()));
-    assert_eq!(a.windows[0].used_percentage, Some(2.5));
+    assert!(!a
+        .note_codes
+        .contains(&CODE_INCLUDED_API_EXHAUSTED.to_string()));
+    assert_eq!(a.windows[1].used_percentage, Some(2.5));
 }
 
 #[test]
@@ -142,8 +169,8 @@ fn legacy_overall_shape_is_read_as_on_demand() {
     let od = iu.remove("onDemand").unwrap();
     iu.insert("overall".to_string(), od);
     let a = account_row(&acct, now);
-    assert_eq!(a.windows[1].id, "usage-based");
-    assert_eq!(a.windows[1].limit_amount, Some(100.0));
+    assert_eq!(a.windows[2].id, "usage-based");
+    assert_eq!(a.windows[2].limit_amount, Some(100.0));
 }
 
 #[test]
@@ -158,7 +185,7 @@ fn token_expiry_and_fetch_errors_become_notes_and_keep_last_known_numbers() {
     assert!(a.note.as_deref().unwrap().contains("expires in 3d"));
     assert!(a.note.as_deref().unwrap().contains("HTTP 429"));
     // Last-known summary still renders.
-    assert_eq!(a.windows[0].used_percentage, Some(100.0));
+    assert_eq!(a.windows[1].used_amount, Some(400.0));
     let mut acct = ide_account(now);
     acct["tokenExpiresAt"] = json!(now - 1);
     let a = account_row(&acct, now);
@@ -194,19 +221,22 @@ fn snapshot_parses_to_a_cursor_entry_with_binding_windows_across_accounts() {
     assert!(l.note.is_none());
     assert_eq!(l.note_codes.as_deref(), Some(&[][..]));
     // The cursor-agent login is what heddle bills → it is the active account and supplies the
-    // top-level windows (monthly 25% / usage-based 84%), NOT the binding max.
+    // top-level windows (its own three), NOT the binding max.
     assert_eq!(l.active_account.as_deref(), Some(SOURCE_CLI_KEYCHAIN));
     let windows = l.windows.unwrap();
-    assert_eq!(windows[0].id, "monthly");
+    let ids: Vec<&str> = windows.iter().map(|w| w.id.as_str()).collect();
+    assert_eq!(ids, ["included-total", "included-api", "usage-based"]);
     assert_eq!(windows[0].used_percentage, Some(25.0));
-    assert_eq!(windows[1].id, "usage-based");
-    assert_eq!(windows[1].used_percentage, Some(84.0));
-    assert_eq!(windows[1].used_amount, Some(42.0));
+    assert_eq!(windows[1].used_percentage, Some(25.0));
+    assert_eq!(windows[2].used_percentage, Some(84.0));
+    assert_eq!(windows[2].used_amount, Some(42.0));
     // With only the IDE login known: binding view, active unknown.
     let ide_only = snapshot_with(vec![ide_account(now)], Some(now), None);
     let l2 = parse_snapshot(&ide_only, now + 60).unwrap();
     assert_eq!(l2.active_account, None);
-    assert_eq!(l2.windows.unwrap()[0].used_percentage, Some(100.0));
+    let w2 = l2.windows.unwrap();
+    assert!((w2[0].used_percentage.unwrap() - 17.3376).abs() < 1e-9);
+    assert!((w2[1].used_percentage.unwrap() - 86.688).abs() < 1e-9);
     let accounts = l.accounts.unwrap();
     assert_eq!(accounts.len(), 2);
     assert_eq!(accounts[1].plan.as_deref(), Some("pro"));
@@ -251,7 +281,7 @@ fn no_accounts_and_refresh_failures_are_explained() {
         .as_deref()
         .unwrap()
         .starts_with("last refresh failed (60s ago)"));
-    assert_eq!(l.windows.unwrap()[0].used_percentage, Some(100.0));
+    assert!((l.windows.unwrap()[1].used_percentage.unwrap() - 86.688).abs() < 1e-9);
     // Never succeeded → noDataYet.
     let snap = snapshot_with(
         vec![ide_account(now)],
