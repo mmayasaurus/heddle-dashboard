@@ -30,6 +30,11 @@ retarget children). After merge: `pr-linear-sync`, `lin.sh resolve HED-n`, delet
 worktree (`git worktree remove`, branches kept). Anything touching security semantics, deletion of
 user-visible features, or another agent's files still waits for Maya.
 
+**File-ownership discipline (R, 2026-08-15, after causing a conflict on W's #4):** while an agent has an
+open PR that restructures a file (W: `src-tauri/src/heddle_stats.rs` → `heddle_stats/*.rs`), NOBODY —
+including R — edits that file on `main`. Backend needs go to the owning agent as a spec to port, or a
+branch off theirs. Each main-side edit conflicts and restarts their two-sweep clock.
+
 ## Data lenses (built)
 - **Statusline tap** (`docs/USAGE_TAP.md`) → true per-provider 5h/7d rate-limit caps.
   Claude live ✅ · Codex via claudex-usage wham cache, self-refreshing ✅ · Gemini/Cursor TODO.
