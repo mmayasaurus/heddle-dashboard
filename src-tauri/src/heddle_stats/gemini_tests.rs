@@ -94,6 +94,10 @@ fn unknown_group_ids_fall_back_to_the_first_group() {
         .as_f64()
         .unwrap();
     assert!((five - 3.931).abs() < 0.01);
+    // …and that same group is NOT repeated as named windows (only the other group is).
+    let l = parse_snapshot(&snap, 2).unwrap();
+    let ids: Vec<String> = l.windows.unwrap().into_iter().map(|w| w.id).collect();
+    assert_eq!(ids, ["renamed-weekly", "renamed-5h"]);
 }
 
 #[test]
@@ -130,7 +134,7 @@ fn a_failed_refresh_is_explained_in_the_note() {
 #[ignore]
 fn live_refresh_writes_snapshot_and_limit_reads_it() {
     let started = now_secs();
-    assert!(force_refresh(started), "refresh thread should start");
+    assert!(force_refresh(started, "agy"), "refresh thread should start");
     // Wait for the detached refresh to land (agy takes a few seconds).
     for _ in 0..90 {
         std::thread::sleep(Duration::from_millis(500));
@@ -144,7 +148,7 @@ fn live_refresh_writes_snapshot_and_limit_reads_it() {
         "snapshot capturedAt={} lastError={}",
         snap["capturedAt"], snap["lastError"]
     );
-    let l = limit(now_secs()).expect("snapshot present → entry");
+    let l = limit(now_secs(), "agy").expect("snapshot present → entry");
     println!("{}", serde_json::to_string_pretty(&l).unwrap());
     assert!(
         l.captured_at.unwrap_or(0) >= started,
@@ -157,7 +161,7 @@ fn live_refresh_writes_snapshot_and_limit_reads_it() {
 #[test]
 #[ignore]
 fn live_agy_smoke() {
-    match run_agy_quota() {
+    match run_agy_quota("agy") {
         Ok(data) => {
             let snap = snapshot_from_agy(&data, now_secs());
             let l = parse_snapshot(&snap, now_secs()).unwrap();
