@@ -2,7 +2,7 @@
 //! backend's `ssh_remote_available` answer — never offer an SSH mode the backend will refuse — and
 //! must still expose URL (pairing-link) mode, which does not depend on the disabled provisioning path.
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -66,11 +66,26 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
   });
 
   it("treats a failing availability query as unavailable (fail closed)", async () => {
+    // Hold the availability promise so the assertions run at three points: pending, after the
+    // rejection is delivered and handled, and after React has flushed. A missing `.catch` would surface
+    // here as an unhandled rejection (vitest fails the run), and a default-true gate would render SSH.
+    let rejectAvailability!: (e: Error) => void;
     invoke.mockImplementation((cmd: string) =>
-      cmd === "ssh_remote_available" ? Promise.reject(new Error("no backend")) : Promise.resolve([]),
+      cmd === "ssh_remote_available"
+        ? new Promise<boolean>((_, reject) => {
+            rejectAvailability = reject;
+          })
+        : Promise.resolve([]),
     );
     render(<ConnectRemotePanel onClose={() => {}} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("ssh_remote_available"));
+    expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
+    await act(async () => {
+      rejectAvailability(new Error("no backend"));
+      // Let the rejection propagate through the panel's `.catch` and any resulting state update.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
     expect(screen.getByPlaceholderText("connect.pairingPlaceholder")).toBeTruthy();
   });
