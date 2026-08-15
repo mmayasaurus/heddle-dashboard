@@ -857,6 +857,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             heddle_stats::heddle_caps,
             heddle_stats::heddle_recent,
             heddle_stats::heddle_in_flight,
+            heddle_stats::heddle_fleet_roster,
             heddle_stats::heddle_provider_usage,
             heddle_stats::heddle_provider_limits,
         ])

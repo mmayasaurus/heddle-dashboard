@@ -313,7 +313,9 @@ svg { display: block; }
 .fleet-bar:hover { background: var(--bg-hover); }
 .fleet-chevron { color: var(--text-dim); width: 10px; display: inline-block; }
 .fleet-title { font-weight: 700; letter-spacing: 0.4px; color: var(--accent); }
-.fleet-sum { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.fleet-sum { display: inline-flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+.fleet-chip-sum { display: inline-flex; align-items: center; white-space: nowrap; }
+.fleet-chip-sum.stale { opacity: 0.55; }
 .fleet-tag { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); margin-right: 4px; }
 .fleet-dim { color: var(--text-dim); }
 .fleet-run { color: var(--accent); font-weight: 600; }
@@ -345,11 +347,40 @@ svg { display: block; }
 .fleet-durn { width: 60px; text-align: right; flex: none; }
 .fleet-prow { display: flex; align-items: center; gap: 8px; padding: 1.5px 0; }
 .fleet-prov { font-weight: 600; min-width: 62px; text-transform: capitalize; }
+/* fleet roster: named agents → expandable in-flight workers */
+.fleet-roster { display: flex; flex-direction: column; gap: 1px; }
+.fleet-roster-head { display: flex; align-items: center; gap: 10px; }
+.fleet-scope { display: inline-flex; gap: 2px; margin-left: auto; text-transform: none; letter-spacing: 0; }
+.fleet-scope-btn { font-size: 10px; padding: 1px 7px; border-radius: 10px; color: var(--text-dim); border: 1px solid var(--border); background: transparent; }
+.fleet-scope-btn:hover { color: var(--text); background: var(--bg-hover); }
+.fleet-scope-btn.on { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); font-weight: 600; }
+.fleet-agent-row { display: flex; align-items: center; gap: 7px; padding: 2px 4px; border-radius: 4px; }
+.fleet-agent-row.has-children { cursor: pointer; }
+.fleet-agent-row.has-children:hover { background: var(--bg-hover); }
+.fleet-agent-chev { width: 10px; color: var(--text-dim); flex: none; }
+.fleet-agent-chev.none { color: var(--text-faint); }
+.fleet-agent-glyph { width: 12px; flex: none; text-align: center; }
+.fleet-agent-glyph.busy { color: var(--accent); }
+.fleet-agent-glyph.idle { color: var(--text-dim); }
+.fleet-agent-glyph.dead { color: var(--text-faint); }
+.fleet-agent-name { font-weight: 700; min-width: 22px; }
+.fleet-agent.dead .fleet-agent-name { color: var(--text-faint); text-decoration: line-through; }
+.fleet-agent-status { color: var(--text-mid); font-size: 10.5px; min-width: 44px; }
+.fleet-agent-cwd { font-size: 10.5px; }
+.fleet-agent-wcount { color: var(--accent); font-size: 10.5px; font-weight: 600; }
+.fleet-agent-stale, .fleet-agent-age { font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.fleet-agent-age { width: 52px; text-align: right; flex: none; }
+.fleet-agent-workers { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 4px 34px; padding-left: 8px; border-left: 1px solid var(--border); }
+.fleet-worker { display: flex; align-items: center; gap: 7px; padding: 1px 0; font-size: 11px; }
+.fleet-worker.stale { opacity: 0.55; }
+.fleet-worker-cwd { font-size: 10.5px; }
 /* per-provider rate-limit caps (ccusage-style segmented bars) */
 .fleet-provcaps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px 22px; }
 .fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 216px; }
+.fleet-provcap.stale { opacity: 0.55; }
 .fleet-provcap-header { display: flex; flex-direction: column; }
 .fleet-provcap-name { font-weight: 700; text-transform: capitalize; font-size: 11px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 6px; }
+.fleet-provcap-note { color: var(--text-faint); cursor: help; font-size: 10px; text-transform: none; }
 .fleet-provcap-model { font-weight: 400; font-size: 9.5px; text-transform: none; letter-spacing: 0; }
 .fleet-provcap-refresh { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-refresh:hover { color: var(--accent); background: var(--bg-hover); }
@@ -363,6 +394,16 @@ svg { display: block; }
 .fleet-seg-empty { opacity: 0.3; }
 .fleet-capline-pct { width: 34px; text-align: right; flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fleet-capline-reset { flex: 1; font-size: 10.5px; }
+.fleet-provcap-accounts { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.fleet-provcap-account-toggle { align-self: flex-start; color: var(--text-dim); font-size: 10px; padding: 0 2px; }
+.fleet-provcap-account-toggle:hover { color: var(--text-faint); background: var(--bg-hover); }
+.fleet-provcap-account { display: flex; align-items: baseline; gap: 3px; color: var(--text-dim); font-size: 10px; }
+.fleet-provcap-account-label { color: var(--text-faint); }
+.fleet-provcap-account-plan { color: var(--text-dim); }
+.fleet-provcap-account-caps { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
+.fleet-provcap-account-separator { color: var(--text-faint); margin-left: 2px; }
+.fleet-provcap-limit-reached { color: var(--red); margin-left: 2px; }
+.fleet-provcap-window { display: flex; align-items: baseline; gap: 6px; color: var(--text-dim); font-size: 10px; }
 @keyframes fleet-spin { to { transform: rotate(360deg); } }
 .splitnode { display: flex; min-width: 0; min-height: 0; flex: 1; }
 .splitnode.sn-row { flex-direction: row; }
