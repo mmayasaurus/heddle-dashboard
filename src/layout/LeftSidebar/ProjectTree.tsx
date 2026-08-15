@@ -613,7 +613,7 @@ export function ProjectTree(h: TreeHandlers) {
     virtualizer.measure();
   }, [rowH, virtualizer]);
 
-  // After `vela <path>` imports or reuses a project, reveal its row and consume the one-shot marker.
+  // After `heddle <path>` imports or reuses a project, reveal its row and consume the one-shot marker.
   useEffect(() => {
     if (!isPrimary || !revealProjectId) return;
     const index = rows.findIndex((row) => row.kind === "project" && row.id === revealProjectId);

@@ -165,12 +165,12 @@ const velaCommand: VelaCommandCapability = {
   },
   async install() {
     const cli = bridge()?.velaCommand;
-    if (!cli) throw new Error("The vela command can only be installed from the desktop app.");
+    if (!cli) throw new Error("The heddle command can only be installed from the desktop app.");
     return cli.install();
   },
   async uninstall() {
     const cli = bridge()?.velaCommand;
-    if (!cli) throw new Error("The vela command can only be removed from the desktop app.");
+    if (!cli) throw new Error("The heddle command can only be removed from the desktop app.");
     return cli.uninstall();
   },
 };

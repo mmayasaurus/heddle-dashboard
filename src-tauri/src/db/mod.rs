@@ -3,9 +3,69 @@
 pub mod repo;
 pub mod schema;
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension};
+
+/// Database file name inside the app data directory. Renamed from upstream's `vlx-term.db` (HED-40).
+pub const DB_FILE: &str = "heddle.db";
+/// Pre-rename database file name; migrated forward once by [`app_db_path`], never modified or removed.
+pub const LEGACY_DB_FILE: &str = "vlx-term.db";
+
+/// Resolve the database path inside `data_dir`, migrating a legacy `vlx-term.db` on first sight.
+///
+/// If `heddle.db` does not exist yet and `vlx-term.db` does, a consistent copy is produced with SQLite's
+/// `VACUUM INTO` through a normal connection (so WAL content is folded in — a raw file copy of a WAL
+/// database could drop the newest writes), written to `heddle.db.migrating` and renamed into place. The
+/// legacy file is left exactly as it was so a pre-rename build still opens it. If the copy fails, the
+/// legacy path is returned so startup keeps working on the old file (logged, not fatal).
+pub fn app_db_path(data_dir: &Path) -> PathBuf {
+    let new = data_dir.join(DB_FILE);
+    let legacy = data_dir.join(LEGACY_DB_FILE);
+    if new.exists() || !legacy.exists() {
+        return new;
+    }
+    match copy_legacy_db(&legacy, &new) {
+        Ok(()) => {
+            eprintln!(
+                "[heddle] migrated {} -> {} (legacy file kept untouched)",
+                legacy.display(),
+                new.display()
+            );
+            new
+        }
+        Err(e) => {
+            eprintln!(
+                "[heddle] legacy database migration failed ({e}); continuing on {}",
+                legacy.display()
+            );
+            legacy
+        }
+    }
+}
+
+/// `VACUUM INTO` a consistent snapshot of `legacy` at `new` (via a temp file + rename). Read-only with
+/// respect to `legacy`: VACUUM INTO never modifies the source database.
+fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
+    let tmp = new.with_extension("db.migrating");
+    // Only ever our own incomplete artifact from an interrupted earlier attempt.
+    if tmp.exists() {
+        std::fs::remove_file(&tmp).map_err(|e| format!("cannot clear stale {}: {e}", tmp.display()))?;
+    }
+    let src = Connection::open(legacy).map_err(|e| format!("open legacy db: {e}"))?;
+    src.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("busy_timeout: {e}"))?;
+    let tmp_str = tmp
+        .to_str()
+        .ok_or_else(|| "non-UTF-8 data dir path".to_string())?
+        .to_string();
+    src.execute("VACUUM INTO ?1", [tmp_str])
+        .map_err(|e| format!("VACUUM INTO: {e}"))?;
+    drop(src);
+    std::fs::rename(&tmp, new).map_err(|e| format!("rename into place: {e}"))?;
+    Ok(())
+}
 
 /// Database handle injected as Tauri managed state.
 pub struct Db {
@@ -202,6 +262,53 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// HED-40: a pre-rename `vlx-term.db` is copied forward to `heddle.db` exactly once, with its
+    /// content intact (including rows that only lived in the WAL), and the legacy file is left as-is.
+    #[test]
+    fn legacy_db_is_migrated_once_and_left_untouched() {
+        let dir = std::env::temp_dir().join(format!("heddle-db-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join(super::LEGACY_DB_FILE);
+        let new = dir.join(super::DB_FILE);
+
+        // No database at all: the new path is returned and nothing is created.
+        assert_eq!(super::app_db_path(&dir), new);
+        assert!(!new.exists() && !legacy.exists());
+
+        // A legacy WAL database with a row that has NOT been checkpointed into the main file.
+        {
+            let c = rusqlite::Connection::open(&legacy).unwrap();
+            c.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);")
+                .unwrap();
+            // Keep the connection open (WAL not checkpointed) while migrating, like a live app would.
+            assert_eq!(super::app_db_path(&dir), new);
+            drop(c);
+        }
+        assert!(new.exists(), "heddle.db must be created from the legacy file");
+        assert!(legacy.exists(), "legacy file must never be removed");
+        let n = rusqlite::Connection::open(&new).unwrap();
+        let x: i64 = n.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 42, "WAL-resident row must survive the copy");
+        drop(n);
+
+        // Second call is a no-op: writes to heddle.db are not clobbered by another copy.
+        {
+            let n = rusqlite::Connection::open(&new).unwrap();
+            n.execute("INSERT INTO t VALUES (7)", []).unwrap();
+        }
+        assert_eq!(super::app_db_path(&dir), new);
+        let n = rusqlite::Connection::open(&new).unwrap();
+        let cnt: i64 = n.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(cnt, 2, "an existing heddle.db must be used as-is");
+        // Legacy content unchanged by everything above.
+        let l = rusqlite::Connection::open(&legacy).unwrap();
+        let lcnt: i64 = l.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(lcnt, 1);
+        drop((n, l));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use rusqlite::Connection;
 

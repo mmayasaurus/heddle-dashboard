@@ -21,7 +21,7 @@ use crate::models::SessionKind;
 use crate::pty::manager::{PtyManager, SpawnResult};
 use crate::web::{DeviceEntry, PairingInfo, WebServer};
 
-/// Take and clear an unconsumed `vela <path>` request. The frontend checks after installing its
+/// Take and clear an unconsumed `heddle <path>` request. The frontend checks after installing its
 /// listener; second-instance events use the same wake-only event plus queued payload to avoid races.
 #[tauri::command]
 pub fn take_open_project_request(pending: State<crate::PendingOpenProject>) -> Option<String> {
@@ -29,7 +29,7 @@ pub fn take_open_project_request(pending: State<crate::PendingOpenProject>) -> O
 }
 
 /// VS Code-style shell command management. Native macOS settings/menu actions query, install, or
-/// uninstall `vela` directly so browser/remote clients cannot modify the host PATH.
+/// uninstall `heddle` directly so browser/remote clients cannot modify the host PATH.
 #[tauri::command]
 pub fn vela_command_status() -> crate::agent::spawn_cli::UserCliStatus {
     crate::agent::spawn_cli::user_cli_status()
