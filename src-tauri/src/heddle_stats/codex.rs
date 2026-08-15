@@ -112,17 +112,24 @@ fn kick_refresh(now: i64, force: bool) -> bool {
         return false;
     }
     LAST_KICK_AT.store(now, Ordering::SeqCst);
-    let child = std::process::Command::new(home().join(HELPER_REL))
+    let mut child = match std::process::Command::new(home().join(HELPER_REL))
         .args(["--refresh", "lb"])
         .env("PATH", augmented_path())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
-    std::thread::spawn(move || {
-        if let Ok(mut c) = child {
-            let _ = c.wait();
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            // Helper missing/unrunnable: nothing was kicked. The cooldown still applies so a
+            // 30s poll doesn't retry the failing spawn every tick.
+            REFRESHING.store(false, Ordering::SeqCst);
+            return false;
         }
+    };
+    std::thread::spawn(move || {
+        let _ = child.wait();
         REFRESHING.store(false, Ordering::SeqCst);
     });
     true
