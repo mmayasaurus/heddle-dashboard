@@ -40,7 +40,7 @@ as scaffolding underneath a behavioral test; SUPERFICIAL never lands as the *onl
    "no SSH button" while the availability promise is still pending passes even without the `.catch`
    (the default is already `false`). Await the settlement you claim to be testing (see example C).
 6. **Happy-path-only** — no test for the refusal, the timeout, the malformed payload, the concurrent
-   second process. In heddle the refusals ARE the feature (subscriptions-only, opt-in gates, the SSH-remote
+   second process. In heddle, the refusals ARE the feature (subscriptions-only, opt-in gates, the SSH-remote
    provisioning gate introduced in dashboard #7): every guard gets a test that the guarded thing does *not*
    happen.
 7. **"Renders"/"is defined"/"was called once"** with no observable consequence attached.
