@@ -138,7 +138,7 @@ fn live_refresh_writes_snapshot_and_limit_reads_it() {
     // Wait for the detached refresh to land (agy takes a few seconds).
     for _ in 0..90 {
         std::thread::sleep(Duration::from_millis(500));
-        if !REFRESHING.load(Ordering::SeqCst) {
+        if !GATE.in_flight() {
             break;
         }
     }

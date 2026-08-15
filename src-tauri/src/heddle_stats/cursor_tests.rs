@@ -240,9 +240,17 @@ fn snapshot_parses_to_a_cursor_entry_with_binding_windows_across_accounts() {
     let accounts = l.accounts.unwrap();
     assert_eq!(accounts.len(), 2);
     assert_eq!(accounts[1].plan.as_deref(), Some("pro"));
-    // The full emails never appear.
+    // Masked labels present, unmasked variants absent.
     let js = serde_json::to_string(&accounts).unwrap();
-    assert!(!js.contains("@example.com\"") || js.contains("v…@example.com"));
+    assert!(
+        js.contains("v…@example.com") && js.contains("m…@example.org"),
+        "{js}"
+    );
+    assert!(
+        !js.contains("\"v@example.com") && !js.contains("\"m@example.org"),
+        "{js}"
+    );
+    assert!(!js.contains("victoria@") && !js.contains("maya@"), "{js}");
     // Old snapshot → stale.
     assert_eq!(
         parse_snapshot(&snap, now + STALE_AFTER_SECS + 1)
@@ -309,6 +317,55 @@ fn keychain_cli_account_is_opt_in_via_usage_sources_json() {
     ));
 }
 
+#[test]
+fn active_account_without_data_falls_back_to_the_binding_view_and_captured_at_follows_active() {
+    let now = 1_786_830_000;
+    // CLI row exists but its fetch never produced a summary → binding view of the IDE row, active unknown.
+    let cli_no_data = json!({"label": "m…@example.org", "source": SOURCE_CLI_KEYCHAIN, "tokenExpiresAt": now + 30 * 86_400, "error": "Keychain read skipped — backing off after an earlier failure"});
+    let snap = snapshot_with(vec![ide_account(now), cli_no_data], Some(now), None);
+    let l = parse_snapshot(&snap, now + 10).unwrap();
+    assert_eq!(l.active_account, None);
+    let w = l.windows.unwrap();
+    assert!((w[1].used_percentage.unwrap() - 86.688).abs() < 1e-9);
+    // CLI row with an OLD summary while the IDE row is fresh → top level reports the CLI row's own
+    // capture time and staleness (never "fresh" borrowed from the IDE fetch).
+    let mut cli_old = ide_account(now);
+    cli_old["source"] = json!(SOURCE_CLI_KEYCHAIN);
+    cli_old["fetchedAt"] = json!(now - STALE_AFTER_SECS - 100);
+    cli_old["error"] = json!("usage-summary: HTTP 429 — rate limited by cursor.com");
+    let snap = snapshot_with(vec![ide_account(now), cli_old], Some(now), None);
+    let l = parse_snapshot(&snap, now).unwrap();
+    assert_eq!(l.active_account.as_deref(), Some(SOURCE_CLI_KEYCHAIN));
+    assert_eq!(l.captured_at, Some(now - STALE_AFTER_SECS - 100));
+    assert_eq!(l.stale, Some(true));
+}
+
+#[test]
+fn on_demand_hard_stop_also_triggers_on_used_at_or_over_limit() {
+    let now = 1_786_830_000;
+    let mut acct = ide_account(now);
+    // remaining says 1¢ left but used already equals the limit → still a hard stop.
+    acct["summary"]["individualUsage"]["onDemand"] =
+        json!({"enabled": true, "used": 10000, "limit": 10000, "remaining": 1});
+    let a = account_row(&acct, now);
+    assert_eq!(a.limit_reached, Some(true));
+    assert_eq!(a.windows[2].used_percentage, Some(100.0));
+}
+
+#[test]
+fn keychain_failures_back_off_for_an_hour() {
+    let now = 1_786_830_000;
+    // Fresh state (or a past window): not backing off.
+    note_keychain_failure(now - 2 * 3600 - 1);
+    assert!(!keychain_backing_off(now));
+    // A failure now → backing off until now + 1h.
+    note_keychain_failure(now);
+    assert!(keychain_backing_off(now + 3599));
+    assert!(!keychain_backing_off(now + 3600));
+    // Reset so other tests (and the live test) aren't affected.
+    note_keychain_failure(0);
+}
+
 /// Machine-dependent: discovers the local Cursor logins (IDE always; cursor-agent Keychain only if
 /// opted in), fetches usage-summary for each, writes the real snapshot and reads it back. Run:
 /// `cargo test --lib heddle_stats::cursor -- --ignored --nocapture`.
@@ -319,7 +376,7 @@ fn live_refresh_writes_snapshot_and_limit_reads_it() {
     assert!(force_refresh(started), "refresh thread should start");
     for _ in 0..90 {
         std::thread::sleep(Duration::from_millis(500));
-        if !REFRESHING.load(Ordering::SeqCst) {
+        if !GATE.in_flight() {
             break;
         }
     }
@@ -333,4 +390,13 @@ fn live_refresh_writes_snapshot_and_limit_reads_it() {
     );
     let l = limit(now_secs()).expect("snapshot present → entry");
     println!("{}", serde_json::to_string_pretty(&l).unwrap());
+    let fresh = l
+        .accounts
+        .as_ref()
+        .map(|a| a.iter().any(|r| r.captured_at.unwrap_or(0) >= started))
+        .unwrap_or(false);
+    assert!(
+        fresh,
+        "at least one account must have been fetched during this run"
+    );
 }

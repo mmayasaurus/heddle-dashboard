@@ -149,7 +149,7 @@ backend for per-provider refresh buttons.
 - **Which window gates what (router, HED-67)**: `included-total` → `cursor-grok-*` / `composer-*` /
   auto; `included-api` → kimi-class named third-party models (second-opinion-hard); `usage-based`
   hard stop (`onDemand.enabled && remaining == 0`) → everything that would bill on-demand.
-- **Accounts**: (1) the **Cursor IDE** login — token read read-only from the IDE's `state.vscdb`
+- **Accounts**: (1) the **Cursor IDE** login — token read (read-only) from the IDE's `state.vscdb`
   (`cursorAuth/accessToken`, `cachedEmail`, `stripeMembershipType`; macOS/Linux/Windows paths) — always
   on; (2) the **cursor-agent CLI** login — token only in the macOS Keychain (`cursor-access-token`),
   read via `/usr/bin/security find-generic-password -w` (the pattern upstream already uses for the
@@ -177,7 +177,7 @@ Maya has 4 Claude Max20 accounts, registered in `~/.heddle/accounts.json` (`clau
 multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never set
 `CLAUDE_CONFIG_DIR=~/.claude` explicitly for the default — leave it unset.
 
-- The tap keys captures **per account**: it maps the session's `CLAUDE_CONFIG_DIR` to an account id and
+- The tap keys its captures **per account**: it maps the session's `CLAUDE_CONFIG_DIR` to an account id and
   writes `claude-<acctId>.json` alongside the legacy `claude.json` (drawer compat).
 - **Window-keeper** (`scripts/heddle-window-keeper.py`, installed at `~/.heddle/window-keeper.py`,
   launchd `io.heddle.window-keeper`, every 5 min): the 5h window is a rolling window anchored to the

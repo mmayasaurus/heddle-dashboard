@@ -167,7 +167,8 @@ fn active_account_switches_the_top_level_and_falls_back_to_the_legacy_file() {
     assert_eq!(l.active_account.as_deref(), Some("acct2"));
     assert_eq!(l.five_hour.used_percentage, Some(7.0));
     assert!(l.model.as_deref().unwrap().starts_with("claude-haiku-4-5"));
-    // Running as acct3 (no file yet) → legacy last-seen file keeps the summary populated.
+    // Running as acct3 (no file yet) → legacy last-seen file keeps the summary populated, and
+    // `activeAccount` names the account that capture came from (acct1), not the selected acct3.
     let l = build(
         &s.0,
         &registry(),
@@ -175,7 +176,7 @@ fn active_account_switches_the_top_level_and_falls_back_to_the_legacy_file() {
         now,
     )
     .unwrap();
-    assert_eq!(l.active_account.as_deref(), Some("acct3"));
+    assert_eq!(l.active_account.as_deref(), Some("acct1"));
     assert_eq!(l.five_hour.used_percentage, Some(32.0));
 }
 
@@ -186,6 +187,11 @@ fn unregistered_per_account_files_are_appended_as_extra_rows() {
     s.write(
         "claude-unknown-claude-x.json",
         &tap_file("claude-sonnet-5", 3.0, 1.0, now - 10, "unknown-claude-x"),
+    );
+    // An old unregistered file (a one-off dir from weeks ago) is NOT shown.
+    s.write(
+        "claude-unknown-old.json",
+        &tap_file("claude-sonnet-5", 9.0, 9.0, now - 3 * 86_400, "unknown-old"),
     );
     let l = build(&s.0, &registry(), None, now).unwrap();
     let rows = l.accounts.unwrap();

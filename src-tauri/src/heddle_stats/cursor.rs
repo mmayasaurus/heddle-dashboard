@@ -42,15 +42,15 @@
 //! `REFRESH_AFTER_SECS` (one detached thread, atomic write), stale after `STALE_AFTER_SECS`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    binding_named, home, is_stale, mask_email, now_secs, tap_limit, usage_dir, write_json_atomic,
-    AccountLimit, LimitWindow, NamedWindow, ProviderLimit,
+    binding_named, home, is_stale, mask_email, now_secs, run_with_timeout, tap_limit, usage_dir,
+    write_json_atomic, AccountLimit, LimitWindow, NamedWindow, ProviderLimit, RefreshGate,
 };
 
 const SNAPSHOT: &str = "cursor.json";
@@ -63,8 +63,11 @@ pub(super) const REFRESH_AFTER_SECS: i64 = 180;
 pub(super) const STALE_AFTER_SECS: i64 = 900;
 /// After a failed refresh, wait this long before trying again.
 const FAILURE_BACKOFF_SECS: i64 = 300;
-/// After a Keychain read fails (denied / no item), don't try again for this long.
+/// After a Keychain read fails (denied / no item / timed out), don't try again for this long.
 const KEYCHAIN_RETRY_AFTER_SECS: i64 = 3600;
+/// The first Keychain read may show macOS's "allow access" dialog; if nobody answers it in this
+/// long the read is abandoned (and backed off) so the refresher can't hang on it.
+const KEYCHAIN_PROMPT_TIMEOUT: Duration = Duration::from_secs(60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Warn when the session token expires within this many seconds.
 const TOKEN_EXPIRY_WARN_SECS: i64 = 7 * 86_400;
@@ -94,8 +97,7 @@ pub(super) const CODE_FETCH_FAILED: &str = "cursor.fetchFailed";
 pub(super) const SOURCE_IDE: &str = "cursor-ide";
 pub(super) const SOURCE_CLI_KEYCHAIN: &str = "cursor-agent-keychain";
 
-static REFRESHING: AtomicBool = AtomicBool::new(false);
-static NEXT_ATTEMPT_AT: AtomicI64 = AtomicI64::new(0);
+static GATE: RefreshGate = RefreshGate::new();
 static KEYCHAIN_NEXT_ATTEMPT_AT: AtomicI64 = AtomicI64::new(0);
 
 fn snapshot_path() -> PathBuf {
@@ -127,33 +129,7 @@ pub(super) fn force_refresh(now: i64) -> bool {
 }
 
 fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
-    if !force && now < NEXT_ATTEMPT_AT.load(Ordering::SeqCst) {
-        return false;
-    }
-    if REFRESHING
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return false;
-    }
-    std::thread::spawn(|| {
-        let _guard = RefreshGuard;
-        let ok = fetch_and_write();
-        let now = now_secs();
-        NEXT_ATTEMPT_AT.store(
-            if ok { 0 } else { now + FAILURE_BACKOFF_SECS },
-            Ordering::SeqCst,
-        );
-    });
-    true
-}
-
-/// Clears the in-flight flag when the refresh thread ends — including by panic.
-struct RefreshGuard;
-impl Drop for RefreshGuard {
-    fn drop(&mut self) {
-        REFRESHING.store(false, Ordering::SeqCst);
-    }
+    GATE.spawn(now, force, FAILURE_BACKOFF_SECS, fetch_and_write)
 }
 
 // ───────────────────────────── local sessions ─────────────────────────────
@@ -244,35 +220,51 @@ pub(super) fn keychain_cli_enabled(config: &Value) -> bool {
     config["cursor"]["keychainCli"].as_bool() == Some(true)
 }
 
-/// The cursor-agent CLI login from the macOS Keychain (opt-in). `Ok(None)` when disabled or not
-/// on macOS; `Err` when the read failed (denied, no item, no UI session) — backed off for an hour.
+/// Whether the Keychain path is inside its failure backoff at `now`.
+pub(super) fn keychain_backing_off(now: i64) -> bool {
+    now < KEYCHAIN_NEXT_ATTEMPT_AT.load(Ordering::SeqCst)
+}
+
+/// Record a Keychain failure: no retry for `KEYCHAIN_RETRY_AFTER_SECS`.
+pub(super) fn note_keychain_failure(now: i64) {
+    KEYCHAIN_NEXT_ATTEMPT_AT.store(now + KEYCHAIN_RETRY_AFTER_SECS, Ordering::SeqCst);
+}
+
+/// The cursor-agent CLI login from the macOS Keychain (opt-in). `Ok(None)` when disabled; `Err`
+/// when the read failed (denied, no item, no UI session, unanswered prompt, non-macOS) — every
+/// failure backs off for an hour so a 30s poll can never nag.
 fn cli_session(now: i64) -> Result<Option<Session>, String> {
     if !keychain_cli_enabled(&sources_config()) {
         return Ok(None);
     }
-    if !cfg!(target_os = "macos") {
-        return Err("cursor-agent Keychain account is only supported on macOS".to_string());
-    }
-    if now < KEYCHAIN_NEXT_ATTEMPT_AT.load(Ordering::SeqCst) {
+    if keychain_backing_off(now) {
         return Err("Keychain read skipped — backing off after an earlier failure".to_string());
     }
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", "cursor-access-token", "-w"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| format!("failed to run security: {e}"))?;
-    if !out.status.success() {
-        KEYCHAIN_NEXT_ATTEMPT_AT.store(now + KEYCHAIN_RETRY_AFTER_SECS, Ordering::SeqCst);
-        let code = out.status.code().unwrap_or(-1);
-        // 44 = errSecItemNotFound (no cursor-agent login); other codes are mostly denied access.
-        return Err(format!(
-            "Keychain read of cursor-access-token failed (security exit {code}) — access denied or \
-             no cursor-agent login"
-        ));
+    if !cfg!(target_os = "macos") {
+        note_keychain_failure(now);
+        return Err("cursor-agent Keychain account is only supported on macOS".to_string());
     }
-    let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let mut cmd = std::process::Command::new("/usr/bin/security");
+    cmd.args(["find-generic-password", "-s", "cursor-access-token", "-w"]);
+    let (ok, stdout, _stderr) = match run_with_timeout(cmd, KEYCHAIN_PROMPT_TIMEOUT) {
+        Ok(r) => r,
+        Err(e) => {
+            note_keychain_failure(now);
+            return Err(format!("Keychain read of cursor-access-token failed: {e}"));
+        }
+    };
+    if !ok {
+        note_keychain_failure(now);
+        // Exit 44 = errSecItemNotFound (no cursor-agent login); other codes are mostly denied access.
+        return Err(
+            "Keychain read of cursor-access-token failed (security exited non-zero) — access \
+             denied or no cursor-agent login"
+                .to_string(),
+        );
+    }
+    let token = stdout.trim().to_string();
     if token.is_empty() {
-        KEYCHAIN_NEXT_ATTEMPT_AT.store(now + KEYCHAIN_RETRY_AFTER_SECS, Ordering::SeqCst);
+        note_keychain_failure(now);
         return Err("Keychain item cursor-access-token is empty".to_string());
     }
     let email = std::fs::read_to_string(home().join(".cursor").join("cli-config.json"))
@@ -309,7 +301,8 @@ pub(super) fn jwt_exp(token: &str) -> Option<i64> {
     jwt_claims(token)?["exp"].as_i64()
 }
 
-/// GET usage-summary for one session. Errors never contain the token.
+/// GET usage-summary for one session. The cookie (which carries the token) lives only in this
+/// function's stack and is never formatted into an error, log, or the snapshot.
 fn fetch_usage_summary(token: &str) -> Result<Value, String> {
     let user_id = jwt_user_id(token).ok_or("session token has no usable `sub` claim")?;
     let cookie = format!("WorkosCursorSessionToken={user_id}::{token}");
@@ -341,8 +334,9 @@ fn fetch_usage_summary(token: &str) -> Result<Value, String> {
 // ───────────────────────────── refresh → snapshot ─────────────────────────────
 
 /// Discover sessions, fetch each, write the snapshot. Returns whether at least one account was
-/// fetched successfully. Accounts that fail keep their last-known summary (from the previous
-/// snapshot) with an `error`, so numbers never silently vanish.
+/// fetched successfully. Accounts that fail — or that couldn't even be discovered this attempt
+/// (IDE DB unreadable, Keychain backoff) — keep their last-known summary from the previous
+/// snapshot with an `error`, so numbers never silently vanish.
 fn fetch_and_write() -> bool {
     let now = now_secs();
     let path = snapshot_path();
@@ -350,32 +344,34 @@ fn fetch_and_write() -> bool {
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .filter(Value::is_object);
-
-    let mut sessions: Vec<Session> = Vec::new();
-    let mut discovery_errors: Vec<String> = Vec::new();
-    match ide_session() {
-        Ok(Some(s)) => sessions.push(s),
-        Ok(None) => {}
-        Err(e) => discovery_errors.push(e),
-    }
-    match cli_session(now) {
-        Ok(Some(s)) => sessions.push(s),
-        Ok(None) => {}
-        Err(e) => discovery_errors.push(e),
-    }
-
     let prev_accounts: Vec<Value> = previous
         .as_ref()
         .and_then(|p| p["accounts"].as_array().cloned())
         .unwrap_or_default();
+    let prev_for = |source: &str| {
+        prev_accounts
+            .iter()
+            .find(|a| a["source"] == source)
+            .cloned()
+    };
+
+    let mut sessions: Vec<Session> = Vec::new();
+    let mut discovery_errors: Vec<(&'static str, String)> = Vec::new();
+    for (source, found) in [
+        (SOURCE_IDE, ide_session()),
+        (SOURCE_CLI_KEYCHAIN, cli_session(now)),
+    ] {
+        match found {
+            Ok(Some(s)) => sessions.push(s),
+            Ok(None) => {}
+            Err(e) => discovery_errors.push((source, e)),
+        }
+    }
+
     let mut accounts: Vec<Value> = Vec::new();
     let mut any_ok = false;
     for s in &sessions {
-        let prev = prev_accounts
-            .iter()
-            .find(|a| a["source"] == s.source)
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        let prev = prev_for(s.source).unwrap_or_else(|| json!({}));
         let mut acct = json!({
             "label": s.label,
             "source": s.source,
@@ -408,6 +404,16 @@ fn fetch_and_write() -> bool {
         }
         accounts.push(acct);
     }
+    // Accounts we knew last time but couldn't discover now: carry them over with the reason.
+    for (source, why) in &discovery_errors {
+        if accounts.iter().any(|a| a["source"] == *source) {
+            continue;
+        }
+        if let Some(mut prev) = prev_for(source) {
+            prev["error"] = Value::String(format!("not discovered this attempt: {why}"));
+            accounts.push(prev);
+        }
+    }
 
     let mut snap = json!({
         "model": format!("cursor.com · {} acct", accounts.len()),
@@ -417,20 +423,21 @@ fn fetch_and_write() -> bool {
         "accounts": accounts,
         "lastAttemptAt": now,
     });
+    let discovery_text: Vec<String> = discovery_errors.iter().map(|(_, e)| e.clone()).collect();
     let error = if sessions.is_empty() {
-        Some(if discovery_errors.is_empty() {
+        Some(if discovery_text.is_empty() {
             "no Cursor login found (Cursor IDE not signed in; cursor-agent Keychain account is \
              opt-in — see docs/USAGE_TAP.md)"
                 .to_string()
         } else {
-            discovery_errors.join("; ")
+            discovery_text.join("; ")
         })
     } else if !any_ok {
         Some("every account fetch failed (see accounts[].error)".to_string())
-    } else if discovery_errors.is_empty() {
+    } else if discovery_text.is_empty() {
         None
     } else {
-        Some(discovery_errors.join("; "))
+        Some(discovery_text.join("; "))
     };
     if let Some(e) = error {
         snap["lastError"] = Value::String(e);
@@ -450,6 +457,153 @@ fn cents(v: &Value) -> Option<f64> {
     v.as_f64()
 }
 
+fn usd(c: Option<f64>) -> Option<f64> {
+    c.map(|c| c / 100.0)
+}
+
+/// Accumulates an account's windows + notes while the helpers below walk the summary.
+#[derive(Default)]
+struct Rows {
+    windows: Vec<NamedWindow>,
+    codes: Vec<String>,
+    texts: Vec<String>,
+    api_exhausted: bool,
+    total_exhausted: bool,
+    on_demand_enabled: bool,
+    on_demand_hard_stop: bool,
+}
+
+/// The two included pools, Cursor's own display strings, and the exhaustion codes.
+fn included_windows(summary: &Value, cycle_end: Option<i64>, out: &mut Rows) {
+    let plan = &summary["individualUsage"]["plan"];
+    if !plan.is_object() {
+        return;
+    }
+    let used = cents(&plan["used"]);
+    let limit = cents(&plan["limit"]);
+    let total_pct = plan["totalPercentUsed"].as_f64();
+    let api_pct = plan["apiPercentUsed"].as_f64();
+    // Included TOTAL pool: Auto + Cursor models (Grok, Composer). Cursor states the percentage
+    // itself; it does not expose this pool's dollar size, so no amounts here.
+    out.windows.push(NamedWindow {
+        id: "included-total".to_string(),
+        label: "included total (Auto / Cursor models)".to_string(),
+        used_percentage: total_pct.map(|p| p.clamp(0.0, 100.0)),
+        resets_at: cycle_end,
+        used_amount: None,
+        limit_amount: None,
+        unit: None,
+    });
+    // Included API sub-pool: named third-party models. Percentage is Cursor's; the amounts are
+    // Cursor's `plan.used` / `plan.limit` for the same pool.
+    out.windows.push(NamedWindow {
+        id: "included-api".to_string(),
+        label: "included API (named 3rd-party models)".to_string(),
+        used_percentage: api_pct.map(|p| p.clamp(0.0, 100.0)),
+        resets_at: cycle_end,
+        used_amount: usd(used),
+        limit_amount: usd(limit),
+        unit: Some("usd".to_string()),
+    });
+    let plan_on = plan["enabled"].as_bool() != Some(false);
+    out.api_exhausted = plan_on
+        && (api_pct.map(|p| p >= 100.0).unwrap_or(false)
+            || (limit.map(|l| l > 0.0).unwrap_or(false)
+                && cents(&plan["remaining"]).map(|r| r <= 0.0).unwrap_or(false)));
+    out.total_exhausted = plan_on && total_pct.map(|p| p >= 100.0).unwrap_or(false);
+    // Cursor's own words first.
+    for key in [
+        "autoModelSelectedDisplayMessage",
+        "namedModelSelectedDisplayMessage",
+    ] {
+        if let Some(m) = summary[key].as_str().filter(|m| !m.is_empty()) {
+            out.texts.push(m.to_string());
+        }
+    }
+    if out.api_exhausted {
+        out.codes.push(CODE_INCLUDED_API_EXHAUSTED.to_string());
+        out.texts.push(format!(
+            "included API pool used up (${:.2} of ${:.2}) — named third-party models bill on-demand \
+             until the cycle resets",
+            used.unwrap_or(0.0) / 100.0,
+            limit.unwrap_or(0.0) / 100.0
+        ));
+    }
+    if out.total_exhausted {
+        out.codes.push(CODE_INCLUDED_TOTAL_EXHAUSTED.to_string());
+        out.texts.push(
+            "included total pool used up — Auto and Cursor models bill on-demand until the cycle \
+             resets"
+                .to_string(),
+        );
+    }
+}
+
+/// The usage-based (on-demand) window and its hard stop. Current payloads name it `onDemand`;
+/// older ones called it `overall`.
+fn on_demand_window(summary: &Value, cycle_end: Option<i64>, out: &mut Rows) {
+    let od = if summary["individualUsage"]["onDemand"].is_object() {
+        &summary["individualUsage"]["onDemand"]
+    } else {
+        &summary["individualUsage"]["overall"]
+    };
+    if !od.is_object() {
+        return;
+    }
+    let enabled = od["enabled"].as_bool().unwrap_or(false);
+    let used = cents(&od["used"]);
+    let limit = cents(&od["limit"]);
+    let has_limit = limit.map(|l| l > 0.0).unwrap_or(false);
+    let pct = match (enabled, used, limit) {
+        (true, Some(u), Some(l)) if l > 0.0 => Some((u / l * 100.0).clamp(0.0, 100.0)),
+        _ => None,
+    };
+    out.windows.push(NamedWindow {
+        id: "usage-based".to_string(),
+        label: if enabled {
+            "on-demand (usage-based)".to_string()
+        } else {
+            "on-demand (usage-based, off)".to_string()
+        },
+        used_percentage: pct,
+        resets_at: cycle_end,
+        used_amount: usd(used),
+        limit_amount: usd(limit),
+        unit: Some("usd".to_string()),
+    });
+    out.on_demand_enabled = enabled;
+    // Hard stop when the spend limit is used up — by `remaining` OR by `used >= limit`, so the
+    // flag can never disagree with a 100% bar.
+    let spent = cents(&od["remaining"]).map(|r| r <= 0.0).unwrap_or(false)
+        || matches!((used, limit), (Some(u), Some(l)) if u >= l);
+    if enabled && has_limit && spent {
+        out.on_demand_hard_stop = true;
+        out.codes.push(CODE_ON_DEMAND_LIMIT_REACHED.to_string());
+        out.texts.push("on-demand spend limit reached".to_string());
+    }
+}
+
+/// Session-token expiry and last-fetch-error notes.
+fn session_notes(acct: &Value, now: i64, out: &mut Rows) {
+    if let Some(exp) = acct["tokenExpiresAt"].as_i64() {
+        if exp <= now {
+            out.codes.push(CODE_TOKEN_EXPIRED.to_string());
+            out.texts
+                .push("session token expired — sign in to Cursor again".to_string());
+        } else if exp - now < TOKEN_EXPIRY_WARN_SECS {
+            out.codes.push(CODE_TOKEN_EXPIRING_SOON.to_string());
+            out.texts.push(format!(
+                "session token expires in {}d",
+                (exp - now) / 86_400
+            ));
+        }
+    }
+    if let Some(err) = acct["error"].as_str() {
+        out.codes.push(CODE_FETCH_FAILED.to_string());
+        out.texts.push(format!("last fetch failed: {err}"));
+    }
+}
+
 /// One account row from its snapshot entry.
 pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
     let label = acct["label"].as_str().unwrap_or("cursor").to_string();
@@ -458,161 +612,40 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
     let has_summary = summary.is_object();
     let cycle_end = parse_time(&summary["billingCycleEnd"]);
     let cycle_start = parse_time(&summary["billingCycleStart"]);
-    let plan = &summary["individualUsage"]["plan"];
-    // Current shape names it onDemand; older shape called it overall.
+    let mut rows = Rows::default();
+    included_windows(summary, cycle_end, &mut rows);
+    on_demand_window(summary, cycle_end, &mut rows);
+    session_notes(acct, now, &mut rows);
+    // "heddle's default Cursor routes (Grok/Composer) will fail here": on-demand is capped out, or
+    // it's off and the included TOTAL pool is gone. (The API sub-pool only gates named 3P models —
+    // see `cursor.includedApiExhausted`.)
+    let limit_reached = has_summary
+        .then_some(rows.on_demand_hard_stop || (!rows.on_demand_enabled && rows.total_exhausted));
+    let fetched_at = acct["fetchedAt"].as_i64();
     let on_demand = if summary["individualUsage"]["onDemand"].is_object() {
         &summary["individualUsage"]["onDemand"]
     } else {
         &summary["individualUsage"]["overall"]
     };
-
-    let mut windows = Vec::new();
-    let mut codes = Vec::new();
-    let mut texts = Vec::new();
-
-    let mut api_exhausted = false;
-    let mut total_exhausted = false;
-    if plan.is_object() {
-        let used = cents(&plan["used"]);
-        let limit = cents(&plan["limit"]);
-        let total_pct = plan["totalPercentUsed"].as_f64();
-        let api_pct = plan["apiPercentUsed"].as_f64();
-        // Included TOTAL pool: Auto + Cursor models (Grok, Composer). Cursor states the percentage
-        // itself; it does not expose this pool's dollar size, so no amounts here.
-        windows.push(NamedWindow {
-            id: "included-total".to_string(),
-            label: "included total (Auto / Cursor models)".to_string(),
-            used_percentage: total_pct.map(|p| p.clamp(0.0, 100.0)),
-            resets_at: cycle_end,
-            used_amount: None,
-            limit_amount: None,
-            unit: None,
-        });
-        // Included API sub-pool: named third-party models. Percentage is Cursor's; the amounts are
-        // Cursor's `plan.used` / `plan.limit` for the same pool.
-        windows.push(NamedWindow {
-            id: "included-api".to_string(),
-            label: "included API (named 3rd-party models)".to_string(),
-            used_percentage: api_pct.map(|p| p.clamp(0.0, 100.0)),
-            resets_at: cycle_end,
-            used_amount: used.map(|c| c / 100.0),
-            limit_amount: limit.map(|c| c / 100.0),
-            unit: Some("usd".to_string()),
-        });
-        let plan_on = plan["enabled"].as_bool() != Some(false);
-        api_exhausted = plan_on
-            && (api_pct.map(|p| p >= 100.0).unwrap_or(false)
-                || (limit.map(|l| l > 0.0).unwrap_or(false)
-                    && cents(&plan["remaining"]).map(|r| r <= 0.0).unwrap_or(false)));
-        total_exhausted = plan_on && total_pct.map(|p| p >= 100.0).unwrap_or(false);
-        // Cursor's own words first.
-        for key in [
-            "autoModelSelectedDisplayMessage",
-            "namedModelSelectedDisplayMessage",
-        ] {
-            if let Some(m) = summary[key].as_str().filter(|m| !m.is_empty()) {
-                texts.push(m.to_string());
-            }
-        }
-        if api_exhausted {
-            codes.push(CODE_INCLUDED_API_EXHAUSTED.to_string());
-            texts.push(format!(
-                "included API pool used up (${:.2} of ${:.2}) — named third-party models bill \
-                 on-demand until the cycle resets",
-                used.unwrap_or(0.0) / 100.0,
-                limit.unwrap_or(0.0) / 100.0
-            ));
-        }
-        if total_exhausted {
-            codes.push(CODE_INCLUDED_TOTAL_EXHAUSTED.to_string());
-            texts.push(
-                "included total pool used up — Auto and Cursor models bill on-demand until the \
-                 cycle resets"
-                    .to_string(),
-            );
-        }
-    }
-    let mut on_demand_hard_stop = false;
-    if on_demand.is_object() {
-        let enabled = on_demand["enabled"].as_bool().unwrap_or(false);
-        let used = cents(&on_demand["used"]);
-        let limit = cents(&on_demand["limit"]);
-        let pct = match (enabled, used, limit) {
-            (true, Some(u), Some(l)) if l > 0.0 => Some((u / l * 100.0).clamp(0.0, 100.0)),
-            _ => None,
-        };
-        windows.push(NamedWindow {
-            id: "usage-based".to_string(),
-            label: if enabled {
-                "on-demand (usage-based)".to_string()
-            } else {
-                "on-demand (usage-based, off)".to_string()
-            },
-            used_percentage: pct,
-            resets_at: cycle_end,
-            used_amount: used.map(|c| c / 100.0),
-            limit_amount: limit.map(|c| c / 100.0),
-            unit: Some("usd".to_string()),
-        });
-        if enabled
-            && limit.map(|l| l > 0.0).unwrap_or(false)
-            && cents(&on_demand["remaining"])
-                .map(|r| r <= 0.0)
-                .unwrap_or(false)
-        {
-            on_demand_hard_stop = true;
-            codes.push(CODE_ON_DEMAND_LIMIT_REACHED.to_string());
-            texts.push("on-demand spend limit reached".to_string());
-        }
-    }
-    let on_demand_enabled = on_demand["enabled"].as_bool().unwrap_or(false);
-    // "heddle's default Cursor routes (Grok/Composer) will fail here": on-demand is capped out, or
-    // it's off and the included TOTAL pool is gone. (The API sub-pool only gates named 3P models —
-    // see `cursor.includedApiExhausted`.)
-    let limit_reached = if has_summary {
-        Some(on_demand_hard_stop || (!on_demand_enabled && total_exhausted))
-    } else {
-        None
-    };
-    let _ = api_exhausted;
-
-    if let Some(exp) = acct["tokenExpiresAt"].as_i64() {
-        if exp <= now {
-            codes.push(CODE_TOKEN_EXPIRED.to_string());
-            texts.push("session token expired — sign in to Cursor again".to_string());
-        } else if exp - now < TOKEN_EXPIRY_WARN_SECS {
-            codes.push(CODE_TOKEN_EXPIRING_SOON.to_string());
-            texts.push(format!(
-                "session token expires in {}d",
-                (exp - now) / 86_400
-            ));
-        }
-    }
-    if let Some(err) = acct["error"].as_str() {
-        codes.push(CODE_FETCH_FAILED.to_string());
-        texts.push(format!("last fetch failed: {err}"));
-    }
-
-    let fetched_at = acct["fetchedAt"].as_i64();
     AccountLimit {
         id: source.clone(),
         label,
-        captured_at: fetched_at,
-        stale: is_stale(fetched_at, now, STALE_AFTER_SECS),
         plan: summary["membershipType"]
             .as_str()
             .or(acct["membershipHint"].as_str())
             .map(str::to_string),
+        captured_at: fetched_at,
+        stale: is_stale(fetched_at, now, STALE_AFTER_SECS),
         five_hour: LimitWindow::default(),
         seven_day: LimitWindow::default(),
-        windows,
+        windows: rows.windows,
         limit_reached,
-        note: if texts.is_empty() {
+        note: if rows.texts.is_empty() {
             None
         } else {
-            Some(texts.join("; "))
+            Some(rows.texts.join("; "))
         },
-        note_codes: codes,
+        note_codes: rows.codes,
         detail: Some(json!({
             "source": source,
             "membershipType": summary["membershipType"],
@@ -620,7 +653,7 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             "isUnlimited": summary["isUnlimited"],
             "billingCycleStart": cycle_start,
             "billingCycleEnd": cycle_end,
-            "plan": plan,
+            "plan": summary["individualUsage"]["plan"],
             "onDemand": on_demand,
             "autoModelSelectedDisplayMessage": summary["autoModelSelectedDisplayMessage"],
             "namedModelSelectedDisplayMessage": summary["namedModelSelectedDisplayMessage"],
@@ -630,8 +663,9 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
     }
 }
 
-/// Snapshot → ProviderLimit: no 5h/7d (Cursor has none), per-account rows with the two pools as
-/// named windows, binding (max) windows across accounts, staleness, and refresh errors as notes.
+/// Snapshot → ProviderLimit: no 5h/7d (Cursor has none), per-account rows with the pools as named
+/// windows, the ACTIVE account (cursor-agent login, what dispatches bill) as the top level when it
+/// has data — else the binding (max) view — plus staleness and refresh errors as notes.
 pub(super) fn parse_snapshot(snap: &Value, now: i64) -> Option<ProviderLimit> {
     let mut l = tap_limit("cursor", snap, now)?;
     l.source = Some(SOURCE.to_string());
@@ -642,19 +676,23 @@ pub(super) fn parse_snapshot(snap: &Value, now: i64) -> Option<ProviderLimit> {
         .map(|a| a.iter().map(|acct| account_row(acct, now)).collect())
         .unwrap_or_default();
     l.model = Some(format!("cursor.com · {} acct", accounts.len()));
-    // The account heddle's dispatches bill is the cursor-agent CLI login, so when its row exists it
-    // is the ACTIVE account and the top-level windows are its own (like Claude's "the account you're
-    // on"); with only the IDE login known, the top level is the binding view of what we have and
-    // `activeAccount` stays unknown (the CLI account's numbers aren't visible).
+    // Top level = the cursor-agent login's own windows and ITS capture time (so a stale CLI row can't
+    // hide behind a fresh IDE fetch); if that row has no data yet, show the binding view instead.
     let active = accounts
         .iter()
-        .find(|a| a.id == SOURCE_CLI_KEYCHAIN)
-        .map(|a| (a.id.clone(), a.windows.clone()));
-    l.active_account = active.as_ref().map(|(id, _)| id.clone());
-    l.windows = Some(match active {
-        Some((_, windows)) => windows,
-        None => binding_named(&accounts),
-    });
+        .find(|a| a.id == SOURCE_CLI_KEYCHAIN && !a.windows.is_empty());
+    match active {
+        Some(a) => {
+            l.active_account = Some(a.id.clone());
+            l.windows = Some(a.windows.clone());
+            l.captured_at = a.captured_at;
+            l.stale = a.stale;
+        }
+        None => {
+            l.active_account = None;
+            l.windows = Some(binding_named(&accounts));
+        }
+    }
     let mut codes = Vec::new();
     let mut texts = Vec::new();
     if accounts.is_empty() {

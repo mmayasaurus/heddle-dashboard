@@ -160,6 +160,7 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
             let mut a = account_from_wham(label, data);
             a.id = data["account_id"]
                 .as_str()
+                .filter(|id| !id.trim().is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("acct{}", i + 1));
             a.captured_at = captured_at;

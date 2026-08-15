@@ -25,6 +25,8 @@ use super::{
 /// `~/.heddle/accounts.json`, relative to `$HOME`.
 const REGISTRY_REL: &str = ".heddle/accounts.json";
 pub(super) const CODE_NO_CAPTURE: &str = "claude.noCapture";
+/// Unregistered per-account files (`claude-unknown-*.json`) are shown only while this recent.
+const UNREGISTERED_MAX_AGE_SECS: i64 = 24 * 3600;
 pub(super) const CODE_LIMIT_REACHED: &str = "claude.limitReached";
 
 /// One registered Claude account.
@@ -116,6 +118,8 @@ pub(super) fn build(
         rows.push(row(a, file.as_ref(), now));
     }
     // Per-account files the tap wrote for config dirs that aren't registered (`unknown-<dir>`).
+    // Only recent ones: nothing prunes old files, so a one-off dir from weeks ago must not haunt
+    // the roster forever.
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut extra: Vec<String> = entries
             .flatten()
@@ -131,6 +135,14 @@ pub(super) fn build(
         extra.sort();
         for id in extra {
             let file = read_json(&dir.join(format!("claude-{id}.json")));
+            let recent = file
+                .as_ref()
+                .and_then(|v| v["capturedAt"].as_i64())
+                .map(|t| now - t <= UNREGISTERED_MAX_AGE_SECS)
+                .unwrap_or(false);
+            if !recent {
+                continue;
+            }
             let acct = Account {
                 id: id.clone(),
                 config_dir: file
@@ -142,8 +154,18 @@ pub(super) fn build(
         }
     }
     // Top level = the active account's own file; fall back to the legacy last-seen file so the
-    // summary never blanks just because the active account hasn't rendered since install.
+    // summary never blanks just because the active account hasn't rendered since install — but
+    // then `activeAccount` names the account the legacy capture actually came from (its `account`
+    // field), never the selected one, so the label can't disagree with the numbers.
     let active_file = active.and_then(|a| read_json(&dir.join(format!("claude-{}.json", a.id))));
+    let (top_from_active, legacy_account) = match &active_file {
+        Some(_) => (true, None),
+        None => (
+            false,
+            read_json(&dir.join("claude.json"))
+                .and_then(|v| v["account"].as_str().map(str::to_string)),
+        ),
+    };
     let mut top = active_file
         .and_then(|v| tap_limit("claude", &v, now))
         .or(legacy)
@@ -166,7 +188,11 @@ pub(super) fn build(
         .model
         .map(|m| format!("{m} · {} acct", rows.len()))
         .or_else(|| Some(format!("{} acct", rows.len())));
-    top.active_account = active.map(|a| a.id.clone());
+    top.active_account = if top_from_active {
+        active.map(|a| a.id.clone())
+    } else {
+        legacy_account
+    };
     top.note_codes = Some(Vec::new());
     top.accounts = Some(rows);
     top.windows = Some(Vec::new());

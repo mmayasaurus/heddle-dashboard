@@ -35,6 +35,7 @@ mod util;
 
 pub(crate) use util::{
     augmented_path, is_stale, mask_email, now_secs, run_with_timeout, usage_dir, write_json_atomic,
+    RefreshGate,
 };
 
 fn home() -> PathBuf {
