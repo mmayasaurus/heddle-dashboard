@@ -63,6 +63,30 @@ interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
 }
+// Fleet roster: the NAMED agents (live Claude Code sessions with a fleet tag) and, under each, the
+// workers it currently has in flight (ledger rows). Answers "which agents are running and what is
+// each one doing" — not "which subprocesses exist" (Maya, 2026-08-15).
+interface FleetWorker {
+  id: number;
+  taskClass: string;
+  provider: string;
+  model: string;
+  startedAt: string;
+  cwd: string;
+  elapsedMs: number;
+  stale: boolean;
+}
+interface FleetAgent {
+  name: string;
+  pid: number;
+  sessionId: string;
+  cwd: string;
+  status: string;
+  kind: string;
+  updatedAtMs: number;
+  alive: boolean;
+  workers: FleetWorker[];
+}
 
 const POLL_MS = 30_000;
 const OPEN_KEY = "heddle-fleet-open";
@@ -118,7 +142,7 @@ export function FleetDrawer() {
   const now = useNow();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
   const [limits, setLimits] = useState<ProviderLimit[]>([]);
-  const [inFlight, setInFlight] = useState<Dispatch[]>([]);
+  const [roster, setRoster] = useState<FleetAgent[]>([]);
   const [recent, setRecent] = useState<Dispatch[]>([]);
   const [usage, setUsage] = useState<ProviderUsage[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -126,14 +150,14 @@ export function FleetDrawer() {
   const refresh = useCallback(async () => {
     if (!isTauri) return;
     try {
-      const [l, f, r, u] = await Promise.all([
+      const [l, ro, r, u] = await Promise.all([
         invoke<ProviderLimit[]>("heddle_provider_limits"),
-        invoke<Dispatch[]>("heddle_in_flight"),
+        invoke<FleetAgent[]>("heddle_fleet_roster"),
         invoke<Dispatch[]>("heddle_recent", { limit: 30 }),
         invoke<ProviderUsage[]>("heddle_provider_usage"),
       ]);
       setLimits(l);
-      setInFlight(f);
+      setRoster(ro);
       setRecent(r);
       setUsage(u);
       setErr(null);
@@ -158,7 +182,9 @@ export function FleetDrawer() {
 
   const claude = limits.find((l) => l.provider === "claude");
   const c5 = claude?.fiveHour?.usedPercentage;
-  const running = inFlight.length;
+  const liveAgents = roster.filter((a) => a.alive);
+  const busyAgents = liveAgents.filter((a) => a.status === "busy" || a.workers.some((w) => !w.stale));
+  const running = busyAgents.length;
   // Hide TEST-orchestrator rows (heddle-core verification dispatches, not real work).
   const shownRecent = recent.filter((d) => d.orchestrator !== "TEST");
 
@@ -186,7 +212,11 @@ export function FleetDrawer() {
         ) : (
           <span className="fleet-dim">caps: waiting for a statusline render…</span>
         )}
-        {running > 0 && <span className="fleet-run">● {running} running</span>}
+        {liveAgents.length > 0 && (
+          <span className="fleet-run" title={liveAgents.map((a) => `${a.name}: ${a.status}`).join(" · ")}>
+            ● {running}/{liveAgents.length} agents busy
+          </span>
+        )}
         <span className="fleet-sp" />
         <button
           className="fleet-refresh"
@@ -217,12 +247,16 @@ export function FleetDrawer() {
             </div>
           )}
 
-          {running > 0 && (
+          {roster.length > 0 && (
             <>
-              <div className="fleet-sec-title">Running ({running})</div>
-              {inFlight.map((d) => (
-                <DispatchRow key={d.id} d={d} live />
-              ))}
+              <div className="fleet-sec-title">
+                Fleet roster · {liveAgents.length} agents ({running} busy) — click an agent to see its workers
+              </div>
+              <div className="fleet-roster">
+                {roster.map((a) => (
+                  <AgentRow key={`${a.name}:${a.pid}`} a={a} now={now} />
+                ))}
+              </div>
             </>
           )}
 
@@ -391,6 +425,84 @@ function ProviderCapBlock({
           {win.resetsAt && <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now)}</span>}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Short-form time since an epoch-ms timestamp: "12s" / "4m" / "2h 05m" / "3d". */
+function fmtAgo(ms: number, now: number): string {
+  let s = Math.max(0, Math.floor((now - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60);
+  if (d > 0) return `${d}d`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${m}m`;
+}
+
+/** Trailing path segment(s) for a cwd — the worktree/repo name is what tells agents apart. */
+function shortCwd(cwd: string): string {
+  const parts = cwd.split("/").filter(Boolean);
+  return parts.slice(-1)[0] ?? cwd;
+}
+
+/**
+ * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
+ * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
+ */
+function AgentRow({ a, now }: { a: FleetAgent; now: number }) {
+  const [openRow, setOpenRow] = useState(false);
+  const liveWorkers = a.workers.filter((w) => !w.stale);
+  const staleWorkers = a.workers.filter((w) => w.stale);
+  const busy = a.alive && (a.status === "busy" || liveWorkers.length > 0);
+  const glyph = !a.alive ? "○" : busy ? "●" : "◌";
+  const glyphClass = !a.alive ? "dead" : busy ? "busy" : "idle";
+  const hasChildren = a.workers.length > 0;
+  return (
+    <div className={"fleet-agent" + (openRow ? " open" : "") + (a.alive ? "" : " dead")}>
+      <div
+        className={"fleet-agent-row" + (hasChildren ? " has-children" : "")}
+        onClick={() => hasChildren && setOpenRow((o) => !o)}
+        role={hasChildren ? "button" : undefined}
+        title={`${a.name} · pid ${a.pid} · ${a.status} · ${a.cwd}`}
+      >
+        <span className={"fleet-agent-chev" + (hasChildren ? "" : " none")}>{hasChildren ? (openRow ? "▾" : "▸") : "·"}</span>
+        <span className={"fleet-agent-glyph " + glyphClass}>{glyph}</span>
+        <span className="fleet-agent-name">{a.name}</span>
+        <span className="fleet-agent-status">{a.alive ? a.status : "gone"}</span>
+        <span className="fleet-dim fleet-agent-cwd">{shortCwd(a.cwd)}</span>
+        <span className="fleet-sp" />
+        {liveWorkers.length > 0 && (
+          <span className="fleet-agent-wcount" title="workers in flight">
+            {liveWorkers.length} worker{liveWorkers.length === 1 ? "" : "s"}
+          </span>
+        )}
+        {staleWorkers.length > 0 && (
+          <span className="fleet-dim fleet-agent-stale" title="ledger rows started >12h ago that never finished (orphans)">
+            {staleWorkers.length} stale
+          </span>
+        )}
+        <span className="fleet-dim fleet-agent-age" title="last activity">
+          {fmtAgo(a.updatedAtMs, now)}
+        </span>
+      </div>
+      {openRow && hasChildren && (
+        <div className="fleet-agent-workers">
+          {a.workers.map((w) => (
+            <div key={w.id} className={"fleet-worker" + (w.stale ? " stale" : "")}>
+              <span className={"fleet-badge " + (w.stale ? "fail" : "run")}>{w.stale ? "◌" : "●"}</span>
+              <span className="fleet-model">
+                {w.provider}/{w.model.replace(/^cursor-/, "")}
+              </span>
+              <span className="fleet-dim">{w.taskClass}</span>
+              <span className="fleet-sp" />
+              <span className="fleet-dim fleet-worker-cwd">{shortCwd(w.cwd)}</span>
+              <span className="fleet-dim fleet-durn">{w.stale ? "orphan" : fmtDur(w.elapsedMs)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
