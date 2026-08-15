@@ -17,12 +17,15 @@ fn tap_file(model: &str, five: f64, seven: f64, captured: i64, acct: &str) -> St
     )
 }
 
-/// A scratch usage dir under the OS temp dir, unique per test, removed on drop.
+/// A scratch usage dir under the crate's own (gitignored) `target/` — not the shared OS temp dir —
+/// unique per test and process, removed on drop.
 struct Scratch(PathBuf);
 impl Scratch {
     fn new(tag: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("heddle-claude-tests-{tag}-{}", std::process::id()));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("heddle-claude-tests")
+            .join(format!("{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         Scratch(dir)

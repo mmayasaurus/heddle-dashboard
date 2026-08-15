@@ -79,7 +79,10 @@ pub(crate) fn write_json_atomic(path: &Path, v: &serde_json::Value) -> Result<()
     let mut last = None;
     for attempt in 0..3 {
         match std::fs::rename(&tmp, path) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                sweep_stale_tmp(path);
+                return Ok(());
+            }
             Err(e) => {
                 last = Some(e);
                 if attempt < 2 {
@@ -94,6 +97,35 @@ pub(crate) fn write_json_atomic(path: &Path, v: &serde_json::Value) -> Result<()
         path.display(),
         last.map(|e| e.to_string()).unwrap_or_default()
     ))
+}
+
+/// Reap `<stem>.json.<pid>.<seq>.tmp` siblings older than an hour — leftovers from a process that
+/// died between write and rename. Best-effort; readers ignore `.tmp` files anyway.
+fn sweep_stale_tmp(target: &Path) {
+    let (Some(dir), Some(stem)) = (target.parent(), target.file_stem().and_then(|s| s.to_str()))
+    else {
+        return;
+    };
+    let prefix = format!("{stem}.json.");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !(name.starts_with(&prefix) && name.ends_with(".tmp")) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .map(|age| age > Duration::from_secs(3600))
+            .unwrap_or(false);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// Run a command with a wall-clock budget, returning (exit success, stdout, stderr). The child is
