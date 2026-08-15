@@ -5,10 +5,10 @@ A terminal manager built for the AI-agent era. heddle organizes scattered termin
 citizens, and lets you take over any session from a browser or another machine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Website](https://img.shields.io/badge/Website-velaterm.com-0b7285.svg)](https://velaterm.com)
-[![X](https://img.shields.io/badge/X-@vlinx__soft-000000.svg)](https://x.com/vlinx_soft)
-[![YouTube](https://img.shields.io/badge/YouTube-@vlinx__soft-FF0000.svg)](https://www.youtube.com/@vlinx_soft)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2.svg)](https://discord.gg/PjRqtCgSn)
+
+> heddle is a fork of [VelaTerm](https://github.com/vlinx-io/VelaTerm) by VLINX Software (MIT),
+> rebranded and extended into the cockpit for the heddle agent-orchestration system.
+> Upstream copyright and license are retained in [LICENSE](LICENSE).
 
 ![heddle main window](docs/assets/manuals/main-ui.png)
 
@@ -128,10 +128,8 @@ docs/manuals/     user manuals
 
 ## Community
 
-- **[X](https://x.com/vlinx_soft)** — release announcements and short demos.
-- **[YouTube](https://www.youtube.com/@vlinx_soft)** — demos and guided tours of the application.
-- **[Discord](https://discord.gg/PjRqtCgSn)** — questions, bug reports and everyday discussion.
-- **[velaterm.com](https://velaterm.com)** — downloads, manuals and the changelog.
+- **[Upstream: VelaTerm](https://github.com/vlinx-io/VelaTerm)** — the project this fork builds on.
+- **[Issues](https://github.com/mmayasaurus/heddle-dashboard/issues)** — bugs and feature requests for the heddle fork.
 
 ## Contributing
 
