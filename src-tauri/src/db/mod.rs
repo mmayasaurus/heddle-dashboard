@@ -45,11 +45,17 @@ pub fn app_db_path(data_dir: &Path) -> PathBuf {
     }
 }
 
-/// `VACUUM INTO` a consistent snapshot of `legacy` at `new` (via a temp file + rename). Read-only with
-/// respect to `legacy`: VACUUM INTO never modifies the source database.
+/// `VACUUM INTO` a consistent snapshot of `legacy` and place it at `new`. Read-only with respect to
+/// `legacy`: VACUUM INTO never modifies the source database.
+///
+/// Concurrency: a GUI instance and a `--serve` instance can start against the same data dir at the same
+/// moment and both see "no heddle.db yet". Each writes its own per-process temp file and then claims the
+/// final name with [`place_snapshot`], which is atomic and never replaces an existing `heddle.db` — so
+/// whichever process wins, the other simply adopts the winner's file and no open handle is ever swapped
+/// underneath a running instance.
 fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
-    let tmp = new.with_extension("db.migrating");
-    // Only ever our own incomplete artifact from an interrupted earlier attempt.
+    let tmp = new.with_extension(format!("db.migrating.{}", std::process::id()));
+    // Only ever our own incomplete artifact (same pid) from an interrupted earlier attempt.
     if tmp.exists() {
         std::fs::remove_file(&tmp).map_err(|e| format!("cannot clear stale {}: {e}", tmp.display()))?;
     }
@@ -63,8 +69,22 @@ fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
     src.execute("VACUUM INTO ?1", [tmp_str])
         .map_err(|e| format!("VACUUM INTO: {e}"))?;
     drop(src);
-    std::fs::rename(&tmp, new).map_err(|e| format!("rename into place: {e}"))?;
-    Ok(())
+    place_snapshot(&tmp, new)
+}
+
+/// Atomically publish `tmp` as `new` without ever replacing an existing `new`. `hard_link` fails with
+/// `AlreadyExists` when the target exists (POSIX and Windows), unlike `rename`, which would silently
+/// clobber a concurrent migrator's already-open database. Either way the temp file is removed.
+fn place_snapshot(tmp: &Path, new: &Path) -> Result<(), String> {
+    let linked = std::fs::hard_link(tmp, new);
+    let _ = std::fs::remove_file(tmp);
+    match linked {
+        Ok(()) => Ok(()),
+        // Another process published its snapshot first; ours was an identical copy of the same legacy
+        // file, so adopting theirs is correct.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("place snapshot into {}: {e}", new.display())),
+    }
 }
 
 /// Database handle injected as Tauri managed state.
@@ -306,6 +326,30 @@ mod tests {
         let lcnt: i64 = l.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(lcnt, 1);
         drop((n, l));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two migrators racing: the second snapshot must never replace a `heddle.db` that already exists
+    /// (another instance may have it open), and its temp file must be cleaned up.
+    #[test]
+    fn concurrent_snapshot_never_replaces_an_existing_db() {
+        let dir = std::env::temp_dir().join(format!("heddle-db-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let new = dir.join(super::DB_FILE);
+        std::fs::write(&new, b"winner").unwrap();
+        let tmp = dir.join("heddle.db.migrating.999999");
+        std::fs::write(&tmp, b"loser").unwrap();
+        super::place_snapshot(&tmp, &new).unwrap();
+        assert_eq!(std::fs::read(&new).unwrap(), b"winner", "existing heddle.db must be left alone");
+        assert!(!tmp.exists(), "the losing temp file must be removed");
+        // And the normal path still publishes when nothing exists yet.
+        let fresh = dir.join("fresh.db");
+        let tmp2 = dir.join("fresh.db.migrating.1");
+        std::fs::write(&tmp2, b"snapshot").unwrap();
+        super::place_snapshot(&tmp2, &fresh).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"snapshot");
+        assert!(!tmp2.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
