@@ -42,20 +42,25 @@
 //! `REFRESH_AFTER_SECS` (one detached thread, atomic write), stale after `STALE_AFTER_SECS`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::Duration;
 
-use base64::Engine;
 use serde_json::{json, Value};
 
+// The session-discovery / HTTP half lives in `cursor_fetch.rs` (same parent module; tokens still
+// never leave the pair).
+use super::cursor_fetch::fetch_and_write;
+// Re-imported only so `cursor_tests.rs` reaches them via `super::*`.
+#[cfg(test)]
+use super::cursor_fetch::{
+    jwt_claims, jwt_exp, jwt_user_id, keychain_backing_off, keychain_cli_enabled,
+    note_keychain_failure,
+};
 use super::{
-    binding_named, home, is_stale, mask_email, now_secs, run_with_timeout, tap_limit, usage_dir,
-    write_json_atomic, AccountLimit, LimitWindow, NamedWindow, ProviderLimit, RefreshGate,
+    binding_named, is_stale, tap_limit, usage_dir, AccountLimit, LimitWindow, NamedWindow,
+    ProviderLimit, RefreshGate,
 };
 
 const SNAPSHOT: &str = "cursor.json";
 pub(super) const SOURCE: &str = "cursor-usage-summary";
-const USAGE_SUMMARY_URL: &str = "https://cursor.com/api/usage-summary";
 /// Refresh when the snapshot is older than this (the maintained extension polls at 60s; a monthly
 /// gauge doesn't need more than this, and the refresh button forces one on demand).
 pub(super) const REFRESH_AFTER_SECS: i64 = 180;
@@ -63,22 +68,8 @@ pub(super) const REFRESH_AFTER_SECS: i64 = 180;
 pub(super) const STALE_AFTER_SECS: i64 = 900;
 /// After a failed refresh, wait this long before trying again.
 const FAILURE_BACKOFF_SECS: i64 = 300;
-/// After a Keychain read fails (denied / no item / timed out), don't try again for this long.
-const KEYCHAIN_RETRY_AFTER_SECS: i64 = 3600;
-/// The first Keychain read may show macOS's "allow access" dialog; if nobody answers it in this
-/// long the read is abandoned (and backed off) so the refresher can't hang on it.
-const KEYCHAIN_PROMPT_TIMEOUT: Duration = Duration::from_secs(60);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Warn when the session token expires within this many seconds.
 const TOKEN_EXPIRY_WARN_SECS: i64 = 7 * 86_400;
-const USER_AGENT: &str = concat!(
-    "heddle-dashboard/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/mmayasaurus/heddle-dashboard)"
-);
-
-/// Opt-in switch for the cursor-agent Keychain account, in `~/.heddle/usage-sources.json`.
-const SOURCES_CONFIG_REL: &str = ".heddle/usage-sources.json";
 
 // Note codes (the localizable key layer for `note`).
 pub(super) const CODE_NO_ACCOUNTS: &str = "cursor.noAccounts";
@@ -98,9 +89,8 @@ pub(super) const SOURCE_IDE: &str = "cursor-ide";
 pub(super) const SOURCE_CLI_KEYCHAIN: &str = "cursor-agent-keychain";
 
 static GATE: RefreshGate = RefreshGate::new();
-static KEYCHAIN_NEXT_ATTEMPT_AT: AtomicI64 = AtomicI64::new(0);
 
-fn snapshot_path() -> PathBuf {
+pub(super) fn snapshot_path() -> PathBuf {
     usage_dir().join(SNAPSHOT)
 }
 
@@ -130,322 +120,6 @@ pub(super) fn force_refresh(now: i64) -> bool {
 
 fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
     GATE.spawn(now, force, FAILURE_BACKOFF_SECS, fetch_and_write)
-}
-
-// ───────────────────────────── local sessions ─────────────────────────────
-
-/// A local Cursor login we can query usage for. The token stays inside this struct.
-struct Session {
-    label: String,
-    source: &'static str,
-    token: String,
-    membership_hint: Option<String>,
-}
-
-/// Cursor IDE's global state DB per platform.
-fn ide_state_db_path() -> Option<PathBuf> {
-    let h = home();
-    if cfg!(target_os = "macos") {
-        Some(
-            h.join("Library")
-                .join("Application Support")
-                .join("Cursor")
-                .join("User")
-                .join("globalStorage")
-                .join("state.vscdb"),
-        )
-    } else if cfg!(target_os = "windows") {
-        std::env::var_os("APPDATA").map(|a| {
-            PathBuf::from(a)
-                .join("Cursor")
-                .join("User")
-                .join("globalStorage")
-                .join("state.vscdb")
-        })
-    } else {
-        Some(
-            h.join(".config")
-                .join("Cursor")
-                .join("User")
-                .join("globalStorage")
-                .join("state.vscdb"),
-        )
-    }
-}
-
-/// The IDE login, if Cursor is installed and signed in. Read-only SQLite (the IDE may hold the DB
-/// open; readers are fine). `Ok(None)` = no IDE / signed out; `Err` = present but unreadable.
-fn ide_session() -> Result<Option<Session>, String> {
-    let Some(path) = ide_state_db_path() else {
-        return Ok(None);
-    };
-    if !path.exists() {
-        return Ok(None);
-    }
-    let conn = rusqlite::Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| format!("cannot open Cursor state.vscdb read-only: {e}"))?;
-    conn.busy_timeout(Duration::from_secs(2)).ok();
-    let get = |key: &str| -> Option<String> {
-        conn.query_row("SELECT value FROM ItemTable WHERE key = ?1", [key], |r| {
-            r.get::<_, String>(0)
-        })
-        .ok()
-        .filter(|v| !v.is_empty())
-    };
-    let Some(token) = get("cursorAuth/accessToken") else {
-        return Ok(None);
-    };
-    Ok(Some(Session {
-        label: get("cursorAuth/cachedEmail")
-            .map(|e| mask_email(&e))
-            .unwrap_or_else(|| "cursor-ide".to_string()),
-        source: SOURCE_IDE,
-        token,
-        membership_hint: get("cursorAuth/stripeMembershipType"),
-    }))
-}
-
-/// `~/.heddle/usage-sources.json` (missing/invalid → `{}`).
-fn sources_config() -> Value {
-    std::fs::read_to_string(home().join(SOURCES_CONFIG_REL))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| json!({}))
-}
-
-pub(super) fn keychain_cli_enabled(config: &Value) -> bool {
-    config["cursor"]["keychainCli"].as_bool() == Some(true)
-}
-
-/// Whether the Keychain path is inside its failure backoff at `now`.
-pub(super) fn keychain_backing_off(now: i64) -> bool {
-    now < KEYCHAIN_NEXT_ATTEMPT_AT.load(Ordering::SeqCst)
-}
-
-/// Record a Keychain failure: no retry for `KEYCHAIN_RETRY_AFTER_SECS`.
-pub(super) fn note_keychain_failure(now: i64) {
-    KEYCHAIN_NEXT_ATTEMPT_AT.store(now + KEYCHAIN_RETRY_AFTER_SECS, Ordering::SeqCst);
-}
-
-/// The cursor-agent CLI login from the macOS Keychain (opt-in). `Ok(None)` when disabled; `Err`
-/// when the read failed (denied, no item, no UI session, unanswered prompt, non-macOS) — every
-/// failure backs off for an hour so a 30s poll can never nag.
-fn cli_session(now: i64) -> Result<Option<Session>, String> {
-    if !keychain_cli_enabled(&sources_config()) {
-        return Ok(None);
-    }
-    if keychain_backing_off(now) {
-        return Err("Keychain read skipped — backing off after an earlier failure".to_string());
-    }
-    if !cfg!(target_os = "macos") {
-        note_keychain_failure(now);
-        return Err("cursor-agent Keychain account is only supported on macOS".to_string());
-    }
-    let mut cmd = std::process::Command::new("/usr/bin/security");
-    cmd.args(["find-generic-password", "-s", "cursor-access-token", "-w"]);
-    let (ok, stdout, _stderr) = match run_with_timeout(cmd, KEYCHAIN_PROMPT_TIMEOUT) {
-        Ok(r) => r,
-        Err(e) => {
-            note_keychain_failure(now);
-            return Err(format!("Keychain read of cursor-access-token failed: {e}"));
-        }
-    };
-    if !ok {
-        note_keychain_failure(now);
-        // Exit 44 = errSecItemNotFound (no cursor-agent login); other codes are mostly denied access.
-        return Err(
-            "Keychain read of cursor-access-token failed (security exited non-zero) — access \
-             denied or no cursor-agent login"
-                .to_string(),
-        );
-    }
-    let token = stdout.trim().to_string();
-    if token.is_empty() {
-        note_keychain_failure(now);
-        return Err("Keychain item cursor-access-token is empty".to_string());
-    }
-    let email = std::fs::read_to_string(home().join(".cursor").join("cli-config.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| v["authInfo"]["email"].as_str().map(mask_email));
-    Ok(Some(Session {
-        label: email.unwrap_or_else(|| "cursor-agent".to_string()),
-        source: SOURCE_CLI_KEYCHAIN,
-        token,
-        membership_hint: None,
-    }))
-}
-
-// ───────────────────────────── JWT + HTTP ─────────────────────────────
-
-/// Decode a JWT payload without verifying it (we only need `sub` / `exp` from OUR OWN token).
-pub(super) fn jwt_claims(token: &str) -> Option<Value> {
-    let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload.trim_end_matches('='))
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-/// `sub` = "<provider>|user_xxx" → "user_xxx" (the cookie's user id).
-pub(super) fn jwt_user_id(token: &str) -> Option<String> {
-    let claims = jwt_claims(token)?;
-    let sub = claims["sub"].as_str()?;
-    Some(sub.rsplit('|').next().unwrap_or(sub).to_string())
-}
-
-pub(super) fn jwt_exp(token: &str) -> Option<i64> {
-    jwt_claims(token)?["exp"].as_i64()
-}
-
-/// GET usage-summary for one session. The cookie (which carries the token) lives only in this
-/// function's stack and is never formatted into an error, log, or the snapshot.
-fn fetch_usage_summary(token: &str) -> Result<Value, String> {
-    let user_id = jwt_user_id(token).ok_or("session token has no usable `sub` claim")?;
-    let cookie = format!("WorkosCursorSessionToken={user_id}::{token}");
-    let resp = ureq::get(USAGE_SUMMARY_URL)
-        .set("Cookie", &cookie)
-        .set("Accept", "application/json")
-        .set("User-Agent", USER_AGENT)
-        .timeout(HTTP_TIMEOUT)
-        .call();
-    match resp {
-        Ok(r) => {
-            let body = r
-                .into_string()
-                .map_err(|e| format!("usage-summary: read failed: {e}"))?;
-            serde_json::from_str::<Value>(&body)
-                .map_err(|e| format!("usage-summary: invalid JSON: {e}"))
-        }
-        Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => Err(
-            "usage-summary: HTTP 401/403 — session rejected (expired or signed out)".to_string(),
-        ),
-        Err(ureq::Error::Status(429, _)) => {
-            Err("usage-summary: HTTP 429 — rate limited by cursor.com".to_string())
-        }
-        Err(ureq::Error::Status(code, _)) => Err(format!("usage-summary: HTTP {code}")),
-        Err(e) => Err(format!("usage-summary: request failed: {e}")),
-    }
-}
-
-// ───────────────────────────── refresh → snapshot ─────────────────────────────
-
-/// Discover sessions, fetch each, write the snapshot. Returns whether at least one account was
-/// fetched successfully. Accounts that fail — or that couldn't even be discovered this attempt
-/// (IDE DB unreadable, Keychain backoff) — keep their last-known summary from the previous
-/// snapshot with an `error`, so numbers never silently vanish.
-fn fetch_and_write() -> bool {
-    let now = now_secs();
-    let path = snapshot_path();
-    let previous = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .filter(Value::is_object);
-    let prev_accounts: Vec<Value> = previous
-        .as_ref()
-        .and_then(|p| p["accounts"].as_array().cloned())
-        .unwrap_or_default();
-    let prev_for = |source: &str| {
-        prev_accounts
-            .iter()
-            .find(|a| a["source"] == source)
-            .cloned()
-    };
-
-    let mut sessions: Vec<Session> = Vec::new();
-    let mut discovery_errors: Vec<(&'static str, String)> = Vec::new();
-    for (source, found) in [
-        (SOURCE_IDE, ide_session()),
-        (SOURCE_CLI_KEYCHAIN, cli_session(now)),
-    ] {
-        match found {
-            Ok(Some(s)) => sessions.push(s),
-            Ok(None) => {}
-            Err(e) => discovery_errors.push((source, e)),
-        }
-    }
-
-    let mut accounts: Vec<Value> = Vec::new();
-    let mut any_ok = false;
-    for s in &sessions {
-        let prev = prev_for(s.source).unwrap_or_else(|| json!({}));
-        let mut acct = json!({
-            "label": s.label,
-            "source": s.source,
-            "tokenExpiresAt": jwt_exp(&s.token),
-            "membershipHint": s.membership_hint,
-            "fetchedAt": prev["fetchedAt"].clone(),
-            "summary": prev["summary"].clone(),
-        });
-        let expired = jwt_exp(&s.token).map(|e| e <= now).unwrap_or(false);
-        let result = if expired {
-            Err(format!(
-                "session token expired — open Cursor{} to sign in again",
-                if s.source == SOURCE_CLI_KEYCHAIN {
-                    " / run `cursor-agent login`"
-                } else {
-                    ""
-                }
-            ))
-        } else {
-            fetch_usage_summary(&s.token)
-        };
-        match result {
-            Ok(summary) => {
-                any_ok = true;
-                acct["summary"] = summary;
-                acct["fetchedAt"] = json!(now);
-                acct["error"] = Value::Null;
-            }
-            Err(e) => acct["error"] = Value::String(e),
-        }
-        accounts.push(acct);
-    }
-    // Accounts we knew last time but couldn't discover now: carry them over with the reason.
-    for (source, why) in &discovery_errors {
-        if accounts.iter().any(|a| a["source"] == *source) {
-            continue;
-        }
-        if let Some(mut prev) = prev_for(source) {
-            prev["error"] = Value::String(format!("not discovered this attempt: {why}"));
-            accounts.push(prev);
-        }
-    }
-
-    let mut snap = json!({
-        "model": format!("cursor.com · {} acct", accounts.len()),
-        "rate_limits": {},
-        "capturedAt": if any_ok { json!(now) } else { previous.as_ref().map(|p| p["capturedAt"].clone()).unwrap_or(Value::Null) },
-        "source": SOURCE,
-        "accounts": accounts,
-        "lastAttemptAt": now,
-    });
-    let discovery_text: Vec<String> = discovery_errors.iter().map(|(_, e)| e.clone()).collect();
-    let error = if sessions.is_empty() {
-        Some(if discovery_text.is_empty() {
-            "no Cursor login found (Cursor IDE not signed in; cursor-agent Keychain account is \
-             opt-in — see docs/USAGE_TAP.md)"
-                .to_string()
-        } else {
-            discovery_text.join("; ")
-        })
-    } else if !any_ok {
-        Some("every account fetch failed (see accounts[].error)".to_string())
-    } else if discovery_text.is_empty() {
-        None
-    } else {
-        Some(discovery_text.join("; "))
-    };
-    if let Some(e) = error {
-        snap["lastError"] = Value::String(e);
-    }
-    // A failed snapshot write means the fresh numbers never became visible: report the refresh as
-    // failed so `RefreshGate` backs off and retries, instead of leaving a stale snapshot behind a
-    // "success".
-    write_json_atomic(&path, &snap).is_ok() && any_ok
 }
 
 // ───────────────────────────── snapshot → ProviderLimit ─────────────────────────────
@@ -513,7 +187,11 @@ fn included_windows(summary: &Value, cycle_end: Option<i64>, out: &mut Rows) {
             || (limit.map(|l| l > 0.0).unwrap_or(false)
                 && cents(&plan["remaining"]).map(|r| r <= 0.0).unwrap_or(false)));
     out.total_exhausted = plan_on && total_pct.map(|p| p >= 100.0).unwrap_or(false);
-    // Cursor's own words first.
+    included_notes(summary, used, limit, out);
+}
+
+/// Cursor's own display strings first, then the exhaustion notes the flags above imply.
+fn included_notes(summary: &Value, used: Option<f64>, limit: Option<f64>, out: &mut Rows) {
     for key in [
         "autoModelSelectedDisplayMessage",
         "namedModelSelectedDisplayMessage",
@@ -607,6 +285,32 @@ fn session_notes(acct: &Value, now: i64, out: &mut Rows) {
 }
 
 /// One account row from its snapshot entry.
+/// The raw provider facts for one account (the drawer tooltip / router's `detail`).
+fn account_detail(
+    acct: &Value,
+    summary: &Value,
+    source: &str,
+    cycle_start: Option<i64>,
+    cycle_end: Option<i64>,
+    on_demand: &Value,
+) -> Value {
+    json!({
+        "source": source,
+        "membershipType": summary["membershipType"],
+        "limitType": summary["limitType"],
+        "isUnlimited": summary["isUnlimited"],
+        "billingCycleStart": cycle_start,
+        "billingCycleEnd": cycle_end,
+        "plan": summary["individualUsage"]["plan"],
+        "onDemand": on_demand,
+        "autoModelSelectedDisplayMessage": summary["autoModelSelectedDisplayMessage"],
+        "namedModelSelectedDisplayMessage": summary["namedModelSelectedDisplayMessage"],
+        "tokenExpiresAt": acct["tokenExpiresAt"],
+        "fetchedAt": acct["fetchedAt"],
+    })
+}
+
+/// One account row from its snapshot entry.
 pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
     let label = acct["label"].as_str().unwrap_or("cursor").to_string();
     let source = acct["source"].as_str().unwrap_or("?").to_string();
@@ -642,27 +346,58 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
         seven_day: LimitWindow::default(),
         windows: rows.windows,
         limit_reached,
-        note: if rows.texts.is_empty() {
-            None
-        } else {
-            Some(rows.texts.join("; "))
-        },
+        note: join_texts(&rows.texts),
         note_codes: rows.codes,
-        detail: Some(json!({
-            "source": source,
-            "membershipType": summary["membershipType"],
-            "limitType": summary["limitType"],
-            "isUnlimited": summary["isUnlimited"],
-            "billingCycleStart": cycle_start,
-            "billingCycleEnd": cycle_end,
-            "plan": summary["individualUsage"]["plan"],
-            "onDemand": on_demand,
-            "autoModelSelectedDisplayMessage": summary["autoModelSelectedDisplayMessage"],
-            "namedModelSelectedDisplayMessage": summary["namedModelSelectedDisplayMessage"],
-            "tokenExpiresAt": acct["tokenExpiresAt"],
-            "fetchedAt": acct["fetchedAt"],
-        })),
+        detail: Some(account_detail(
+            acct,
+            summary,
+            &source,
+            cycle_start,
+            cycle_end,
+            on_demand,
+        )),
     }
+}
+
+fn join_texts(texts: &[String]) -> Option<String> {
+    if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join("; "))
+    }
+}
+
+/// Snapshot → ProviderLimit: no 5h/7d (Cursor has none), per-account rows with the pools as named
+/// windows, the ACTIVE account (cursor-agent login, what dispatches bill) as the top level when it
+/// has data — else the binding (max) view — plus staleness and refresh errors as notes.
+/// The provider-level notes: no accounts at all, else the last refresh error.
+fn snapshot_notes(
+    snap: &Value,
+    no_accounts: bool,
+    has_capture: bool,
+    now: i64,
+) -> (Vec<String>, Vec<String>) {
+    let mut codes = Vec::new();
+    let mut texts = Vec::new();
+    if no_accounts {
+        codes.push(CODE_NO_ACCOUNTS.to_string());
+        texts.push(
+            snap["lastError"]
+                .as_str()
+                .unwrap_or("no Cursor login found")
+                .to_string(),
+        );
+    } else if let Some(err) = snap["lastError"].as_str() {
+        let when = snap["lastAttemptAt"].as_i64().unwrap_or(0);
+        if has_capture {
+            codes.push(CODE_REFRESH_FAILED.to_string());
+            texts.push(format!("last refresh failed ({}s ago): {err}", now - when));
+        } else {
+            codes.push(CODE_NO_DATA_YET.to_string());
+            texts.push(format!("no data yet: {err}"));
+        }
+    }
+    (codes, texts)
 }
 
 /// Snapshot → ProviderLimit: no 5h/7d (Cursor has none), per-account rows with the pools as named
@@ -695,32 +430,9 @@ pub(super) fn parse_snapshot(snap: &Value, now: i64) -> Option<ProviderLimit> {
             l.windows = Some(binding_named(&accounts));
         }
     }
-    let mut codes = Vec::new();
-    let mut texts = Vec::new();
-    if accounts.is_empty() {
-        codes.push(CODE_NO_ACCOUNTS.to_string());
-        texts.push(
-            snap["lastError"]
-                .as_str()
-                .unwrap_or("no Cursor login found")
-                .to_string(),
-        );
-    } else if let Some(err) = snap["lastError"].as_str() {
-        let when = snap["lastAttemptAt"].as_i64().unwrap_or(0);
-        if l.captured_at.is_some() {
-            codes.push(CODE_REFRESH_FAILED.to_string());
-            texts.push(format!("last refresh failed ({}s ago): {err}", now - when));
-        } else {
-            codes.push(CODE_NO_DATA_YET.to_string());
-            texts.push(format!("no data yet: {err}"));
-        }
-    }
+    let (codes, texts) = snapshot_notes(snap, accounts.is_empty(), l.captured_at.is_some(), now);
     l.accounts = Some(accounts);
-    l.note = if texts.is_empty() {
-        None
-    } else {
-        Some(texts.join("; "))
-    };
+    l.note = join_texts(&texts);
     l.note_codes = Some(codes);
     Some(l)
 }

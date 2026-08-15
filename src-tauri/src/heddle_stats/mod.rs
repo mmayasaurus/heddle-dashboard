@@ -29,6 +29,7 @@ use serde::Serialize;
 mod claude;
 mod codex;
 mod cursor;
+mod cursor_fetch;
 mod gemini;
 pub mod roster;
 mod util;
