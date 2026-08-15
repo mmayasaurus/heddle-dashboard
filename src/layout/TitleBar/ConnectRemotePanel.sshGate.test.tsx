@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invoke, listen } = vi.hoisted(() => ({
   invoke: vi.fn(),
-  listen: vi.fn(() => Promise.resolve(() => {})),
+  listen: vi.fn(() => Promise.resolve(vi.fn())),
 }));
 
 vi.mock("../../ipc/transport", () => ({ invoke, listen, isTauri: true }));
@@ -44,7 +44,7 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
 
   it("offers only URL mode when the backend reports SSH remote as unavailable", async () => {
     backend(false);
-    render(<ConnectRemotePanel onClose={() => {}} />);
+    render(<ConnectRemotePanel onClose={vi.fn()} />);
     // The panel asked the backend, and the pairing-link input (URL mode) is the initial view.
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("ssh_remote_available"));
     expect(screen.getByPlaceholderText("connect.pairingPlaceholder")).toBeTruthy();
@@ -58,7 +58,7 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
 
   it("offers both SSH and URL modes only when the backend says SSH remote exists", async () => {
     backend(true);
-    render(<ConnectRemotePanel onClose={() => {}} />);
+    render(<ConnectRemotePanel onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "SSH" })).toBeTruthy());
     expect(screen.getByRole("button", { name: "URL" })).toBeTruthy();
     // URL stays the default view even when SSH is available.
@@ -69,7 +69,7 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
     // Hold the availability promise so the assertions run at three points: pending, after the
     // rejection is delivered and handled, and after React has flushed. A missing `.catch` would surface
     // here as an unhandled rejection (vitest fails the run), and a default-true gate would render SSH.
-    let rejectAvailability!: (e: Error) => void;
+    let rejectAvailability!: (_reason: Error) => void;
     invoke.mockImplementation((cmd: string) =>
       cmd === "ssh_remote_available"
         ? new Promise<boolean>((_, reject) => {
@@ -77,7 +77,7 @@ describe("ConnectRemotePanel — SSH remote gate (HED-42)", () => {
           })
         : Promise.resolve([]),
     );
-    render(<ConnectRemotePanel onClose={() => {}} />);
+    render(<ConnectRemotePanel onClose={vi.fn()} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("ssh_remote_available"));
     expect(screen.queryByRole("button", { name: "SSH" })).toBeNull();
     await act(async () => {
