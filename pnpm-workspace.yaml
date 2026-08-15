@@ -1,4 +1,3 @@
 allowBuilds:
   core-js: true
-  electron: set this to true or false
   esbuild: true
