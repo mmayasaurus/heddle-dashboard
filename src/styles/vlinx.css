@@ -313,7 +313,9 @@ svg { display: block; }
 .fleet-bar:hover { background: var(--bg-hover); }
 .fleet-chevron { color: var(--text-dim); width: 10px; display: inline-block; }
 .fleet-title { font-weight: 700; letter-spacing: 0.4px; color: var(--accent); }
-.fleet-sum { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.fleet-sum { display: inline-flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+.fleet-chip-sum { display: inline-flex; align-items: center; white-space: nowrap; }
+.fleet-chip-sum.stale { opacity: 0.55; }
 .fleet-tag { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); margin-right: 4px; }
 .fleet-dim { color: var(--text-dim); }
 .fleet-run { color: var(--accent); font-weight: 600; }

@@ -196,8 +196,6 @@ export function FleetDrawer() {
       return !o;
     });
 
-  const claude = limits.find((l) => l.provider === "claude");
-  const c5 = claude?.fiveHour?.usedPercentage;
   // Scope filter: an agent belongs to the current project when its cwd is the project root or inside it
   // (worktrees like Rebuild-Project-Root.forms count as inside their sibling root's project by prefix on
   // the root's basename, so a fleet spread across worktrees still groups under one project).
@@ -231,15 +229,27 @@ export function FleetDrawer() {
       >
         <span className="fleet-chevron">{open ? "▾" : "▸"}</span>
         <span className="fleet-title">Fleet</span>
-        {claude && c5 != null ? (
+        {limits.length > 0 ? (
           <span className="fleet-sum">
-            <span className="fleet-tag" style={{ color: providerColor("claude") }}>
-              claude 5h
-            </span>
-            <b style={{ color: providerColor("claude") }}>{Math.round(c5)}%</b>
-            {claude.fiveHour.resetsAt ? (
-              <span className="fleet-dim">&nbsp;· {fmtReset(claude.fiveHour.resetsAt, now)}</span>
-            ) : null}
+            {limits.map((p) => {
+              // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
+              // the bar answers "how close is each provider to a wall" at a glance.
+              const win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
+              const label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+              const pct = win?.usedPercentage;
+              const color = providerColor(p.provider);
+              return (
+                <span
+                  key={p.provider}
+                  className={"fleet-chip-sum" + (p.stale ? " stale" : "")}
+                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${win?.resetsAt ? " · resets in " + fmtReset(win.resetsAt, now) : ""}${p.note ? " · " + p.note : ""}`}
+                >
+                  <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                  <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
+                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻{fmtReset(win.resetsAt, now)}</span> : null}
+                </span>
+              );
+            })}
           </span>
         ) : (
           <span className="fleet-dim">caps: waiting for a statusline render…</span>
