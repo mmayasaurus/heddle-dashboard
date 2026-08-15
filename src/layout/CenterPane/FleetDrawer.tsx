@@ -134,6 +134,13 @@ function LiveClock({ render }: { render: (now: number) => ReactNode }) {
 
   return <>{render(now)}</>;
 }
+
+function ResetCountdown({ resetsAt }: { resetsAt: number | null | undefined }) {
+  const t = useT();
+
+  if (!resetsAt) return null;
+  return <LiveClock render={(now) => <>{fmtReset(resetsAt, now, t("fleet.resetting"))}</>} />;
+}
 /** Countdown to a reset time given as epoch SECONDS: "3h 30m" / "2d 22h" / "5m". */
 function fmtReset(resetsAtSec: number | null | undefined, now: number, resetting: string): string {
   if (!resetsAtSec) return "";
@@ -245,9 +252,8 @@ export function FleetDrawer() {
         <span className="fleet-chevron">{open ? "▾" : "▸"}</span>
         <span className="fleet-title">{t("fleet.title")}</span>
         {limits.length > 0 ? (
-          <LiveClock render={(now) => (
-            <span className="fleet-sum">
-              {limits.map((p) => {
+          <span className="fleet-sum">
+            {limits.map((p) => {
               // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
               // the bar answers "how close is each provider to a wall" at a glance.
               const win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
@@ -257,17 +263,16 @@ export function FleetDrawer() {
               return (
                 <span
                   key={p.provider}
-                  className={"fleet-chip-sum" + (isProviderStale(p, now) ? " stale" : "")}
-                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${win?.resetsAt ? " · resets in " + fmtReset(win.resetsAt, now, t("fleet.resetting")) : ""}${p.note ? " · " + p.note : ""}`}
+                  className={"fleet-chip-sum" + (isProviderStale(p, Date.now()) ? " stale" : "")}
+                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
                 >
                   <span className="fleet-tag" style={{ color }}>{p.provider}</span>
                   <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻{fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span> : null}
+                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                 </span>
               );
-              })}
-            </span>
-          )} />
+            })}
+          </span>
         ) : (
           <span className="fleet-dim">{t("fleet.capsWaiting")}</span>
         )}
@@ -408,7 +413,7 @@ function CapLine({
   note?: string;
 }) {
   const t = useT();
-  const pct = win?.usedPercentage;
+  const pct = win.usedPercentage;
   return (
     <div className="fleet-capline">
       <span className="fleet-capline-lbl">{label}</span>
@@ -460,7 +465,9 @@ function ProviderCapBlock({
           <button
             className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
             disabled={refreshing}
-            onClick={() => void handleRefresh()}
+            onClick={() => {
+              void handleRefresh();
+            }}
             title={`${t("fleet.refresh")} ${p.provider} caps`}
             aria-label={t("fleet.refresh")}
             type="button"

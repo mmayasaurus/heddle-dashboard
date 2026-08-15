@@ -57,7 +57,7 @@ process.stdin.on("end", () => {
         const cfg = resolvedConfigDir(process.env.CLAUDE_CONFIG_DIR);
         const accounts = reg[provider] || [];
         const hit = accounts.find((a) => resolvedConfigDir(a.configDir) === cfg);
-        acct = hit ? hit.id : (cfg ? "unknown-" + basename(cfg) : (accounts.find((a) => !a.configDir)?.id ?? "default"));
+        acct = hit ? hit.id : (cfg ? "unknown-" + basename(cfg) : (accounts.find((a) => a.configDir == null)?.id ?? "default"));
       } catch { acct = null; }
       const payload = JSON.stringify({
         model,
