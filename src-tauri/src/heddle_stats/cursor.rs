@@ -137,15 +137,23 @@ fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
         return false;
     }
     std::thread::spawn(|| {
+        let _guard = RefreshGuard;
         let ok = fetch_and_write();
         let now = now_secs();
         NEXT_ATTEMPT_AT.store(
             if ok { 0 } else { now + FAILURE_BACKOFF_SECS },
             Ordering::SeqCst,
         );
-        REFRESHING.store(false, Ordering::SeqCst);
     });
     true
+}
+
+/// Clears the in-flight flag when the refresh thread ends — including by panic.
+struct RefreshGuard;
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        REFRESHING.store(false, Ordering::SeqCst);
+    }
 }
 
 // ───────────────────────────── local sessions ─────────────────────────────
