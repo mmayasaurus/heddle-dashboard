@@ -7,7 +7,8 @@
 //!     how it turned out (orchestrator, task class, model, tokens, pass/fail, in-flight).
 //!   - **provider rate-limit caps** (`heddle_provider_limits`) → the TRUE per-provider cap numbers,
 //!     one source per provider (see `docs/USAGE_TAP.md`): Claude from the statusline tap
-//!     (`~/.heddle/usage/claude.json`), Codex from the claudex-usage cache (`codex.rs`).
+//!     (`~/.heddle/usage/claude.json`), Codex from the claudex-usage cache (`codex.rs`), Gemini
+//!     from `agy -p /quota` cached to `~/.heddle/usage/gemini.json` (`gemini.rs`).
 //!
 //! Everything here is read-only and best-effort: a missing ccusage or ledger yields an empty/typed
 //! result rather than an error, so the drawer degrades gracefully instead of failing the whole app.
@@ -16,14 +17,16 @@
 //! `src/layout/CenterPane/FleetDrawer.tsx`. It is additive-only: new providers are new entries, new
 //! fields are `Option` — never rename/remove/retype an existing field.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 use serde::Serialize;
 
 mod codex;
+mod gemini;
 
 fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
@@ -347,6 +350,69 @@ pub(crate) fn mask_email(email: &str) -> String {
     }
 }
 
+/// `~/.heddle/usage/` — the statusline tap's snapshot dir; per-provider refreshers write here too.
+pub(crate) fn usage_dir() -> PathBuf {
+    home().join(".heddle").join("usage")
+}
+
+/// Write JSON atomically (tmp + rename) so a reader never sees a half-written snapshot.
+pub(crate) fn write_json_atomic(path: &Path, v: &serde_json::Value) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec(v).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {}: {e}", path.display()))
+}
+
+/// Run a command with a wall-clock budget, returning (exit success, stdout, stderr). The child is
+/// killed on timeout. stdout/stderr are drained on threads so a chatty child can't deadlock us.
+pub(crate) fn run_with_timeout(
+    mut cmd: Command,
+    budget: Duration,
+) -> Result<(bool, String, String), String> {
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    let drain = |pipe: Option<std::process::ChildStdout>,
+                 err: Option<std::process::ChildStderr>| {
+        std::thread::spawn(move || {
+            let mut out = String::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_string(&mut out);
+            }
+            if let Some(mut e) = err {
+                let _ = e.read_to_string(&mut out);
+            }
+            out
+        })
+    };
+    let out_t = drain(child.stdout.take(), None);
+    let err_t = drain(None, child.stderr.take());
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break Ok(st),
+            Ok(None) if started.elapsed() >= budget => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!("timed out after {}s", budget.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => break Err(format!("wait failed: {e}")),
+        }
+    };
+    let stdout = out_t.join().unwrap_or_default();
+    let stderr = err_t.join().unwrap_or_default();
+    let st = status?;
+    Ok((st.success(), stdout, stderr))
+}
+
 /// Parse one statusline-tap snapshot (`~/.heddle/usage/<provider>.json`, written by
 /// `~/.heddle/usage-tap.mjs`): `{model, rate_limits:{five_hour,seven_day}, capturedAt}` where
 /// `capturedAt` / `resets_at` are epoch seconds. `None` when the file isn't a tap snapshot.
@@ -373,8 +439,13 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
     })
 }
 
-/// Read every tap snapshot in `dir`. Best-effort: unreadable/non-tap files are skipped. Codex is
-/// deliberately not read from a tap file — its source is the claudex-usage cache (`codex.rs`).
+/// Providers whose snapshot in `~/.heddle/usage/` is owned by a dedicated source module rather than
+/// the tap: `codex.json` (never written; Codex reads the claudex-usage cache directly) and
+/// `gemini.json` (written by `gemini.rs`, which also reads it back with its extras).
+const DEDICATED_SOURCES: [&str; 2] = ["codex", "gemini"];
+
+/// Read every tap snapshot in `dir`. Best-effort: unreadable/non-tap files are skipped; providers
+/// with a dedicated source module are skipped here and appended by that module.
 fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -390,7 +461,7 @@ fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if provider == "codex" {
+        if DEDICATED_SOURCES.contains(&provider.as_str()) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -421,8 +492,9 @@ pub(crate) fn sort_limits(out: &mut [ProviderLimit]) {
 }
 
 /// Every provider's live rate-limit snapshot: the statusline tap files in `~/.heddle/usage/`
-/// (claude) plus Codex from the claudex-usage cache. Best-effort — absent sources simply yield
-/// fewer entries. Cheap (file reads only); slow sources refresh themselves out-of-band.
+/// (claude), Codex from the claudex-usage cache, Gemini from the agy snapshot. Best-effort — absent
+/// sources simply yield fewer entries. Cheap (file reads only); slow sources refresh themselves
+/// out-of-band (detached, never blocking this call) when their snapshot is getting old.
 #[tauri::command]
 pub async fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
     blocking(provider_limits_sync).await
@@ -430,9 +502,12 @@ pub async fn heddle_provider_limits() -> Result<Vec<ProviderLimit>, String> {
 
 fn provider_limits_sync() -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
-    let mut out = tap_limits(&home().join(".heddle").join("usage"), now);
+    let mut out = tap_limits(&usage_dir(), now);
     if let Some(c) = codex::limit(now) {
         out.push(c);
+    }
+    if let Some(g) = gemini::limit(now) {
+        out.push(g);
     }
     sort_limits(&mut out);
     Ok(out)
@@ -452,8 +527,12 @@ pub async fn heddle_refresh_provider_limits(
 fn refresh_provider_limits_sync(provider: Option<String>) -> Result<Vec<String>, String> {
     let want = |p: &str| provider.as_deref().map(|w| w == p).unwrap_or(true);
     let mut kicked = Vec::new();
-    if want("codex") && codex::force_refresh(now_secs()) {
+    let now = now_secs();
+    if want("codex") && codex::force_refresh(now) {
         kicked.push("codex".to_string());
+    }
+    if want("gemini") && gemini::force_refresh(now) {
+        kicked.push("gemini".to_string());
     }
     Ok(kicked)
 }
