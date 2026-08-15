@@ -38,6 +38,10 @@ strip = true
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+# Unique, auto-cleaned temp dirs for tests (already in the lockfile transitively).
+tempfile = "3"
+
 [dependencies]
 # The built-in browser needs unstable Window::add_child multi-WebView APIs. Their signatures may change,
 # so the version is pinned within 2.11 and call sites are centralized.

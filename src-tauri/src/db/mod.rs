@@ -340,9 +340,8 @@ mod tests {
     /// content intact (including rows that only lived in the WAL), and the legacy file is left as-is.
     #[test]
     fn legacy_db_is_migrated_once_and_left_untouched() {
-        let dir = std::env::temp_dir().join(format!("heddle-db-migrate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let legacy = dir.join(super::LEGACY_DB_FILE);
         let new = dir.join(super::DB_FILE);
 
@@ -380,16 +379,14 @@ mod tests {
         let lcnt: i64 = l.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(lcnt, 1);
         drop((n, l));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Failure fallbacks: a failed copy uses the legacy file ONLY when nobody else published `heddle.db`
     /// meanwhile; if another process did, this process must adopt it (never two live databases).
     #[test]
     fn failed_migration_prefers_a_concurrently_published_db() {
-        let dir = std::env::temp_dir().join(format!("heddle-db-fallback-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let legacy = dir.join(super::LEGACY_DB_FILE);
         let new = dir.join(super::DB_FILE);
         std::fs::write(&legacy, b"legacy").unwrap();
@@ -404,16 +401,14 @@ mod tests {
         });
         assert_eq!(got, new);
         assert_eq!(std::fs::read(&new).unwrap(), b"other process");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Two migrators racing: the second snapshot must never replace a `heddle.db` that already exists
     /// (another instance may have it open), and its temp file must be cleaned up.
     #[test]
     fn concurrent_snapshot_never_replaces_an_existing_db() {
-        let dir = std::env::temp_dir().join(format!("heddle-db-race-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let new = dir.join(super::DB_FILE);
         std::fs::write(&new, b"winner").unwrap();
         let tmp = dir.join("heddle.db.migrating.999999");
@@ -428,7 +423,6 @@ mod tests {
         super::place_snapshot(&tmp2, &fresh).unwrap();
         assert_eq!(std::fs::read(&fresh).unwrap(), b"snapshot");
         assert!(!tmp2.exists());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     use super::*;
