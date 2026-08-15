@@ -38,7 +38,14 @@ pub struct FleetAgent {
 
 fn process_alive(pid: i32) -> bool {
     // `kill(pid, 0)` does not send a signal; EPERM means the process exists but belongs to another
-    // user, which is still live for roster purposes.
+    // user, which is still live for roster purposes. Only positive pids are probed: 0 / negative
+    // values address process groups (or every process), which is never what a session file means.
+    if pid <= 0 {
+        return false;
+    }
+    // Audited: signal 0 is a pure existence probe (POSIX kill(2)); the only argument is a
+    // range-checked i32, no memory is touched, and no pointer crosses the FFI boundary.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         libc::kill(pid, 0) == 0
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
@@ -147,35 +154,30 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 /// inaccessible sessions or ledger data simply produce a partial roster rather than failing the drawer.
 #[tauri::command]
 pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
-    Ok(
-        match tauri::async_runtime::spawn_blocking(|| {
-            let mut agents = live_fleet_agents();
-            let orphaned = attach_in_flight_workers(&mut agents);
-            agents.sort_by(|a, b| {
-                b.alive
-                    .cmp(&a.alive)
-                    .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
-                    .then(a.name.cmp(&b.name))
+    Ok(tauri::async_runtime::spawn_blocking(|| {
+        let mut agents = live_fleet_agents();
+        let orphaned = attach_in_flight_workers(&mut agents);
+        agents.sort_by(|a, b| {
+            b.alive
+                .cmp(&a.alive)
+                .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
+                .then(a.name.cmp(&b.name))
+        });
+        if !orphaned.is_empty() {
+            agents.push(FleetAgent {
+                name: "(orphaned)".to_string(),
+                pid: 0,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: orphaned,
             });
-            if !orphaned.is_empty() {
-                agents.push(FleetAgent {
-                    name: "(orphaned)".to_string(),
-                    pid: 0,
-                    session_id: String::new(),
-                    cwd: String::new(),
-                    status: String::new(),
-                    kind: String::new(),
-                    updated_at_ms: 0,
-                    alive: false,
-                    workers: orphaned,
-                });
-            }
-            agents
-        })
-        .await
-        {
-            Ok(agents) => agents,
-            Err(_) => vec![],
-        },
-    )
+        }
+        agents
+    })
+    .await
+    .unwrap_or_default())
 }

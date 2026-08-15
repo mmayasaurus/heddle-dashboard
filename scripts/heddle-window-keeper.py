@@ -10,11 +10,13 @@ the clock, so the fleet can always rotate onto an account that just reset.
 What it does (per run, safe to run every 5 min from launchd):
   for each account in ~/.heddle/accounts.json (claude, loggedIn):
     - read its window from ~/.heddle/usage/claude-<id>.json (written by the statusline tap, which
-      now keys per account via CLAUDE_CONFIG_DIR);
+      keys per account via CLAUDE_CONFIG_DIR) OR from claude-<id>.keeper.json (the keeper's own
+      anchor for a window IT started) — freshest wins;
     - if the window is EXPIRED (resets_at <= now) or UNKNOWN (no capture), and this account's
       stagger slot is due (>= STAGGER_MIN since the previous account's ping), send ONE minimal
       headless ping under that account's CLAUDE_CONFIG_DIR: `claude -p ok --model haiku` (~10
-      tokens; the run renders the statusline → the tap captures the NEW resets_at).
+      tokens) and record the anchor {startedAt: now, resets_at: now+5h} — headless `claude -p`
+      does NOT render the statusline, so the tap never sees keeper-started windows.
     - if the window is LIVE, do nothing (a rolling window ignores requests until it expires — the
       keeper never shortens or shifts a running window; see --verify).
   Logs to ~/.heddle/window-keeper.log. --dry-run prints decisions, sends nothing.
@@ -55,18 +57,41 @@ def load(path, default):
         return default
 
 
+def write_json_atomic(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
 def window(acct_id):
-    d = load(os.path.join(USAGE, f"claude-{acct_id}.json"), None)
-    if not d:
+    """Best-known 5h window for an account. Two sources, freshest wins:
+      - the keeper's OWN anchor (written when IT started the window: start=now, resets_at=now+5h) —
+        headless `claude -p` pings do NOT fire the statusline, so the tap never sees keeper-started
+        windows (verified 2026-08-15); the keeper must remember what it started;
+      - the statusline tap capture (claude-<id>.json), which exists only when a LIVE interactive session
+        on that account renders — when present and fresher, it carries the real used_percentage."""
+    tap = load(os.path.join(USAGE, f"claude-{acct_id}.json"), None)
+    own = load(os.path.join(USAGE, f"claude-{acct_id}.keeper.json"), None)
+    cands = []
+    if tap:
+        fh = (tap.get("rate_limits") or {}).get("five_hour") or {}
+        if fh.get("resets_at"):
+            cands.append({"used": fh.get("used_percentage"), "resets_at": fh.get("resets_at"),
+                          "captured": tap.get("capturedAt") or 0, "source": "tap"})
+    if own and own.get("resets_at"):
+        cands.append({"used": own.get("used"), "resets_at": own["resets_at"],
+                      "captured": own.get("startedAt") or 0, "source": "keeper"})
+    if not cands:
         return None
-    fh = (d.get("rate_limits") or {}).get("five_hour") or {}
-    return {"used": fh.get("used_percentage"), "resets_at": fh.get("resets_at"), "captured": d.get("capturedAt")}
+    return max(cands, key=lambda c: c["captured"] or 0)
 
 
 def ping(acct):
     env = dict(os.environ)
     if acct.get("configDir"):
-        env["CLAUDE_CONFIG_DIR"] = acct["configDir"]
+        # Same `~` handling as the tap: a child process gets the literal string, so expand it here.
+        env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(acct["configDir"])
     else:
         env.pop("CLAUDE_CONFIG_DIR", None)
     t0 = time.time()
@@ -117,7 +142,7 @@ def main():
     for a in accts:
         w = window(a["id"])
         live = bool(w and w["resets_at"] and w["resets_at"] > now)
-        status = f"live, {w['used']}% used, resets {fmt(w['resets_at'])}" if live else ("EXPIRED" if w and w.get("resets_at") else "UNKNOWN (no capture)")
+        status = f"live ({w.get('source')}), {w['used'] if w.get('used') is not None else '?'}% used, resets {fmt(w['resets_at'])}" if live else ("EXPIRED" if w and w.get("resets_at") else "UNKNOWN (no capture)")
         if live:
             log(f"{a['id']}: {status} → nothing to do"); continue
         since_last = now - float(state.get("last_ping_ts") or 0)
@@ -129,10 +154,12 @@ def main():
         ok, secs, err = ping(a)
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
         if ok:
+            # Remember the window WE just started (the tap can't see headless pings).
+            write_json_atomic(os.path.join(USAGE, f"claude-{a['id']}.keeper.json"),
+                              {"account": a["id"], "startedAt": int(now), "resets_at": int(now) + 5 * 3600,
+                               "used": None, "source": "keeper-ping"})
             state = {"last_ping_ts": now, "last_ping_acct": a["id"]}
-            with open(STATE + ".tmp", "w") as f:
-                json.dump(state, f)
-            os.replace(STATE + ".tmp", STATE)
+            write_json_atomic(STATE, state)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN
 
     return 0
