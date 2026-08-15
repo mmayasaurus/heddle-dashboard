@@ -5,6 +5,23 @@ PR-review OpenRouter spend is already painful — separate audit someday) · MOD
 hook APPROVED · Heddle Linear project APPROVED · new agents (not A–Q, which stay on Spinventory work)
 will drive heddle lanes.
 
+**Decision batch 2026-08-15 (Maya, from T's audit) — "this is our app now":**
+1. HED-38 auto-updater: DISABLE entirely (no phoning heddle.app/VelaTerm; Help links → GitHub). T.
+2. HED-40 identifiers: RENAME user-visible surfaces (`vela` cmd → `heddle`, `vlx-term.db` → `heddle.db`
+   w/ migrate, remote paths, dev-server target); KEEP `VLX_*` env-var protocol names, hook paths,
+   localStorage keys (compat/user data); leave internal Rust/TS identifiers. T.
+3. HED-41 Electron shell: REMOVE (electron/, electron-builder.yml, scripts, devDeps — deletion OK'd). T.
+4. HED-42 SSH-remote: DISABLE (gate off; keep module) until we own a server. T.
+5. HED-33 Spinventory skill packs: MOVE out of public core → Spinventory workspace `.heddle/skills/`,
+   loader reads HEDDLE_SKILLS_DIR. U.
+6. HED-44 copyright: **Very Good Fiber Goods (VGFG)** — both LICENSEs + authors fields. R (core) / T (dash).
+7. HED-27 smoke.ts: DELETE (deletion OK'd). U.
+8. HED-25: LEDGER classifier calls (classify:effort / classify:assess rows). U.
+Also: DeepSource → YES with a heddle `.deepsource.toml` merged FIRST (S); Deep Reviewers/Gemini/PR-Agent
+→ SKIP for heddle (OpenRouter-keyed; 15+ free reviewers already active on the public repos).
+Review sweep (`pr-sweep.sh` → exit 0, every reviewer, every channel, vs HEAD) is a HARD GATE before any
+heddle PR is staged for Maya (enforced 2026-08-15 after 63 unresolved threads were found across 5 PRs).
+
 ## Data lenses (built)
 - **Statusline tap** (`docs/USAGE_TAP.md`) → true per-provider 5h/7d rate-limit caps.
   Claude live ✅ · Codex via claudex-usage wham cache, self-refreshing ✅ · Gemini/Cursor TODO.
