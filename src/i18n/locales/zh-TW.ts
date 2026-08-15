@@ -17,6 +17,7 @@ const zhTW: typeof en = {
   "common.copied": "已複製", // Copied
   "common.retry": "重試", // Retry
   "common.refresh": "重新整理", // Refresh
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "載入中…", // Loading…
   "common.prev": "上一個", // Previous
   "common.next": "下一個", // Next

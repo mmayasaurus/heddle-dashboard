@@ -17,6 +17,7 @@ const ko: typeof en = {
   "common.copied": "복사됨", // Copied
   "common.retry": "다시 시도", // Retry
   "common.refresh": "새로 고침", // Refresh
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "불러오는 중…", // Loading…
   "common.prev": "이전", // Previous
   "common.next": "다음", // Next

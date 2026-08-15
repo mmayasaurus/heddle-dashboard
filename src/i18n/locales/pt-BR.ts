@@ -17,6 +17,7 @@ const ptBR: typeof en = {
   "common.copied": "Copiado", // Copied
   "common.retry": "Tentar novamente", // Retry
   "common.refresh": "Atualizar", // Refresh
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "Carregando…", // Loading…
   "common.prev": "Anterior", // Previous
   "common.next": "Próximo", // Next

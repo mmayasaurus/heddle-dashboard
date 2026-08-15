@@ -27,6 +27,7 @@ const ru: typeof en = {
   "common.copied": "Скопировано", // Copied
   "common.retry": "Повторить", // Retry
   "common.refresh": "Обновить", // Refresh
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "Загрузка…", // Loading…
   "common.prev": "Назад", // Previous
   "common.next": "Далее", // Next

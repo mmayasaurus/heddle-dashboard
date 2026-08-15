@@ -17,6 +17,7 @@ const ja: typeof en = {
   "common.copied": "コピーしました", // Copied
   "common.retry": "再試行", // Retry
   "common.refresh": "更新", // Refresh
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "読み込み中…", // Loading…
   "common.prev": "前へ", // Previous
   "common.next": "次へ", // Next

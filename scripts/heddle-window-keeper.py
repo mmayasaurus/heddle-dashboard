@@ -32,16 +32,20 @@ LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 STAGGER_MIN = int(os.environ.get("HEDDLE_STAGGER_MIN", "75"))
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
+_LOG_WARNING_EMITTED = False
 
 
 def log(msg):
+    global _LOG_WARNING_EMITTED
     line = f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {msg}"
     print(line)
     try:
         with open(LOG, "a") as f:
             f.write(line + "\n")
     except Exception:
-        pass
+        if not _LOG_WARNING_EMITTED:
+            print("warning: unable to write window keeper log", file=sys.stderr)
+            _LOG_WARNING_EMITTED = True
 
 
 def load(path, default):
@@ -66,8 +70,12 @@ def ping(acct):
     else:
         env.pop("CLAUDE_CONFIG_DIR", None)
     t0 = time.time()
-    r = subprocess.run([CLAUDE, "-p", "Reply with exactly: ok", "--model", PING_MODEL, "--output-format", "json"],
-                       capture_output=True, text=True, timeout=120, env=env)
+    # Arguments are static except CLAUDE_CONFIG_DIR, which comes from the trusted accounts registry.
+    try:
+        r = subprocess.run([CLAUDE, "-p", "Reply with exactly: ok", "--model", PING_MODEL, "--output-format", "json"],
+                           capture_output=True, text=True, timeout=120, env=env)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+        return False, round(time.time() - t0, 1), str(e)[-160:]
     ok = r.returncode == 0 and '"ok"' in r.stdout
     return ok, round(time.time() - t0, 1), (r.stderr or "")[-160:]
 
@@ -78,7 +86,13 @@ def fmt(ts):
 
 def main():
     dry = "--dry-run" in sys.argv
-    verify = sys.argv[sys.argv.index("--verify") + 1] if "--verify" in sys.argv else None
+    verify = None
+    if "--verify" in sys.argv:
+        verify_index = sys.argv.index("--verify")
+        if verify_index + 1 >= len(sys.argv) or sys.argv[verify_index + 1].startswith("--"):
+            print("usage: heddle-window-keeper.py [--dry-run] [--verify <account-id>]", file=sys.stderr)
+            return 2
+        verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
     accts = [a for a in reg if a.get("loggedIn")]
     if not accts:
@@ -116,9 +130,13 @@ def main():
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
         if ok:
             state = {"last_ping_ts": now, "last_ping_acct": a["id"]}
-            json.dump(state, open(STATE, "w"))
+            with open(STATE + ".tmp", "w") as f:
+                json.dump(state, f)
+            os.replace(STATE + ".tmp", STATE)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

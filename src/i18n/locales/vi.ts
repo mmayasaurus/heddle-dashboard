@@ -17,6 +17,7 @@ const vi: typeof en = {
   "common.copied": "Đã sao chép",
   "common.retry": "Thử lại",
   "common.refresh": "Làm mới",
+  "fleet.title": "Fleet", "fleet.refresh": "Refresh", "fleet.capsWaiting": "caps: waiting for a statusline render…", "fleet.usageUnavailable": "usage unavailable", "fleet.noActiveWindow": "no active window", "fleet.capturedMinutesAgo": (n) => `captured ${n}m ago`, "fleet.stale": "stale", "fleet.limitReached": "limit reached", "fleet.resetting": "resetting…", "fleet.currentProject": "Current project", "fleet.allAgents": "All agents",
   "common.loading": "Đang tải…",
   "common.prev": "Trước",
   "common.next": "Tiếp",
