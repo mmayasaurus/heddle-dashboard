@@ -24,6 +24,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 mod codex;
+pub mod roster;
 
 fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
