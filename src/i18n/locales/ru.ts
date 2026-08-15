@@ -98,12 +98,12 @@ const ru: typeof en = {
     "Пропускает все подтверждения разрешений через инъекцию конфига (без CLI флага). Применяется при запуске сессии.",
   "settings.catGeneral": "Общие", // General
   "settings.cliLabel": "Команда оболочки",
-  "settings.cliInstall": "Установить команду ‘vela’",
-  "settings.cliUninstall": "Удалить команду ‘vela’",
+  "settings.cliInstall": "Установить команду ‘heddle’",
+  "settings.cliUninstall": "Удалить команду ‘heddle’",
   "settings.cliInstalledAt": (path: string) => `Установлена в ${path}`,
   "settings.cliConflict": (path: string) =>
-    `В ${path} уже существует другая команда ‘vela’. heddle не будет её перезаписывать.`,
-  "settings.cliHint": "Добавляет `vela <путь-к-проекту>` в PATH, как команда `code` в VS Code.",
+    `В ${path} уже существует другая команда ‘heddle’. heddle не будет её перезаписывать.`,
+  "settings.cliHint": "Добавляет `heddle <путь-к-проекту>` в PATH, как команда `code` в VS Code.",
   "settings.agentArgsHint":
     "Аргументы запуска по умолчанию для новых сессий каждого типа агента. Аргументы, заданные для отдельной сессии при создании или редактировании, имеют приоритет. Оставьте пустым, чтобы не использовать.", // Agent default launch args hint
   "settings.agentPathLabel": "Путь к исполняемому файлу (необязательно)", // Executable path (optional)

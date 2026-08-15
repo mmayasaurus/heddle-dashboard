@@ -680,7 +680,7 @@ interface TermStore {
    * automatic scroll from disrupting the user immediately after the new terminal opens. `ProjectTree` consumes it.
    */
   revealSuppressId: SessionId | null;
-  /** Project requested by `vela <path>` for sidebar reveal; consumed by `ProjectTree`. */
+  /** Project requested by `heddle <path>` for sidebar reveal; consumed by `ProjectTree`. */
   revealProjectId: string | null;
   focusedPaneId: string | null; // Currently focused pane.
   /**
@@ -827,7 +827,7 @@ interface TermStore {
   importProject: () => Promise<void>;
   /** Imports a project selected by the browser directory picker. */
   importProjectPath: (rootPath: string) => Promise<void>;
-  /** Handles `vela <path>` by importing or reusing, expanding, selecting, and revealing the project. */
+  /** Handles `heddle <path>` by importing or reusing, expanding, selecting, and revealing the project. */
   openProjectPath: (rootPath: string) => Promise<void>;
   setDirPickerOpen: (open: boolean) => void;
   /** Opens or closes the create-project dialog. */

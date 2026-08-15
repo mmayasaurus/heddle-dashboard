@@ -85,12 +85,12 @@ const zhCN: typeof en = {
     "通过配置文件注入跳过全部权限确认（无命令行 flag）。仅影响该会话启动时的行为。",
   "settings.catGeneral": "通用",
   "settings.cliLabel": "Shell 命令",
-  "settings.cliInstall": "安装 ‘vela’ 命令",
-  "settings.cliUninstall": "卸载 ‘vela’ 命令",
+  "settings.cliInstall": "安装 ‘heddle’ 命令",
+  "settings.cliUninstall": "卸载 ‘heddle’ 命令",
   "settings.cliInstalledAt": (path: string) => `已安装到 ${path}`,
   "settings.cliConflict": (path: string) =>
-    `${path} 已存在其他 ‘vela’ 命令，heddle 不会覆盖它。`,
-  "settings.cliHint": "像 VS Code 的 `code` 一样，把 `vela <项目路径>` 添加到 PATH。",
+    `${path} 已存在其他 ‘heddle’ 命令，heddle 不会覆盖它。`,
+  "settings.cliHint": "像 VS Code 的 `code` 一样，把 `heddle <项目路径>` 添加到 PATH。",
   "settings.agentArgsHint":
     "各类型智能体新建会话时套用的默认启动参数。新建或编辑单个会话时设的参数会覆盖这里的默认。留空表示不带参数。",
   "settings.agentPathLabel": "可执行文件路径（可选）",

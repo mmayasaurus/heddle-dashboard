@@ -18,8 +18,13 @@ fn main() {
         heddle_lib::print_version();
         return;
     }
-    if args.get(1).map(String::as_str) == Some("--vela-help") {
-        heddle_lib::print_vela_help();
+    // `--heddle-help` is what the `heddle` PATH shim passes for -h/--help; `--vela-help` keeps
+    // shims written by pre-rename builds working.
+    if matches!(
+        args.get(1).map(String::as_str),
+        Some("--heddle-help") | Some("--vela-help")
+    ) {
+        heddle_lib::print_user_cli_help();
         return;
     }
     // Hidden lifecycle-hook/notify subcommands: forward the event and exit without starting the GUI.
@@ -76,7 +81,7 @@ fn main() {
         ) {
             Ok(path) => path,
             Err(e) => {
-                eprintln!("vela: {e}");
+                eprintln!("heddle: {e}");
                 std::process::exit(2);
             }
         };
@@ -87,7 +92,7 @@ fn main() {
     #[cfg(not(feature = "gui"))]
     {
         eprintln!(
-            "vela-server: headless build (no GUI). usage: vela-server --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
+            "heddle: headless build (no GUI). usage: heddle --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
         );
         std::process::exit(2);
     }

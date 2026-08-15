@@ -97,12 +97,12 @@ const en = {
     "Skips all permission confirmations via config injection (no CLI flag). Applies to this session on launch.",
   "settings.catGeneral": "General",
   "settings.cliLabel": "Shell command",
-  "settings.cliInstall": "Install 'vela' command",
-  "settings.cliUninstall": "Uninstall 'vela' command",
+  "settings.cliInstall": "Install 'heddle' command",
+  "settings.cliUninstall": "Uninstall 'heddle' command",
   "settings.cliInstalledAt": (path: string) => `Installed at ${path}`,
   "settings.cliConflict": (path: string) =>
-    `A different 'vela' command already exists at ${path}. heddle will not overwrite it.`,
-  "settings.cliHint": "Adds `vela <project-path>` to your PATH, like VS Code's `code` command.",
+    `A different 'heddle' command already exists at ${path}. heddle will not overwrite it.`,
+  "settings.cliHint": "Adds `heddle <project-path>` to your PATH, like VS Code's `code` command.",
   "settings.agentArgsHint":
     "Default launch args applied to new sessions of each agent type. Per-session args set when creating or editing a session override these. Leave blank for none.",
   "settings.agentPathLabel": "Executable path (optional)",

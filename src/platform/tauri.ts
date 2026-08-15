@@ -165,12 +165,12 @@ const velaCommand: VelaCommandCapability = {
     return invoke("vela_command_status");
   },
   async install() {
-    if (!env.isTauri) throw new Error("The vela command can only be installed from the desktop app.");
+    if (!env.isTauri) throw new Error("The heddle command can only be installed from the desktop app.");
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("install_vela_command");
   },
   async uninstall() {
-    if (!env.isTauri) throw new Error("The vela command can only be removed from the desktop app.");
+    if (!env.isTauri) throw new Error("The heddle command can only be removed from the desktop app.");
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke("uninstall_vela_command");
   },
