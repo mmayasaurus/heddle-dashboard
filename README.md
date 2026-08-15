@@ -123,6 +123,7 @@ docs/manuals/     user manuals
 - [AI agent sessions](docs/manuals/ai-agent-sessions_20260709_2041.md)
 - [Remote development guide](docs/manuals/remote-development-guide_20260709_2041.md)
 - [Changelog](docs/changelog.md)
+- [CI & review](docs/CI.md) — what runs on every PR, the scanner rules, the review sweep
 
 ## Community
 
