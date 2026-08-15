@@ -2,7 +2,9 @@
 name = "heddle"
 version = "0.1.100"
 description = "heddle multi-session terminal manager"
-authors = ["vlinx"]
+authors = ["Very Good Fiber Goods (VGFG)", "VLINX Software (upstream VelaTerm)"]
+license = "MIT"
+repository = "https://github.com/mmayasaurus/heddle-dashboard"
 edition = "2021"
 
 [lib]

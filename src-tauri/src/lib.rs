@@ -439,7 +439,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 // attribution; explicitly supply package version so metadata cannot suppress it.
                 let about_meta = AboutMetadataBuilder::new()
                     .version(Some(app.package_info().version.to_string()))
-                    .copyright(Some("A product by VLINX"))
+                    .copyright(Some("© 2026 Very Good Fiber Goods (VGFG) · based on VelaTerm © VLINX Software (MIT)"))
                     .build();
                 let check_update_item =
                     MenuItemBuilder::with_id("check-update", "Check for Updates…").build(app)?;
