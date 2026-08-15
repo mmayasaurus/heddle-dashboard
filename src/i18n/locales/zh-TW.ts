@@ -85,12 +85,12 @@ const zhTW: typeof en = {
     "透過設定檔注入跳過全部權限確認（無命令列旗標）。僅影響該工作階段啟動時的行為。", // YOLO flag hint
   "settings.catGeneral": "一般", // General
   "settings.cliLabel": "Shell 指令",
-  "settings.cliInstall": "安裝 ‘vela’ 指令",
-  "settings.cliUninstall": "解除安裝 ‘vela’ 指令",
+  "settings.cliInstall": "安裝 ‘heddle’ 指令",
+  "settings.cliUninstall": "解除安裝 ‘heddle’ 指令",
   "settings.cliInstalledAt": (path: string) => `已安裝至 ${path}`,
   "settings.cliConflict": (path: string) =>
-    `${path} 已存在其他 ‘vela’ 指令，heddle 不會覆寫它。`,
-  "settings.cliHint": "像 VS Code 的 `code` 一樣，將 `vela <專案路徑>` 加入 PATH。",
+    `${path} 已存在其他 ‘heddle’ 指令，heddle 不會覆寫它。`,
+  "settings.cliHint": "像 VS Code 的 `code` 一樣，將 `heddle <專案路徑>` 加入 PATH。",
   "settings.agentArgsHint":
     "各類型智能體新建工作階段時套用的預設啟動參數。新建或編輯單個工作階段時設定的參數會覆寫此處的預設。留空表示不帶參數。", // Agent default launch args hint
   "settings.agentPathLabel": "可執行檔路徑（可選）", // Executable path (optional)

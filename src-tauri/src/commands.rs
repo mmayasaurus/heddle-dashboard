@@ -821,7 +821,7 @@ fn open_login_window(
             app_for_close
                 .dialog()
                 .message(
-                    "\"Stop server\" shuts down vela-server on the remote (ending all its sessions).\n\
+                    "\"Stop server\" shuts down heddle-server on the remote (ending all its sessions).\n\
                      \"Keep running\" leaves it running so the next connection reuses it — sessions are preserved.\n\
                      \"Cancel\" keeps this window open.",
                 )
