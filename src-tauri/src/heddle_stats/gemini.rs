@@ -56,8 +56,10 @@ fn snapshot_path() -> std::path::PathBuf {
 }
 
 /// Read the snapshot (kicking a refresh if it is old or missing) and return the Gemini entry.
-/// `None` only when there is no snapshot yet — the very first poll after install.
-pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
+/// `agy_bin` is the executable to refresh with (the app's configured Antigravity path, else a
+/// located install, else bare `agy` on the augmented PATH). `None` only when there is no snapshot
+/// yet — the very first poll after install.
+pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
     let snap = std::fs::read_to_string(snapshot_path())
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
@@ -66,20 +68,29 @@ pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
         .map(|t| now - t > REFRESH_AFTER_SECS)
         .unwrap_or(true)
     {
-        maybe_spawn_refresh(now, false);
+        maybe_spawn_refresh(now, false, agy_bin);
     }
     parse_snapshot(&snap?, now)
 }
 
 /// Force a refresh regardless of snapshot age (respects the in-flight guard, ignores the failure
 /// backoff). `true` when a refresh thread was started.
-pub(super) fn force_refresh(now: i64) -> bool {
-    maybe_spawn_refresh(now, true)
+pub(super) fn force_refresh(now: i64, agy_bin: &str) -> bool {
+    maybe_spawn_refresh(now, true, agy_bin)
+}
+
+/// Clears the in-flight flag when the refresh thread ends — including by panic — so a wedged
+/// refresher can't silently stop Gemini from ever refreshing again.
+struct RefreshGuard;
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        REFRESHING.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Start ONE detached refresh unless one is already running (or we're inside the failure backoff
 /// and this isn't a forced refresh).
-fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
+fn maybe_spawn_refresh(now: i64, force: bool, agy_bin: &str) -> bool {
     if !force && now < NEXT_ATTEMPT_AT.load(Ordering::SeqCst) {
         return false;
     }
@@ -89,8 +100,10 @@ fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
     {
         return false;
     }
-    std::thread::spawn(|| {
-        let result = fetch_and_write();
+    let agy_bin = agy_bin.to_string();
+    std::thread::spawn(move || {
+        let _guard = RefreshGuard;
+        let result = fetch_and_write(&agy_bin);
         let now = now_secs();
         NEXT_ATTEMPT_AT.store(
             if result.is_ok() {
@@ -100,17 +113,16 @@ fn maybe_spawn_refresh(now: i64, force: bool) -> bool {
             },
             Ordering::SeqCst,
         );
-        REFRESHING.store(false, Ordering::SeqCst);
     });
     true
 }
 
 /// Run agy, build the snapshot, write it. On failure, keep whatever snapshot exists (its data and
 /// `capturedAt` stay honest) but record `lastError` / `lastAttemptAt` so the reader can say why.
-fn fetch_and_write() -> Result<(), String> {
+fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
     let now = now_secs();
     let path = snapshot_path();
-    match run_agy_quota() {
+    match run_agy_quota(agy_bin) {
         Ok(data) => {
             let snap = snapshot_from_agy(&data, now);
             write_json_atomic(&path, &snap)
@@ -125,25 +137,39 @@ fn fetch_and_write() -> Result<(), String> {
                 );
             snap["lastError"] = Value::String(e.clone());
             snap["lastAttemptAt"] = json!(now);
-            let _ = write_json_atomic(&path, &snap);
-            Err(e)
+            // A failed snapshot write is a second, distinct failure — say so instead of hiding it
+            // behind the agy error.
+            match write_json_atomic(&path, &snap) {
+                Ok(()) => Err(e),
+                Err(w) => Err(format!(
+                    "{e}; and the error snapshot could not be written: {w}"
+                )),
+            }
         }
     }
 }
 
-/// `agy -p "/quota" --output-format json --log-file /dev/null` → `command.data`.
-fn run_agy_quota() -> Result<Value, String> {
-    let mut cmd = std::process::Command::new("agy");
+/// The OS null device for `--log-file` (agy writes a log file per run otherwise).
+const NULL_LOG: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
+/// `agy -p "/quota" --output-format json --log-file <null>` → `command.data`. Runs from the usage
+/// dir (created first) so agy never picks up a project's config from the app's own cwd.
+fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
+    let dir = usage_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let mut cmd = std::process::Command::new(agy_bin);
     cmd.args([
         "-p",
         "/quota",
         "--output-format",
         "json",
         "--log-file",
-        "/dev/null",
+        NULL_LOG,
     ])
-    .env("PATH", augmented_path())
-    .current_dir(usage_dir());
+    .env("PATH", augmented_path());
+    if dir.is_dir() {
+        cmd.current_dir(&dir);
+    }
     let (ok, stdout, stderr) = run_with_timeout(cmd, AGY_TIMEOUT)?;
     if !ok {
         let tail: String = stderr
@@ -160,7 +186,7 @@ fn run_agy_quota() -> Result<Value, String> {
     let start = stdout
         .find('{')
         .ok_or_else(|| "agy printed no JSON".to_string())?;
-    let v: Value = serde_json::from_str(&stdout[start..])
+    let mut v: Value = serde_json::from_str(&stdout[start..])
         .map_err(|e| format!("agy JSON parse failed: {e}"))?;
     if v["status"].as_str() != Some("SUCCESS") {
         return Err(format!(
@@ -168,11 +194,14 @@ fn run_agy_quota() -> Result<Value, String> {
             v["status"].as_str().unwrap_or("?")
         ));
     }
-    let data = &v["command"]["data"];
+    let data = v["command"]["data"].take();
     if !data["groups"].is_array() {
-        return Err("agy /quota answer has no command.data.groups (not logged in, or agy changed its shape)".to_string());
+        return Err(
+            "agy /quota answer has no command.data.groups (not logged in, or agy changed its shape)"
+                .to_string(),
+        );
     }
-    Ok(data.clone())
+    Ok(data)
 }
 
 /// Build the snapshot: tap-format `model` / `rate_limits` / `capturedAt` (so anything reading
@@ -235,17 +264,23 @@ fn normalize_groups(data: &Value) -> Vec<Group> {
     out
 }
 
-/// The 5h/7d pair of the primary ("gemini-*") group; falls back to the first group if agy ever
-/// renames the ids, so the entry never silently goes blank.
-fn primary_windows(groups: &[Group]) -> (LimitWindow, LimitWindow) {
-    let primary = groups
+/// Index of the primary group: the one with "gemini-*" bucket ids, else the first group if agy
+/// ever renames the ids (so the entry never silently goes blank). The SAME selection feeds the
+/// 5h/7d slots and excludes that group from the named windows — no double counting on fallback.
+fn primary_index(groups: &[Group]) -> Option<usize> {
+    groups
         .iter()
-        .find(|g| {
+        .position(|g| {
             g.buckets
                 .iter()
                 .any(|b| b.id.starts_with(PRIMARY_BUCKET_PREFIX))
         })
-        .or_else(|| groups.first());
+        .or(if groups.is_empty() { None } else { Some(0) })
+}
+
+/// The 5h/7d pair of the primary group.
+fn primary_windows(groups: &[Group]) -> (LimitWindow, LimitWindow) {
+    let primary = primary_index(groups).map(|i| &groups[i]);
     let mut five = LimitWindow::default();
     let mut seven = LimitWindow::default();
     if let Some(g) = primary {
@@ -264,12 +299,6 @@ fn primary_windows(groups: &[Group]) -> (LimitWindow, LimitWindow) {
     (five, seven)
 }
 
-fn is_primary(g: &Group) -> bool {
-    g.buckets
-        .iter()
-        .any(|b| b.id.starts_with(PRIMARY_BUCKET_PREFIX))
-}
-
 /// "2026-08-21T22:08:38Z" → epoch seconds. RFC3339 with offset or fractional seconds also parses.
 pub(super) fn parse_rfc3339(s: &str) -> Option<i64> {
     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
@@ -285,8 +314,12 @@ pub(super) fn parse_snapshot(snap: &Value, now: i64) -> Option<ProviderLimit> {
     l.stale = is_stale(l.captured_at, now, STALE_AFTER_SECS);
     l.stale_after_secs = Some(STALE_AFTER_SECS);
     let groups = normalize_groups(&snap["raw"]);
+    let primary = primary_index(&groups);
     let mut windows = Vec::new();
-    for g in groups.iter().filter(|g| !is_primary(g)) {
+    for (i, g) in groups.iter().enumerate() {
+        if Some(i) == primary {
+            continue;
+        }
         for b in &g.buckets {
             let tag = match b.window.as_str() {
                 "weekly" => "7d",
