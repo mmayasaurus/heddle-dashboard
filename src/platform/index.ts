@@ -6,12 +6,11 @@
 //! rule, with platform/ itself exempt.
 
 import { env } from "./env";
-import { electronPlatform } from "./electron";
 import { tauriPlatform } from "./tauri";
 import type { Platform } from "./types";
 
-/** Select at runtime: the Electron shell uses the Electron implementation; desktop Tauri and browser WS use the Tauri implementation. */
-export const platform: Platform = env.isElectron ? electronPlatform : tauriPlatform;
+/** Desktop Tauri and browser WS both use the Tauri implementation (the Electron shell was removed — HED-41). */
+export const platform: Platform = tauriPlatform;
 
 export { env };
 
