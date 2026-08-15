@@ -218,7 +218,7 @@ export interface Platform {
   clipboard: ClipboardCapability;
   /** Current window. */
   window: WindowCapability;
-  /** Install/uninstall the `vela` shell command. */
+  /** Install/uninstall the `heddle` shell command (legacy `vela` shims are cleaned up on uninstall). */
   velaCommand: VelaCommandCapability;
   /** System notifications. */
   notify: NotifyCapability;
