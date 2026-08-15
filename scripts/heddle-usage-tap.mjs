@@ -10,9 +10,9 @@
 //   1. Passthrough is written FIRST and always; the capture is wrapped so it can never fail the HUD.
 //   2. Zero mutation of the payload. claude-hud behavior is identical with or without this tap.
 //   3. resets_at is epoch SECONDS (matches Claude Code + claude-hud's `new Date(v*1000)`).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 let raw = "";
 process.stdin.setEncoding("utf8");
@@ -35,14 +35,26 @@ process.stdin.on("end", () => {
           : "other";
       const dir = join(homedir(), ".heddle", "usage");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, `${provider}.json`),
-        JSON.stringify({
-          model,
-          rate_limits: rl,
-          capturedAt: Math.floor(Date.now() / 1000),
-        }),
-      );
+      // Per-ACCOUNT keying (2026-08-15): the statusline runs inside the session, so it inherits
+      // CLAUDE_CONFIG_DIR. Map it to the account id from ~/.heddle/accounts.json (configDir match;
+      // unset/default → the entry with configDir null). Writes BOTH the legacy per-provider file
+      // (drawer compat) and claude-<acctId>.json (per-account caps for the keeper + router).
+      let acct = null;
+      try {
+        const reg = JSON.parse(readFileSync(join(homedir(), ".heddle", "accounts.json"), "utf8"));
+        const cfg = process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : null;
+        const hit = (reg[provider] || []).find((a) => (a.configDir ? resolve(a.configDir) : null) === cfg);
+        acct = hit ? hit.id : (cfg ? "unknown-" + cfg.split("/").pop() : "acct1");
+      } catch { acct = null; }
+      const payload = JSON.stringify({
+        model,
+        rate_limits: rl,
+        capturedAt: Math.floor(Date.now() / 1000),
+        account: acct,
+        configDir: process.env.CLAUDE_CONFIG_DIR || null,
+      });
+      writeFileSync(join(dir, `${provider}.json`), payload);
+      if (acct) writeFileSync(join(dir, `${provider}-${acct}.json`), payload);
     }
   } catch {
     /* never fail the statusline */
