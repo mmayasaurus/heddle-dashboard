@@ -135,6 +135,10 @@ pub(super) fn build(
                     .strip_prefix("claude-")?
                     .strip_suffix(".json")?
                     .to_string();
+                // `claude-<id>.attrib.json` (attribution state) is not an account file.
+                if id.contains('.') {
+                    return None;
+                }
                 (!registry.iter().any(|a| a.id == id)).then_some(id)
             })
             .collect();

@@ -257,6 +257,9 @@ fn polls_accumulate_a_persisted_fable_estimate_per_account_and_surface_it_on_the
     // Re-polling the SAME capture doesn't double count.
     let l = build(&s.0, &reg, None, now).unwrap();
     assert_eq!(l.accounts.unwrap()[0].fable_weekly_samples, Some(3));
+    // The attribution file itself is never mistaken for an unregistered account row.
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert!(l.accounts.unwrap().iter().all(|r| !r.id.contains("attrib")));
     // The persisted state survives a fresh process: read it back and check.
     let persisted: Attrib = serde_json::from_str(
         &std::fs::read_to_string(s.0.join("claude-acct1.attrib.json")).unwrap(),

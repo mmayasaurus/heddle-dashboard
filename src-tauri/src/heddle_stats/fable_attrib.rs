@@ -19,6 +19,7 @@
 //!   - if the payload ever carries a model-scoped window (any `rate_limits` key mentioning `fable`
 //!     with a `used_percentage`), that exact value wins and `exact: true` is set — the tap already
 //!     captures `rate_limits` verbatim, so nothing else has to change.
+//!
 //! Interleaved sessions on one account (Fable and Haiku both rendering) still blur attribution —
 //! this is a best-effort signal for a soft cap, not an accounting record; the drawer says "≈ … (est.)".
 //!
