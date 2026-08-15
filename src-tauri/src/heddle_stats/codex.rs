@@ -188,6 +188,8 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
         accounts: Some(accounts),
         active_account: None,
         windows: Some(windows),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     })
 }
 
@@ -254,6 +256,8 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
             ),
             note_codes: vec![CODE_ACCOUNT_FETCH_FAILED.to_string()],
             detail: None,
+            fable_weekly_estimate_pct: None,
+            fable_weekly_samples: None,
         };
     }
     let rl = &data["rate_limit"];
@@ -272,6 +276,8 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
         note,
         note_codes,
         detail: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
 }
 

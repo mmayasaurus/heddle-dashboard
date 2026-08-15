@@ -660,6 +660,8 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             "tokenExpiresAt": acct["tokenExpiresAt"],
             "fetchedAt": acct["fetchedAt"],
         })),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
 }
 

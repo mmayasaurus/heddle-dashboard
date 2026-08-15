@@ -4,6 +4,8 @@
       "accounts": null,
       "activeAccount": null,
       "capturedAt": 1786831140,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": 1786846200,
         "usedPercentage": 32.0
@@ -26,6 +28,8 @@
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -56,6 +60,8 @@
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -86,6 +92,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831170,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -151,6 +159,8 @@
             "source": "cursor-ide",
             "tokenExpiresAt": 1789423200
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -201,6 +211,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831155,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -250,6 +262,8 @@
       "accounts": null,
       "activeAccount": null,
       "capturedAt": 1786831110,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": 1786840240,
         "usedPercentage": 3.931260108947765

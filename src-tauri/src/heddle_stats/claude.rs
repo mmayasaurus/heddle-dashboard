@@ -12,14 +12,19 @@
 //! you're on"; `accounts[]` carries every registered account (masked email, own windows, own
 //! capture time / staleness, `limitReached` at ≥100%), and `activeAccount` names the row.
 //! Without a registry this degrades to the plain single-file tap entry (`accounts: None`).
+//!
+//! Each poll also folds every account's capture into its Fable weekly attribution
+//! (`claude-<acct>.attrib.json`, see `fable_attrib.rs`) and exposes `fableWeeklyEstimatePct` /
+//! `fableWeeklySamples` per row and for the active account at the top level.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::fable_attrib::{self, Attrib};
 use super::{
-    home, is_stale, mask_email, tap_limit, usage_dir, AccountLimit, LimitWindow, ProviderLimit,
-    TAP_STALE_AFTER_SECS,
+    home, is_stale, mask_email, tap_limit, usage_dir, write_json_atomic, AccountLimit, LimitWindow,
+    ProviderLimit, TAP_STALE_AFTER_SECS,
 };
 
 /// `~/.heddle/accounts.json`, relative to `$HOME`.
@@ -115,7 +120,8 @@ pub(super) fn build(
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
         let file = read_json(&dir.join(format!("claude-{}.json", a.id)));
-        rows.push(row(a, file.as_ref(), now));
+        let attrib = attribute(dir, &a.id, file.as_ref(), now);
+        rows.push(row(a, file.as_ref(), now, attrib.as_ref()));
     }
     // Per-account files the tap wrote for config dirs that aren't registered (`unknown-<dir>`).
     // Only recent ones: nothing prunes old files, so a one-off dir from weeks ago must not haunt
@@ -150,7 +156,8 @@ pub(super) fn build(
                     .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
                 email: None,
             };
-            rows.push(row(&acct, file.as_ref(), now));
+            let attrib = attribute(dir, &id, file.as_ref(), now);
+            rows.push(row(&acct, file.as_ref(), now, attrib.as_ref()));
         }
     }
     // Top level = the active account's own file; fall back to the legacy last-seen file so the
@@ -183,6 +190,8 @@ pub(super) fn build(
             accounts: None,
             active_account: None,
             windows: None,
+            fable_weekly_estimate_pct: None,
+            fable_weekly_samples: None,
         });
     top.model = top
         .model
@@ -194,13 +203,41 @@ pub(super) fn build(
         legacy_account
     };
     top.note_codes = Some(Vec::new());
+    // The top-level Fable estimate belongs to whichever account the top level shows.
+    if let Some(id) = top.active_account.clone() {
+        if let Some(r) = rows.iter().find(|r| r.id == id) {
+            top.fable_weekly_estimate_pct = r.fable_weekly_estimate_pct;
+            top.fable_weekly_samples = r.fable_weekly_samples;
+        }
+    }
     top.accounts = Some(rows);
     top.windows = Some(Vec::new());
     Some(top)
 }
 
-/// One account row from its tap file (or none yet).
-fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
+/// Load this account's attribution state, fold in the current capture (if any), persist when it
+/// changed, and return the state. Best-effort: an unreadable/unwritable attrib file just yields
+/// whatever we could compute in memory.
+fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Attrib> {
+    let path = dir.join(format!("claude-{id}.attrib.json"));
+    let mut state: Attrib = read_json(&path)
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let cap = file.and_then(fable_attrib::capture_from_tap);
+    let changed = match &cap {
+        Some(c) => fable_attrib::ingest(&mut state, c, now),
+        None => false,
+    };
+    if changed {
+        if let Ok(v) = serde_json::to_value(&state) {
+            let _ = write_json_atomic(&path, &v);
+        }
+    }
+    (state.last_captured_at.is_some()).then_some(state)
+}
+
+/// One account row from its tap file (or none yet) plus its Fable attribution state.
+fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> AccountLimit {
     let label = a
         .email
         .as_deref()
@@ -210,7 +247,10 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
         "account": a.id,
         "configDir": a.config_dir.as_ref().map(|p| p.to_string_lossy().to_string()),
         "model": file.and_then(|v| v["model"].as_str()),
+        "fableWeekly": attrib.map(fable_attrib::detail),
     });
+    let fable_est = attrib.and_then(fable_attrib::estimate);
+    let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
         return AccountLimit {
             id: a.id.clone(),
@@ -229,6 +269,8 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
             ),
             note_codes: vec![CODE_NO_CAPTURE.to_string()],
             detail: Some(detail),
+            fable_weekly_estimate_pct: fable_est,
+            fable_weekly_samples: fable_samples,
         };
     };
     let rl = &v["rate_limits"];
@@ -265,6 +307,8 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
         },
         note_codes: codes,
         detail: Some(detail),
+        fable_weekly_estimate_pct: fable_est,
+        fable_weekly_samples: fable_samples,
     }
 }
 

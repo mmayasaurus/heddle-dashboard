@@ -200,3 +200,65 @@ fn unregistered_per_account_files_are_appended_as_extra_rows() {
     assert_eq!(rows[3].label, "unknown-claude-x");
     assert_eq!(rows[3].five_hour.used_percentage, Some(3.0));
 }
+
+#[test]
+fn polls_accumulate_a_persisted_fable_estimate_per_account_and_surface_it_on_the_active_row() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("fable");
+    let reg = registry();
+    // Poll 1: acct1 rendered a Fable session at 10% weekly.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now - 300, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now - 300).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_samples, Some(0));
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+    assert!(
+        s.0.join("claude-acct1.attrib.json").exists(),
+        "attribution persisted"
+    );
+    // Polls 2-4: +2 (Fable), +1 (Haiku), +2 (Fable) → estimate 4% on 3 samples.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 12.0, now - 240, "acct1"),
+    );
+    build(&s.0, &reg, None, now - 240).unwrap();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-haiku-4-5", 30.0, 13.0, now - 180, "acct1"),
+    );
+    build(&s.0, &reg, None, now - 180).unwrap();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 15.0, now - 120, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now - 120).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_samples, Some(3));
+    assert_eq!(r.fable_weekly_estimate_pct, Some(4.0));
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["fablePct"], 4.0);
+    assert_eq!(fw["otherPct"], 1.0);
+    assert_eq!(fw["unknownPct"], 10.0);
+    // acct1 is the active account → the same numbers ride on the top level.
+    assert_eq!(l.active_account.as_deref(), Some("acct1"));
+    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
+    assert_eq!(l.fable_weekly_samples, Some(3));
+    // Other accounts (no capture) carry no estimate.
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[1].fable_weekly_estimate_pct,
+        None
+    );
+    // Re-polling the SAME capture doesn't double count.
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert_eq!(l.accounts.unwrap()[0].fable_weekly_samples, Some(3));
+    // The persisted state survives a fresh process: read it back and check.
+    let persisted: Attrib = serde_json::from_str(
+        &std::fs::read_to_string(s.0.join("claude-acct1.attrib.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(persisted.samples, 3);
+    assert_eq!(persisted.fable_pct, 4.0);
+}
