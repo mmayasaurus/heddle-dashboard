@@ -25,8 +25,10 @@ pnpm/Node, the frontend build that `tauri-build` needs for `../dist`, `rustup` s
 ## Rules baked into the workflows (don't undo them casually)
 
 - **A green scanner check is not a scan — assert the scanned volume.** The gitleaks step computes
-  `git rev-list --count --no-merges base..head` itself and reds the job on any `ERR`/`[git]`/`fatal`
-  line in gitleaks' log or a "N commits scanned" mismatch. Origin: in a `container:` job the
+  `git rev-list --count --no-merges base..head` itself, runs gitleaks with `--no-color` so its log is
+  exactly zerolog's `<time> <LEVEL> <msg>`, and reds the job when any line's LEVEL is `ERR`/`FTL`
+  or the `INF N commits scanned` count is below the expected number (a finding whose path merely
+  contains "ERR" cannot trip it). Origin: in a `container:` job the
   workspace is owned by the runner uid and `actions/checkout` writes its `safe.directory` entry to a
   temporary HOME, so gitleaks' internal `git log` failed with "dubious ownership" — and gitleaks
   still exited 0 with "0 commits scanned … no leaks found". Two rounds of a PR were green with an
