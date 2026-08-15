@@ -87,12 +87,12 @@ const ptBR: typeof en = {
     "Pula todas as confirmações de permissão via injeção de configuração (sem flag CLI). Aplica-se a esta sessão no início.",
   "settings.catGeneral": "Geral", // General
   "settings.cliLabel": "Comando do shell",
-  "settings.cliInstall": "Instalar o comando ‘vela’",
-  "settings.cliUninstall": "Desinstalar o comando ‘vela’",
+  "settings.cliInstall": "Instalar o comando ‘heddle’",
+  "settings.cliUninstall": "Desinstalar o comando ‘heddle’",
   "settings.cliInstalledAt": (path: string) => `Instalado em ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Já existe outro comando ‘vela’ em ${path}. O heddle não irá sobrescrevê-lo.`,
-  "settings.cliHint": "Adiciona `vela <caminho-do-projeto>` ao PATH, como o comando `code` do VS Code.",
+    `Já existe outro comando ‘heddle’ em ${path}. O heddle não irá sobrescrevê-lo.`,
+  "settings.cliHint": "Adiciona `heddle <caminho-do-projeto>` ao PATH, como o comando `code` do VS Code.",
   "settings.agentArgsHint":
     "Argumentos de inicialização padrão aplicados a novas sessões de cada tipo de agente. Argumentos por sessão definidos ao criar ou editar têm prioridade. Deixe em branco para nenhum.", // Agent default launch args hint
   "settings.agentPathLabel": "Caminho do executável (opcional)", // Executable path (optional)

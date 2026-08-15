@@ -87,12 +87,12 @@ const de: typeof en = {
     "Überspringt alle Berechtigungsabfragen via Konfig-Injektion (kein CLI-Flag). Gilt für diese Sitzung beim Start.", // YOLO flag hint
   "settings.catGeneral": "Allgemein", // General
   "settings.cliLabel": "Shell-Befehl",
-  "settings.cliInstall": "‘vela’-Befehl installieren",
-  "settings.cliUninstall": "‘vela’-Befehl deinstallieren",
+  "settings.cliInstall": "‘heddle’-Befehl installieren",
+  "settings.cliUninstall": "‘heddle’-Befehl deinstallieren",
   "settings.cliInstalledAt": (path: string) => `Installiert unter ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Unter ${path} existiert bereits ein anderer ‘vela’-Befehl. heddle überschreibt ihn nicht.`,
-  "settings.cliHint": "Fügt `vela <Projektpfad>` wie den VS-Code-Befehl `code` zum PATH hinzu.",
+    `Unter ${path} existiert bereits ein anderer ‘heddle’-Befehl. heddle überschreibt ihn nicht.`,
+  "settings.cliHint": "Fügt `heddle <Projektpfad>` wie den VS-Code-Befehl `code` zum PATH hinzu.",
   "settings.agentArgsHint":
     "Standard-Startargumente für neue Sitzungen jedes Agententyps. Beim Erstellen oder Bearbeiten pro Sitzung gesetzte Argumente haben Vorrang. Leer lassen für keine.", // Agent default launch args hint
   "settings.agentPathLabel": "Pfad zur ausführbaren Datei (optional)", // Executable path (optional)
