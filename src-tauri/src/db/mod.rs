@@ -116,8 +116,12 @@ fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
         .to_str()
         .ok_or_else(|| "non-UTF-8 data dir path".to_string())?
         .to_string();
-    src.execute("VACUUM INTO ?1", [tmp_str])
-        .map_err(|e| format!("VACUUM INTO: {e}"))?;
+    if let Err(e) = src.execute("VACUUM INTO ?1", [tmp_str]) {
+        // Never leave a partial snapshot behind on failure (a later start would exit at the
+        // `heddle.db exists` guard before the stale-temp sweep runs).
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("VACUUM INTO: {e}"));
+    }
     drop(src);
     place_snapshot(&tmp, new)
 }

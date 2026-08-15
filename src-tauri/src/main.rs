@@ -92,7 +92,7 @@ fn main() {
     #[cfg(not(feature = "gui"))]
     {
         eprintln!(
-            "heddle-server: headless build (no GUI). usage: heddle-server --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
+            "heddle: headless build (no GUI). usage: heddle --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
         );
         std::process::exit(2);
     }
