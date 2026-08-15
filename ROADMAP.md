@@ -5,6 +5,31 @@ PR-review OpenRouter spend is already painful — separate audit someday) · MOD
 hook APPROVED · Heddle Linear project APPROVED · new agents (not A–Q, which stay on Spinventory work)
 will drive heddle lanes.
 
+**Decision batch 2026-08-15 (Maya, from T's audit) — "this is our app now":**
+1. HED-38 auto-updater: DISABLE entirely (no phoning heddle.app/VelaTerm; Help links → GitHub). T.
+2. HED-40 identifiers: RENAME user-visible surfaces (`vela` cmd → `heddle`, `vlx-term.db` → `heddle.db`
+   w/ migrate, remote paths, dev-server target); KEEP `VLX_*` env-var protocol names, hook paths,
+   localStorage keys (compat/user data); leave internal Rust/TS identifiers. T.
+3. HED-41 Electron shell: REMOVE (electron/, electron-builder.yml, scripts, devDeps — deletion OK'd). T.
+4. HED-42 SSH-remote: DISABLE (gate off; keep module) until we own a server. T.
+5. HED-33 Spinventory skill packs: MOVE out of public core → Spinventory workspace `.heddle/skills/`,
+   loader reads HEDDLE_SKILLS_DIR. U.
+6. HED-44 copyright: **Very Good Fiber Goods (VGFG)** — both LICENSEs + authors fields. R (core) / T (dash).
+7. HED-27 smoke.ts: DELETE (deletion OK'd). U.
+8. HED-25: LEDGER classifier calls (classify:effort / classify:assess rows). U.
+Also: DeepSource → YES with a heddle `.deepsource.toml` merged FIRST (S); Deep Reviewers/Gemini/PR-Agent
+→ SKIP for heddle (OpenRouter-keyed; 15+ free reviewers already active on the public repos).
+Review sweep (`pr-sweep.sh` → exit 0, every reviewer, every channel, vs HEAD) is a HARD GATE before any
+heddle PR is staged for Maya (enforced 2026-08-15 after 63 unresolved threads were found across 5 PRs).
+**Self-merge standing authorization (Maya, 2026-08-15 ~17:50):** an agent MAY merge its OWN PR without
+waiting for Maya when ALL of: (1) `pr-sweep.sh` exit 0 on TWO consecutive sweeps ≥15 min apart vs HEAD
+(late bots), (2) every non-empty review body addressed (fix or reply+resolve with rationale), (3) all
+required checks green at HEAD, (4) normal MERGE COMMIT (never squash, never force), (5) the PR body has
+`Fixes HED-n` and the branch was rebased on current main, (6) stacked PRs merge bottom-up (base first,
+retarget children). After merge: `pr-linear-sync`, `lin.sh resolve HED-n`, delete nothing but the
+worktree (`git worktree remove`, branches kept). Anything touching security semantics, deletion of
+user-visible features, or another agent's files still waits for Maya.
+
 ## Data lenses (built)
 - **Statusline tap** (`docs/USAGE_TAP.md`) → true per-provider 5h/7d rate-limit caps.
   Claude live ✅ · Codex via claudex-usage wham cache, self-refreshing ✅ · Gemini/Cursor TODO.

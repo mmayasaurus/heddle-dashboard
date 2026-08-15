@@ -25,6 +25,7 @@ use serde::Serialize;
 
 mod codex;
 mod gemini;
+pub mod roster;
 mod util;
 
 pub(crate) use util::{
