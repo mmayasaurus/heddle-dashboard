@@ -550,7 +550,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                                     MessageDialogKind::Warning,
                                 ),
                                 Ok(_) => (
-                                    "The heddle-managed 'heddle' command was removed from PATH."
+                                    "Removed the heddle-managed 'heddle' command (and any legacy 'vela' shim) from PATH, if present."
                                         .to_string(),
                                     MessageDialogKind::Info,
                                 ),
@@ -1029,7 +1029,7 @@ fn serve_data_dir(args: &ServeArgs, identifier: &str) -> Result<std::path::PathB
     )
 }
 
-/// Pure-CLI headless entry point for `vlx-term --serve`.
+/// Pure-CLI headless entry point for `heddle --serve`.
 ///
 /// Build no Tauri app/window/display dependency. Construct GUI-equivalent Db/PtyManager/HookServer
 /// state under AppCtx::Headless and reuse the HTTPS/login/WebSocket/PTY service. Ctrl+C/SIGTERM shuts
@@ -1042,16 +1042,16 @@ pub fn run_serve(args: &[String]) {
     let parsed = match parse_serve_args(args, env_password) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("vlx-term --serve failed to start: {e}");
+            eprintln!("heddle --serve failed to start: {e}");
             eprintln!(
-                "usage: vlx-term --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
+                "usage: heddle --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
             );
             std::process::exit(1);
         }
     };
 
     if let Err(e) = serve_main(&parsed) {
-        eprintln!("vlx-term --serve failed to start: {e}");
+        eprintln!("heddle --serve failed to start: {e}");
         std::process::exit(1);
     }
 }
@@ -1107,7 +1107,7 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     }
     let status = web.start(ctx.clone(), &args.password, Some(args.port), mode)?;
 
-    println!("vlx-term headless server started");
+    println!("heddle headless server started");
     println!("  data dir: {}", data_dir.display());
 
     // Print a fully usable preferred URL first. LAN TLS requires the complete #pair fragment with

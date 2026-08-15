@@ -81,7 +81,7 @@ fn main() {
         ) {
             Ok(path) => path,
             Err(e) => {
-                eprintln!("vela: {e}");
+                eprintln!("heddle: {e}");
                 std::process::exit(2);
             }
         };
@@ -92,7 +92,7 @@ fn main() {
     #[cfg(not(feature = "gui"))]
     {
         eprintln!(
-            "vela-server: headless build (no GUI). usage: vela-server --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
+            "heddle-server: headless build (no GUI). usage: heddle-server --serve [--port <p>] [--data-dir <dir>]; password via VELA_SERVE_PASSWORD env. also: --version"
         );
         std::process::exit(2);
     }

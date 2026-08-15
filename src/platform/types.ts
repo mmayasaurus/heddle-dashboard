@@ -111,13 +111,13 @@ export interface WindowCapability {
    * event channel rather than transport, because a remote window's transport sends to remote WS, not the local host.
    */
   onNotificationClick(cb: (sessionId: string) => void): Promise<UnlistenFn | null>;
-  /** Take and clear an unconsumed `heddle <path>` launch request; return null outside desktop environments. */
+  /** Take and clear an unconsumed `heddle <path>` (or legacy `vela <path>`) launch request; return null outside desktop environments. */
   takeOpenProjectRequest(): Promise<string | null>;
-  /** Fire when a second `vela` process wakes this window; read the payload through takeOpenProjectRequest. */
+  /** Fire when a second `heddle` (or legacy `vela`) process wakes this window; read the payload through takeOpenProjectRequest. */
   onOpenProjectRequest(cb: () => void): Promise<UnlistenFn>;
 }
 
-/** Resolution status of the `vela` command on PATH. */
+/** Resolution status of the `heddle` command on PATH. */
 export interface VelaCommandStatus {
   installed: boolean;
   path: string | null;
