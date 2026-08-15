@@ -12,6 +12,20 @@ import { invoke, isTauri } from "../../ipc/transport";
 interface LimitWindow {
   usedPercentage: number | null;
   resetsAt: number | null; // epoch SECONDS
+  id?: string;
+  label?: string;
+  usedAmount?: number | null;
+  limitAmount?: number | null;
+  unit?: string | null;
+}
+interface ProviderAccount {
+  label?: string;
+  plan?: string;
+  fiveHour?: LimitWindow;
+  sevenDay?: LimitWindow;
+  windows?: LimitWindow[];
+  limitReached?: boolean;
+  note?: string;
 }
 interface ProviderLimit {
   provider: string;
@@ -19,6 +33,12 @@ interface ProviderLimit {
   capturedAt: number | null;
   fiveHour: LimitWindow;
   sevenDay: LimitWindow;
+  source?: string;
+  stale?: boolean;
+  staleAfterSecs?: number;
+  note?: string;
+  accounts?: ProviderAccount[];
+  windows?: LimitWindow[];
 }
 interface Dispatch {
   id: number;
@@ -69,11 +89,21 @@ function fmtDur(ms: number | null | undefined): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return now;
+}
 /** Countdown to a reset time given as epoch SECONDS: "3h 30m" / "2d 22h" / "5m". */
-function fmtReset(resetsAtSec: number | null | undefined): string {
+function fmtReset(resetsAtSec: number | null | undefined, now: number): string {
   if (!resetsAtSec) return "";
-  let s = resetsAtSec - Math.floor(Date.now() / 1000);
-  if (s <= 0) return "now";
+  let s = resetsAtSec - Math.floor(now / 1000);
+  if (s <= 0) return "resetting…";
   const d = Math.floor(s / 86400);
   s -= d * 86400;
   const h = Math.floor(s / 3600);
@@ -85,6 +115,7 @@ function fmtReset(resetsAtSec: number | null | undefined): string {
 }
 
 export function FleetDrawer() {
+  const now = useNow();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
   const [limits, setLimits] = useState<ProviderLimit[]>([]);
   const [inFlight, setInFlight] = useState<Dispatch[]>([]);
@@ -149,7 +180,7 @@ export function FleetDrawer() {
             </span>
             <b style={{ color: providerColor("claude") }}>{Math.round(c5)}%</b>
             {claude.fiveHour.resetsAt ? (
-              <span className="fleet-dim">&nbsp;· {fmtReset(claude.fiveHour.resetsAt)}</span>
+              <span className="fleet-dim">&nbsp;· {fmtReset(claude.fiveHour.resetsAt, now)}</span>
             ) : null}
           </span>
         ) : (
@@ -181,7 +212,7 @@ export function FleetDrawer() {
           ) : (
             <div className="fleet-provcaps">
               {limits.map((p) => (
-                <ProviderCapBlock key={p.provider} p={p} />
+                <ProviderCapBlock key={p.provider} p={p} now={now} onRefresh={refresh} />
               ))}
             </div>
           )}
@@ -246,37 +277,120 @@ function SegBar({
   );
 }
 
-function CapLine({ label, win, color }: { label: string; win: LimitWindow; color: string }) {
+function CapLine({
+  label,
+  win,
+  color,
+  now,
+  note,
+}: {
+  label: string;
+  win: LimitWindow;
+  color: string;
+  now: number;
+  note?: string;
+}) {
   const pct = win?.usedPercentage;
   return (
     <div className="fleet-capline">
       <span className="fleet-capline-lbl">{label}</span>
       <SegBar pct={pct} color={color} />
-      <span className="fleet-capline-pct">{pct == null ? "—" : `${Math.round(pct)}%`}</span>
-      <span className="fleet-dim fleet-capline-reset">
-        {win?.resetsAt ? `↻ ${fmtReset(win.resetsAt)}` : ""}
+      <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
+      <span className="fleet-dim fleet-capline-reset" title={pct == null ? note : undefined}>
+        {pct == null ? "no active window" : win?.resetsAt ? `↻ ${fmtReset(win.resetsAt, now)}` : ""}
       </span>
     </div>
   );
 }
 
-function ProviderCapBlock({ p }: { p: ProviderLimit }) {
+function ProviderCapBlock({
+  p,
+  now,
+  onRefresh,
+}: {
+  p: ProviderLimit;
+  now: number;
+  onRefresh: () => Promise<void>;
+}) {
   const color = providerColor(p.provider);
-  const has = p.fiveHour?.usedPercentage != null || p.sevenDay?.usedPercentage != null;
+  const [refreshing, setRefreshing] = useState(false);
+  const [accountsExpanded, setAccountsExpanded] = useState(false);
+  const capturedMinutes = p.capturedAt == null ? null : Math.max(0, Math.floor((now - p.capturedAt * 1_000) / 60_000));
+  const isStale = p.stale ?? (capturedMinutes != null && capturedMinutes > 30);
+  const accounts = p.accounts ?? [];
+  const extraWindows = (p.windows ?? []).filter(
+    (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
+  );
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
-    <div className="fleet-provcap">
-      <div className="fleet-provcap-name" style={{ color }}>
-        {p.provider}
-        {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+    <div className={"fleet-provcap" + (isStale ? " stale" : "")}>
+      <div className="fleet-provcap-header">
+        <div className="fleet-provcap-name" style={{ color }}>
+          {p.provider}
+          {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
+          {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+          <button
+            className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
+            disabled={refreshing}
+            onClick={() => void handleRefresh()}
+            title={`Refresh ${p.provider} caps`}
+            type="button"
+          >
+            ⟳
+          </button>
+        </div>
+        {capturedMinutes != null && (
+          <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
+            captured {capturedMinutes}m ago{isStale ? " · stale" : ""}
+          </span>
+        )}
       </div>
-      {has ? (
-        <>
-          <CapLine label="5h" win={p.fiveHour} color={color} />
-          <CapLine label="7d" win={p.sevenDay} color={color} />
-        </>
-      ) : (
-        <div className="fleet-dim fleet-empty">no rate-limit data in payload</div>
+      <CapLine label="5h" win={p.fiveHour} color={color} now={now} note={p.note} />
+      <CapLine label="7d" win={p.sevenDay} color={color} now={now} />
+      {accounts.length > 1 && (
+        <div className="fleet-provcap-accounts">
+          <button
+            className="fleet-provcap-account-toggle"
+            onClick={() => setAccountsExpanded((expanded) => !expanded)}
+            type="button"
+          >
+            {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
+          </button>
+          {accountsExpanded && accounts.map((account, index) => (
+            <div className="fleet-provcap-account" key={`${account.label ?? "account"}-${index}`}>
+              <span className="fleet-provcap-account-label">{account.label ?? "account"}</span>
+              {account.plan && <span className="fleet-provcap-account-plan">· {account.plan}</span>}
+              <span className="fleet-provcap-account-caps">
+                <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
+                {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
+                {account.fiveHour?.usedPercentage != null && (
+                  <>
+                    <span className="fleet-provcap-account-separator">·</span>
+                    <SegBar pct={account.fiveHour.usedPercentage} color={color} segments={6} /> {Math.round(account.fiveHour.usedPercentage)}%
+                  </>
+                )}
+              </span>
+              {account.limitReached && <span className="fleet-provcap-limit-reached">limit reached</span>}
+            </div>
+          ))}
+        </div>
       )}
+      {extraWindows.map((win, index) => (
+        <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
+          <span>{win.label ?? win.id ?? "window"}</span>
+          <span>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
+          {win.resetsAt && <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now)}</span>}
+        </div>
+      ))}
     </div>
   );
 }
