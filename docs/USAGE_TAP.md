@@ -127,6 +127,27 @@ removing it changes nothing about how the statusline renders.
   PII) + `cargo test --lib heddle_stats::gemini`; live: `cargo test --lib heddle_stats::gemini --
   --ignored --nocapture` (runs the real agy; the refresh test writes the real snapshot).
 
+## Multi-account (added 2026-08-15)
+
+Maya has 4 Claude Max20 accounts, registered in `~/.heddle/accounts.json` (`claude[]`: id, configDir
+— `null` = the default `~/.claude`, email, loggedIn). Each was logged in once via
+`CLAUDE_CONFIG_DIR=<dir> claude /login` (macOS keeps each credential in the Keychain; official
+multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never set
+`CLAUDE_CONFIG_DIR=~/.claude` explicitly for the default — leave it unset.
+
+- The tap keys captures **per account**: it maps the session's `CLAUDE_CONFIG_DIR` to an account id and
+  writes `claude-<acctId>.json` alongside the legacy `claude.json` (drawer compat).
+- **Window-keeper** (`scripts/heddle-window-keeper.py`, installed at `~/.heddle/window-keeper.py`,
+  launchd `io.heddle.window-keeper`, every 5 min): the 5h window is a rolling window anchored to the
+  first request (empirical: `resets_at` on odd minutes), so one ~10-token haiku ping starts an
+  account's clock. The keeper pings any account whose window is EXPIRED/UNKNOWN, **staggered 75 min
+  apart** so a fresh window opens roughly every 75 min around the clock — always an account about to
+  reset for the fleet to rotate onto. **Verified:** pinging a LIVE window does not move `resets_at`
+  (`--verify acct2`, 2026-08-15) — the keeper only starts windows, never shifts them. `--dry-run`
+  prints decisions. Never uses Fable/Opus.
+- Router (HED-68) picks the account with the most 5h headroom; the drawer shows all accounts under
+  `claude` with the active one in the summary bar (W, `activeAccount`).
+
 ## Working on this repo from an agent worktree (fleet note)
 
 `heddle-dashboard` is a fork: `origin` = `mmayasaurus/heddle-dashboard`, `upstream` = `vlinx-io/VelaTerm`.
