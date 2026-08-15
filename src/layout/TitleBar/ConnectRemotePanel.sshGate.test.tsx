@@ -3,6 +3,7 @@
 //! must still expose URL (pairing-link) mode, which does not depend on the disabled provisioning path.
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invoke, listen } = vi.hoisted(() => ({
@@ -15,7 +16,7 @@ vi.mock("../../i18n", () => ({
   useT: () => (key: string) => key,
 }));
 vi.mock("../../components/Backdrop", () => ({
-  Backdrop: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Backdrop: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
 import { ConnectRemotePanel } from "./ConnectRemotePanel";

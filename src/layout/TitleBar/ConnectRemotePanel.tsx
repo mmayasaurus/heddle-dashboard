@@ -70,7 +70,7 @@ export function ConnectRemotePanel({
     let alive = true;
     void invoke<boolean>("ssh_remote_available")
       .then((ok) => {
-        if (alive) setSshAvailable(ok === true);
+        if (alive) setSshAvailable(ok);
       })
       .catch(() => {
         if (alive) setSshAvailable(false);
