@@ -188,10 +188,12 @@ pub(super) fn build(
         .model
         .map(|m| format!("{m} · {} acct", rows.len()))
         .or_else(|| Some(format!("{} acct", rows.len())));
+    // On legacy fallback, only name an account that actually has a row — a stale/unknown id in
+    // the legacy capture must not produce an `activeAccount` no consumer can resolve.
     top.active_account = if top_from_active {
         active.map(|a| a.id.clone())
     } else {
-        legacy_account
+        legacy_account.filter(|id| rows.iter().any(|r| &r.id == id))
     };
     top.note_codes = Some(Vec::new());
     top.accounts = Some(rows);

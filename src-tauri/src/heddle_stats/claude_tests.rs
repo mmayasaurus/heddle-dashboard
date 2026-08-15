@@ -184,6 +184,27 @@ fn active_account_switches_the_top_level_and_falls_back_to_the_legacy_file() {
 }
 
 #[test]
+fn legacy_fallback_active_account_must_have_a_matching_row() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("fallback-id");
+    // Legacy capture names an account that is neither registered nor has a per-account file →
+    // the numbers still show, but activeAccount stays null rather than dangling.
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct-old-gone"),
+    );
+    let l = build(
+        &s.0,
+        &registry(),
+        Some(Path::new("/tmp/heddle-claude-tests/.claude-acct3")),
+        now,
+    )
+    .unwrap();
+    assert_eq!(l.five_hour.used_percentage, Some(32.0));
+    assert_eq!(l.active_account, None);
+}
+
+#[test]
 fn unregistered_per_account_files_are_appended_as_extra_rows() {
     let now = 1_786_830_900;
     let s = Scratch::new("extra");

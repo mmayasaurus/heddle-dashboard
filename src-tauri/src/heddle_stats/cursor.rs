@@ -442,8 +442,10 @@ fn fetch_and_write() -> bool {
     if let Some(e) = error {
         snap["lastError"] = Value::String(e);
     }
-    let _ = write_json_atomic(&path, &snap);
-    any_ok
+    // A failed snapshot write means the fresh numbers never became visible: report the refresh as
+    // failed so `RefreshGate` backs off and retries, instead of leaving a stale snapshot behind a
+    // "success".
+    write_json_atomic(&path, &snap).is_ok() && any_ok
 }
 
 // ───────────────────────────── snapshot → ProviderLimit ─────────────────────────────
