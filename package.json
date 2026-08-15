@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.100",
   "description": "heddle — a terminal multiplexer GUI that manages terminals and AI agent sessions in one project/group/session tree",
-  "author": "VLINX Software",
+  "author": "Very Good Fiber Goods (VGFG)",
   "type": "module",
   "packageManager": "pnpm@11.5.2",
   "main": "electron/main.cjs",

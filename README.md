@@ -145,7 +145,10 @@ run on the main thread and freeze the UI.
 
 ## License
 
-Copyright (c) 2026 VLINX Software. Released under the [MIT License](LICENSE).
+Copyright (c) 2026 Very Good Fiber Goods (VGFG) — the heddle fork.
+Copyright (c) 2026 VLINX Software — the upstream [VelaTerm](https://github.com/vlinx-io/VelaTerm) code
+this fork builds on. Both notices are retained in [LICENSE](LICENSE); everything is released under the
+[MIT License](LICENSE).
 
 You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of heddle, for
-any purpose, as long as the copyright notice and the licence text travel with it.
+any purpose, as long as both copyright notices and the licence text travel with it.
