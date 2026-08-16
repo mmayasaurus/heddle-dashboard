@@ -78,19 +78,9 @@ fn aligned_cutoff_iso(now_secs: i64, hours: i64) -> String {
     epoch_to_iso(hour_start - (hours - 1) * 3600)
 }
 
-/// ISO-UTC cutoff `hours` ago, comparable to the ledger's `toISOString` values by plain string
-/// ordering (both are zero-padded UTC ISO-8601).
-fn cutoff_iso(hours: i64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    epoch_to_iso(now - hours * 3600)
-}
-
 /// Minimal epoch→ISO (UTC, second precision) without a chrono dependency: civil-from-days per
 /// Howard Hinnant's algorithm.
-fn epoch_to_iso(secs: i64) -> String {
+pub(crate) fn epoch_to_iso(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
