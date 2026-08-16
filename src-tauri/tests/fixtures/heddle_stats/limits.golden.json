@@ -7,8 +7,21 @@
           "detail": {
             "account": "acct1",
             "configDir": null,
+            "fableWeekly": {
+              "exact": false,
+              "fablePct": 0.0,
+              "lastCapturedAt": 1786831140,
+              "minSamples": 3,
+              "otherPct": 0.0,
+              "samples": 0,
+              "unknownPct": 24.0,
+              "updatedAt": 1786831200,
+              "windowResetsAt": 1786892400
+            },
             "model": "claude-fable-5"
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": 0,
           "fiveHour": {
             "resetsAt": 1786846200,
             "usedPercentage": 32.0
@@ -32,8 +45,11 @@
           "detail": {
             "account": "acct2",
             "configDir": "/tmp/acct2",
+            "fableWeekly": null,
             "model": null
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -59,8 +75,11 @@
           "detail": {
             "account": "acct3",
             "configDir": "/tmp/acct3",
+            "fableWeekly": null,
             "model": null
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": 1786849200,
             "usedPercentage": null
@@ -84,8 +103,11 @@
           "detail": {
             "account": "acct4",
             "configDir": "/tmp/acct4",
+            "fableWeekly": null,
             "model": null
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": 1786849200,
             "usedPercentage": null
@@ -107,6 +129,8 @@
       ],
       "activeAccount": "acct1",
       "capturedAt": 1786831140,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": 0,
       "fiveHour": {
         "resetsAt": 1786846200,
         "usedPercentage": 32.0
@@ -129,6 +153,8 @@
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -160,6 +186,8 @@
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -191,6 +219,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831170,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -256,6 +286,8 @@
             "source": "cursor-ide",
             "tokenExpiresAt": 1789423200
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -307,6 +339,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831155,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -356,6 +390,8 @@
       "accounts": null,
       "activeAccount": null,
       "capturedAt": 1786831110,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": 1786840240,
         "usedPercentage": 3.931260108947765

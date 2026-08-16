@@ -357,6 +357,8 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             cycle_end,
             on_demand,
         )),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
 }
 

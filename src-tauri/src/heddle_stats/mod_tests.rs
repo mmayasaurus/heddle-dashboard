@@ -63,6 +63,8 @@ fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     };
     let j = serde_json::to_value(&l).unwrap();
     for k in ["provider", "model", "capturedAt", "fiveHour", "sevenDay"] {
@@ -81,6 +83,8 @@ fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
         "accounts",
         "activeAccount",
         "windows",
+        "fableWeeklyEstimatePct",
+        "fableWeeklySamples",
     ] {
         assert!(j[k].is_null(), "additive key {k} must be null when absent");
     }
@@ -201,6 +205,8 @@ fn drawer_order_is_claude_codex_then_alphabetical() {
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     };
     let mut v = vec![mk("gemini"), mk("codex"), mk("cursor"), mk("claude")];
     sort_limits(&mut v);

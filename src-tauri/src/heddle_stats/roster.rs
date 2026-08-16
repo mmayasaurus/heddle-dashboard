@@ -84,6 +84,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_ps_output_means_all_dead_not_ps_failure() {
+        // macOS `ps -p` exits non-zero with EMPTY stdout when none of the pids exist — that is a
+        // legitimate all-dead verdict, not a ps failure, and must map every pid to dead rather
+        // than falling back to the pid-reuse-prone kill(2) probe (gitar, PR #23 round 3).
+        let live = parse_ps_liveness("", "claude");
+        assert!(live.is_empty());
+        assert!(!live.get(&101).copied().unwrap_or(false));
+    }
+
+    #[test]
     fn ps_liveness_requires_a_claude_executable_for_each_candidate_pid() {
         let live = parse_ps_liveness(
             "  101 Google Chrome H\n  102 claude\n  103 /Users/x/.local/bin/claude\n  104 claude-helper\n  105 not-claude\n  106 CLAUDE.EXE\n",
@@ -196,7 +206,11 @@ fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
         .output()
         .ok()
         .and_then(|output| {
-            (output.status.success() && !output.stdout.is_empty())
+            // ps -p exit status is USELESS here: it is non-zero whenever ANY listed pid is missing,
+            // including the legitimate all-dead case (empty stdout, empty stderr). Trust the parsed
+            // output whenever ps ran without complaining; fall back to kill(2) only on a spawn
+            // error or a diagnostic — non-empty stderr with nothing parsed (gitar, #23 round 3).
+            (!output.stdout.is_empty() || output.stderr.is_empty())
                 .then(|| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"))
         });
     const SESSION_STALE_AFTER_MS: i64 = 48 * 60 * 60 * 1000;
