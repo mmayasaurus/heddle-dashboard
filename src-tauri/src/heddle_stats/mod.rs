@@ -8,7 +8,10 @@
 //!   - **provider rate-limit caps** (`heddle_provider_limits`) → the TRUE per-provider cap numbers,
 //!     one source per provider (see `docs/USAGE_TAP.md`): Claude from the statusline tap
 //!     (`~/.heddle/usage/claude.json`), Codex from the claudex-usage cache (`codex.rs`), Gemini
-//!     from `agy -p /quota` cached to `~/.heddle/usage/gemini.json` (`gemini.rs`).
+//!     from `agy -p /quota` cached to `~/.heddle/usage/gemini.json` (`gemini.rs`), Cursor from
+//!     cursor.com's usage-summary API cached to `~/.heddle/usage/cursor.json` (`cursor.rs`).
+//!     The assembled `Vec<ProviderLimit>` is also mirrored to `~/.heddle/usage/limits.json` on
+//!     every poll so heddle-core's router reads the SAME contract as the drawer.
 //!
 //! Everything here is read-only and best-effort: a missing ccusage or ledger yields an empty/typed
 //! result rather than an error, so the drawer degrades gracefully instead of failing the whole app.
@@ -23,7 +26,10 @@ use std::process::Command;
 use rusqlite::Connection;
 use serde::Serialize;
 
+mod claude;
 mod codex;
+mod cursor;
+mod cursor_fetch;
 mod gemini;
 pub mod roster;
 mod util;
@@ -254,8 +260,15 @@ pub struct NamedWindow {
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountLimit {
+    /// Stable key for this row within its provider (claude: registry id `acct1`; codex: the wham
+    /// `account_id`; cursor: the session source `cursor-ide` / `cursor-agent-keychain`).
+    pub id: String,
     pub label: String,
     pub plan: Option<String>,
+    /// When THIS account's numbers were captured, and whether that is older than the source's
+    /// freshness threshold (`None` when unknown / not applicable).
+    pub captured_at: Option<i64>,
+    pub stale: Option<bool>,
     pub five_hour: LimitWindow,
     pub seven_day: LimitWindow,
     pub windows: Vec<NamedWindow>,
@@ -265,6 +278,10 @@ pub struct AccountLimit {
     /// Stable, dot-namespaced codes for every condition in `note` (e.g. `codex.rateLimitReached`)
     /// so the frontend can localize instead of showing the English `note`.
     pub note_codes: Vec<String>,
+    /// Provider-specific raw facts that don't fit the common fields (documented per source in
+    /// `docs/USAGE_TAP.md`; e.g. Cursor's plan/onDemand objects in cents, billing cycle, token
+    /// expiry). `None` when the source has nothing extra.
+    pub detail: Option<serde_json::Value>,
 }
 
 /// A provider's live rate-limit state. These are the TRUE cap numbers — the exact values the
@@ -297,6 +314,10 @@ pub struct ProviderLimit {
     pub note_codes: Option<Vec<String>>,
     /// Per-account rows for multi-account providers. `None` when the provider has no such notion.
     pub accounts: Option<Vec<AccountLimit>>,
+    /// The `accounts[].id` whose numbers the top-level `fiveHour`/`sevenDay` show — the account
+    /// this process is on (claude: `CLAUDE_CONFIG_DIR` → registry, else the default). `None` when
+    /// the top level is a binding view rather than one account (codex, cursor) or N/A.
+    pub active_account: Option<String>,
     /// Extra named windows beyond 5h/7d, binding (max) across accounts. `None` when the provider
     /// has no such notion; `[]` when it does but none are present right now.
     pub windows: Option<Vec<NamedWindow>>,
@@ -329,14 +350,16 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
         note: None,
         note_codes: None,
         accounts: None,
+        active_account: None,
         windows: None,
     })
 }
 
 /// Providers whose snapshot in `~/.heddle/usage/` is owned by a dedicated source module rather than
-/// the tap: `codex.json` (never written; Codex reads the claudex-usage cache directly) and
-/// `gemini.json` (written by `gemini.rs`, which also reads it back with its extras).
-const DEDICATED_SOURCES: [&str; 2] = ["codex", "gemini"];
+/// the tap: `codex.json` (never written; Codex reads the claudex-usage cache directly),
+/// `gemini.json` (`gemini.rs`) and `cursor.json` (`cursor.rs`), which write their snapshots and
+/// read them back with their extras. `limits.json` is the assembled mirror, not a provider.
+const DEDICATED_SOURCES: [&str; 4] = ["codex", "gemini", "cursor", "limits"];
 
 /// Read every tap snapshot in `dir`. Best-effort: unreadable/non-tap files are skipped; providers
 /// with a dedicated source module are skipped here and appended by that module.
@@ -355,7 +378,9 @@ fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if DEDICATED_SOURCES.contains(&provider.as_str()) {
+        // Dedicated-source snapshots and per-account tap files (`claude-acct2.json`, read by
+        // `claude.rs`) are not generic tap entries.
+        if DEDICATED_SOURCES.contains(&provider.as_str()) || provider.contains('-') {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -366,6 +391,35 @@ fn tap_limits(dir: &Path, now: i64) -> Vec<ProviderLimit> {
         };
         if let Some(l) = tap_limit(&provider, &v, now) {
             out.push(l);
+        }
+    }
+    out
+}
+
+/// The binding view of one window across accounts: the highest used % wins (with that account's
+/// reset time). Accounts without the window don't participate.
+pub(crate) fn binding<'a>(windows: impl Iterator<Item = &'a LimitWindow>) -> LimitWindow {
+    let mut best = LimitWindow::default();
+    for w in windows {
+        if w.used_percentage.unwrap_or(-1.0) > best.used_percentage.unwrap_or(-1.0) {
+            best = w.clone();
+        }
+    }
+    best
+}
+
+/// Binding view of named windows across accounts: per `id`, the account with the highest used %.
+/// Order follows first appearance so the drawer is stable between polls.
+pub(crate) fn binding_named(accounts: &[AccountLimit]) -> Vec<NamedWindow> {
+    let mut out: Vec<NamedWindow> = Vec::new();
+    for w in accounts.iter().flat_map(|a| a.windows.iter()) {
+        match out.iter_mut().find(|o| o.id == w.id) {
+            Some(existing) => {
+                if w.used_percentage.unwrap_or(-1.0) > existing.used_percentage.unwrap_or(-1.0) {
+                    *existing = w.clone();
+                }
+            }
+            None => out.push(w.clone()),
         }
     }
     out
@@ -407,13 +461,29 @@ fn agy_bin(ctx: &crate::host::AppCtx) -> String {
 fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
     let mut out = tap_limits(&usage_dir(), now);
+    // Claude: the per-account view (registry + claude-<id>.json) replaces the plain tap entry.
+    if let Some(c) = claude::limit(now) {
+        out.retain(|l| l.provider != "claude");
+        out.push(c);
+    }
     if let Some(c) = codex::limit(now) {
         out.push(c);
     }
     if let Some(g) = gemini::limit(now, &agy_bin(ctx)) {
         out.push(g);
     }
+    if let Some(c) = cursor::limit(now) {
+        out.push(c);
+    }
     sort_limits(&mut out);
+    // Mirror the exact contract for out-of-process consumers (heddle-core's cap-aware router):
+    // `{writtenAt, limits: Vec<ProviderLimit>}`. Best-effort; a failed write never fails the poll.
+    if let Ok(v) = serde_json::to_value(&out) {
+        let _ = write_json_atomic(
+            &usage_dir().join("limits.json"),
+            &serde_json::json!({ "writtenAt": now, "limits": v }),
+        );
+    }
     Ok(out)
 }
 
@@ -441,6 +511,9 @@ fn refresh_provider_limits_sync(
     }
     if want("gemini") && gemini::force_refresh(now, &agy_bin(ctx)) {
         kicked.push("gemini".to_string());
+    }
+    if want("cursor") && cursor::force_refresh(now) {
+        kicked.push("cursor".to_string());
     }
     Ok(kicked)
 }

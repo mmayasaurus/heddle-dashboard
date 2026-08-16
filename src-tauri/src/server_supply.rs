@@ -101,6 +101,10 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Fetch server-manifest.json for a version.
 pub fn fetch_manifest(version: &str) -> Result<ServerManifest, String> {
+    // HED-42: heddle never contacts the upstream distribution host while SSH remote is disabled.
+    if !crate::ssh_remote::SSH_REMOTE_ENABLED {
+        return Err(crate::ssh_remote::SSH_REMOTE_DISABLED_MSG.to_string());
+    }
     let url = format!("{DL_BASE}/server/{version}/server-manifest.json");
     let body = ureq::get(&url)
         .timeout(Duration::from_secs(30))
@@ -158,6 +162,10 @@ pub fn ensure_supplied(
     platkey: &str,
     on_pct: &dyn Fn(u8),
 ) -> Result<PathBuf, String> {
+    // HED-42: refuse before touching the cache or the network while SSH remote is disabled.
+    if !crate::ssh_remote::SSH_REMOTE_ENABLED {
+        return Err(crate::ssh_remote::SSH_REMOTE_DISABLED_MSG.to_string());
+    }
     let bin = cache_path(app_data_dir, version, platkey);
 
     // Fast path: verify the cached binary with its adjacent signature, avoiding a manifest request.
@@ -229,6 +237,25 @@ pub fn cached_sha256(bin: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HED-42: while SSH remote is disabled, neither entry point may reach the network or the cache —
+    /// they must refuse immediately with the user-facing message (no `dl.velaterm.com` contact).
+    #[test]
+    fn disabled_ssh_remote_refuses_before_any_io() {
+        if crate::ssh_remote::SSH_REMOTE_ENABLED {
+            return; // Re-enabled build: the guard is intentionally inert.
+        }
+        let msg = crate::ssh_remote::SSH_REMOTE_DISABLED_MSG;
+        assert_eq!(fetch_manifest("0.0.0-test").unwrap_err(), msg);
+        // A non-existent app data dir proves nothing was touched: an I/O attempt would fail differently.
+        let bogus = std::path::Path::new("/nonexistent/heddle-hed42-test");
+        let pct_calls = std::cell::Cell::new(0u32);
+        let r = ensure_supplied(bogus, "0.0.0-test", "darwin-aarch64", &|_| {
+            pct_calls.set(pct_calls.get() + 1)
+        });
+        assert_eq!(r.unwrap_err(), msg);
+        assert_eq!(pct_calls.get(), 0, "no download progress may be reported while disabled");
+    }
 
     #[test]
     fn platform_key_maps_os() {

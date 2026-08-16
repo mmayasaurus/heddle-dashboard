@@ -21,7 +21,14 @@ back to stdout unchanged** (claude-hud renders byte-identically), and on the sid
 - **Gemini** → NOT from the tap. Sourced from the Antigravity CLI: `agy -p "/quota" --output-format json`
   (read-only print mode, agy ≥ 1.1.11), cached to `~/.heddle/usage/gemini.json` in the tap format
   and refreshed out-of-band when stale. Details in "Gemini source" below.
-- **Cursor** → TODO (Cursor's usage-summary API — HED-9).
+- **Cursor** → NOT from the tap. Sourced from cursor.com's own `usage-summary` JSON API with the local
+  Cursor logins (IDE `state.vscdb`; cursor-agent macOS Keychain, opt-in), cached to
+  `~/.heddle/usage/cursor.json`. Details in "Cursor source" below.
+- **Claude, per account** → the tap's `claude-<acctId>.json` files + `~/.heddle/accounts.json`
+  (see "Multi-account" and "Claude source" below).
+- **Every poll** also mirrors the assembled `Vec<ProviderLimit>` to `~/.heddle/usage/limits.json`
+  (`{writtenAt, limits}`) so out-of-process consumers (heddle-core's cap-aware router) read the SAME
+  contract as the drawer; `src-tauri/tests/fixtures/heddle_stats/limits.golden.json` pins that JSON.
 
 The dashboard's `heddle_provider_limits` Tauri command (`src-tauri/src/heddle_stats/`) reads all of
 the above and returns them to the `FleetDrawer`, which renders one column per provider (5h over 7d,
@@ -42,10 +49,11 @@ keys they don't know.
 | `fiveHour`, `sevenDay` | `{usedPercentage?, resetsAt?}` | the rolling windows (`resetsAt` epoch **seconds**) — the binding (max) view across accounts for multi-account providers |
 | `source` | string? | `statusline-tap` · `claudex-usage-cache` · … |
 | `stale` | bool? | `capturedAt` is older than `staleAfterSecs` (judged at read time; `null` when there is no capture time) — render dimmed/flagged, don't present as live |
-| `staleAfterSecs` | int? | the freshness expectation used (tap 600s, Codex 300s) so the UI can tick it live |
+| `staleAfterSecs` | int? | the freshness expectation used (claude/tap 600s, codex 300s, gemini 600s, cursor 900s) so the UI can tick it live |
 | `note` | string? | English diagnostic caveat about the payload (e.g. a window the provider stopped exposing) — same category as backend error strings; for UI copy localize via `noteCodes` |
 | `noteCodes` | string[]? | stable dot-namespaced codes for every condition in `note` (`codex.no5hWindow`, `codex.noData`, `codex.legacyMode`) — the translation-key layer; `null` when the source has no notes concept |
-| `accounts` | `AccountLimit[]?` | per-account rows for multi-account providers: `{label, plan?, fiveHour, sevenDay, windows[], limitReached?, note?, noteCodes[]}` — `label` is a **masked** email (`m…@example.com`) or `acct N`; account codes: `codex.accountFetchFailed`, `codex.rateLimitReached`, `codex.spendControlReached`, `codex.overageLimitReached` |
+| `accounts` | `AccountLimit[]?` | per-account rows for multi-account providers (claude 4 · codex 2 · cursor 2 today), ONE shape for all: `{id, label, plan?, capturedAt?, stale?, fiveHour, sevenDay, windows[], limitReached?, note?, noteCodes[], detail?}` — `id` is a stable key (claude: registry id `acct1`; codex: wham `account_id`; cursor: `cursor-ide` / `cursor-agent-keychain`), `label` a **masked** email (`m…@example.com`) or the id, `capturedAt`/`stale` judged per account, `detail` provider-specific raw facts (documented per source below). Account codes: `claude.noCapture`, `claude.limitReached`, `codex.accountFetchFailed`, `codex.rateLimitReached`, `codex.spendControlReached`, `codex.overageLimitReached`, `cursor.includedApiExhausted`, `cursor.includedTotalExhausted`, `cursor.onDemandLimitReached`, `cursor.tokenExpired`, `cursor.tokenExpiringSoon`, `cursor.fetchFailed` |
+| `activeAccount` | string? | the `accounts[].id` whose numbers the top-level `fiveHour`/`sevenDay`/`windows` show — the account this process/dispatch is on (claude: `CLAUDE_CONFIG_DIR` → registry, else the default; cursor: the cursor-agent login, which is what heddle's dispatches bill); `null` when the top level is a binding (max) view (codex) or unknown |
 | `windows` | `NamedWindow[]?` | extra named windows beyond 5h/7d, binding across accounts: `{id, label, usedPercentage?, resetsAt?, usedAmount?, limitAmount?, unit?}` — `null` when the provider has no such notion, `[]` when it does but none are present |
 
 All of these commands touch the filesystem (and the ledger's SQLite), so they are `async` and run on
@@ -55,7 +63,7 @@ the blocking pool — never on the main thread (README "Contributing").
 
 Forces an out-of-band refresh of a provider's source (or all refreshable ones when `provider` is
 omitted), ignoring the staleness thresholds; returns the providers a refresh was kicked for
-(`codex`, `gemini`). It is non-blocking — re-poll `heddle_provider_limits` a few seconds later.
+(`codex`, `gemini`, `cursor`). It is non-blocking — re-poll `heddle_provider_limits` a few seconds later.
 Claude is tap-driven (a session must render its statusline) so it is never in the list. This is the
 backend for per-provider refresh buttons.
 
@@ -83,21 +91,6 @@ backend for per-provider refresh buttons.
 - **Fixtures/tests**: `src-tauri/tests/fixtures/heddle_stats/claudex-usage-cache.*.json` (fake
   identities) + `cargo test --lib heddle_stats`. A machine-dependent live smoke test prints the real
   JSON: `cargo test --lib heddle_stats::codex -- --ignored --nocapture`.
-
-## Install (already wired on this machine)
-
-The tap is inserted into `~/.claude/settings.json` → `statusLine.command`, as
-`"$BUN" ~/.heddle/usage-tap.mjs | <original claude-hud command>`. The original settings are backed up
-at `~/.claude/settings.json.bak-heddle-<timestamp>`.
-
-⚠️ **A session only captures once it started AFTER the tap was installed** — running sessions cache
-the statusline command at startup. New/cycled agents populate `claude.json` automatically.
-
-## Revert
-
-`cp ~/.claude/settings.json.bak-heddle-<timestamp> ~/.claude/settings.json` — or just delete the
-`"$BUN" .../usage-tap.mjs | ` prefix from the `statusLine.command`. The tap is a pure passthrough, so
-removing it changes nothing about how the statusline renders.
 
 ## Gemini source (`heddle_stats/gemini.rs`)
 
@@ -127,6 +120,55 @@ removing it changes nothing about how the statusline renders.
   PII) + `cargo test --lib heddle_stats::gemini`; live: `cargo test --lib heddle_stats::gemini --
   --ignored --nocapture` (runs the real agy; the refresh test writes the real snapshot).
 
+## Cursor source (`heddle_stats/cursor.rs`)
+
+- **Endpoint**: `GET https://cursor.com/api/usage-summary` — the JSON API cursor.com's own dashboard
+  reads (and the maintained MIT extension `numanaral/cursor-usage-stats`, 2026-07), authenticated with
+  the LOCAL Cursor session: cookie `WorkosCursorSessionToken=<userId>::<jwt>` (`userId` = last `|`
+  segment of the JWT `sub`). Same category as the Codex source (a provider's own JSON API, not HTML
+  scraping). Live-verified for both accounts 2026-08-15. Money is in **cents**.
+- **Two included pools + on-demand** (per Cursor's pricing page and this payload): the included
+  allowance has a TOTAL pool that Auto and Cursor models (Grok, Composer — heddle's default Cursor
+  routes) draw from — Cursor states it as `plan.totalPercentUsed` ("You've used 17% of your included
+  total usage") — and an API sub-pool for named third-party models (kimi, …) — `plan.apiPercentUsed`
+  ("You've used 87% of your included API usage"), with `plan.used/limit/remaining` describing that
+  sub-pool in dollars (Ultra: `limit` 40000¢ = the $400 "Other Models" allowance). `onDemand
+  {enabled, used, limit, remaining}` = usage-based spend vs the spend limit (legacy name `overall`).
+  We surface Cursor's own numbers; no arithmetic of our own where the provider states the figure.
+- **Windows per account**: `included-total` (`totalPercentUsed`; Cursor doesn't expose this pool's
+  dollar size → no amounts), `included-api` (`apiPercentUsed`; amounts = `plan.used`/`plan.limit` in
+  USD), `usage-based` (`onDemand.used/limit`% when enabled; amounts in USD); all reset at
+  `billingCycleEnd`. Notes lead with Cursor's two display strings, then `cursor.includedApiExhausted`
+  (`plan.remaining` 0 / `apiPercentUsed` ≥ 100: named third-party models bill on-demand),
+  `cursor.includedTotalExhausted` (`totalPercentUsed` ≥ 100: Auto/Cursor models too),
+  `cursor.onDemandLimitReached`, `cursor.tokenExpired` / `cursor.tokenExpiringSoon` (<7d),
+  `cursor.fetchFailed` (last-known numbers kept). `limitReached` = "heddle's default Cursor routes
+  fail here": on-demand capped out, or on-demand off with the TOTAL pool gone. `detail` = the raw
+  `plan` / `onDemand` objects, `membershipType`, `billingCycleStart/End` (epoch s), the display
+  messages, `tokenExpiresAt`, `fetchedAt`, `source`.
+- **Which window gates what (router, HED-67)**: `included-total` → `cursor-grok-*` / `composer-*` /
+  auto; `included-api` → kimi-class named third-party models (second-opinion-hard); `usage-based`
+  hard stop (`onDemand.enabled && remaining == 0`) → everything that would bill on-demand.
+- **Accounts**: (1) the **Cursor IDE** login — token read (read-only) from the IDE's `state.vscdb`
+  (`cursorAuth/accessToken`, `cachedEmail`, `stripeMembershipType`; macOS/Linux/Windows paths) — always
+  on; (2) the **cursor-agent CLI** login — token only in the macOS Keychain (`cursor-access-token`),
+  read via `/usr/bin/security find-generic-password -w` (the pattern upstream already uses for the
+  Claude Code item), which pops a one-time macOS "allow access" prompt → **opt-in**:
+  `~/.heddle/usage-sources.json` → `{"cursor": {"keychainCli": true}}` (default off; a failed read
+  backs off an hour so a 30s poll never nags). Tokens never leave the module (not logged, not in the
+  snapshot, not in error text) and are never refreshed by us — an expired session becomes a note
+  telling you to sign in to Cursor / run `cursor-agent login`. **Active account** = the cursor-agent
+  login (what heddle's dispatches bill) when its row exists → `activeAccount` + the top-level
+  `windows`; with only the IDE login known the top level is the binding (max) view and
+  `activeAccount` is `null`.
+- **Cadence**: refresh when the snapshot is >180s old (one detached thread, atomic write, 15s HTTP
+  timeout, honest `User-Agent: heddle-dashboard/<ver>`), `stale` after 900s, failure backoff 300s;
+  `heddle_refresh_provider_limits("cursor")` forces one. Provider notes: `cursor.noAccounts`,
+  `cursor.refreshFailed` / `cursor.noDataYet`.
+- **Fixtures/tests**: `src-tauri/tests/fixtures/heddle_stats/cursor-usage-summary.json` (a real Ultra
+  answer, no PII) + `cargo test --lib heddle_stats::cursor`; live: `cargo test --lib
+  heddle_stats::cursor -- --ignored --nocapture` (writes the real snapshot).
+
 ## Multi-account (added 2026-08-15)
 
 Maya has 4 Claude Max20 accounts, registered in `~/.heddle/accounts.json` (`claude[]`: id, configDir
@@ -135,7 +177,7 @@ Maya has 4 Claude Max20 accounts, registered in `~/.heddle/accounts.json` (`clau
 multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never set
 `CLAUDE_CONFIG_DIR=~/.claude` explicitly for the default — leave it unset.
 
-- The tap keys captures **per account**: it maps the session's `CLAUDE_CONFIG_DIR` to an account id and
+- The tap keys its captures **per account**: it maps the session's `CLAUDE_CONFIG_DIR` to an account id and
   writes `claude-<acctId>.json` alongside the legacy `claude.json` (drawer compat).
 - **Window-keeper** (`scripts/heddle-window-keeper.py`, installed at `~/.heddle/window-keeper.py`,
   launchd `io.heddle.window-keeper`, every 5 min): the 5h window is a rolling window anchored to the
@@ -148,6 +190,37 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
 - Router (HED-68) picks the account with the most 5h headroom; the drawer shows all accounts under
   `claude` with the active one in the summary bar (W, `activeAccount`).
 
+## Claude source (`heddle_stats/claude.rs`) — per account
+
+- Reads the registry `~/.heddle/accounts.json` (`claude[]`) and each `~/.heddle/usage/claude-<id>.json`
+  the tap writes; the legacy `claude.json` (last session that rendered, any account) is the fallback.
+- **Top level = the ACTIVE account** — the one whose `configDir` matches this process's
+  `CLAUDE_CONFIG_DIR` (canonicalized), else the default (`configDir: null`), else the first — named in
+  `activeAccount`, so the summary bar stays "the account you're on". If the active account has no
+  capture yet, the legacy file keeps the summary populated.
+- `accounts[]`: one row per registered account in registry order (`id` = registry id, `label` = masked
+  email, own `fiveHour`/`sevenDay`, own `capturedAt`/`stale` (600s), `limitReached` when a window is at
+  ≥100% → `claude.limitReached`, `claude.noCapture` when the account has no file yet,
+  `detail = {account, configDir, model}`), plus rows for any `claude-unknown-<dir>.json` the tap wrote for
+  an unregistered config dir. Without a registry the entry is the plain single-file tap entry
+  (`accounts: null`).
+- Tests: `cargo test --lib heddle_stats::claude` (registry + tap files in a scratch dir).
+
+## Install (already wired on this machine)
+
+The tap is inserted into `~/.claude/settings.json` → `statusLine.command`, as
+`"$BUN" ~/.heddle/usage-tap.mjs | <original claude-hud command>`. The original settings are backed up
+at `~/.claude/settings.json.bak-heddle-<timestamp>`.
+
+⚠️ **A session only captures once it started AFTER the tap was installed** — running sessions cache
+the statusline command at startup. New/cycled agents populate `claude.json` automatically.
+
+## Revert
+
+`cp ~/.claude/settings.json.bak-heddle-<timestamp> ~/.claude/settings.json` — or just delete the
+`"$BUN" .../usage-tap.mjs | ` prefix from the `statusLine.command`. The tap is a pure passthrough, so
+removing it changes nothing about how the statusline renders.
+
 ## Working on this repo from an agent worktree (fleet note)
 
 `heddle-dashboard` is a fork: `origin` = `mmayasaurus/heddle-dashboard`, `upstream` = `vlinx-io/VelaTerm`.
@@ -156,3 +229,6 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
 it): `gh repo set-default mmayasaurus/heddle-dashboard`. A fresh worktree also needs an empty `dist/`
 before `cargo check` (rust-embed requires the folder), and can share the main checkout's compiled
 deps with `CARGO_TARGET_DIR=<main checkout>/src-tauri/target`.
+Contract changes: keep them additive, then regenerate the golden with
+`cargo test --lib heddle_stats::tests::write_golden -- --ignored` and tell the consumers (Agent R's
+drawer, heddle-core's router) — `contract_json_matches_the_golden_file` fails otherwise.

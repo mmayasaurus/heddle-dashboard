@@ -28,8 +28,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use serde_json::Value;
 
 use super::{
-    augmented_path, home, is_stale, mask_email, AccountLimit, LimitWindow, NamedWindow,
-    ProviderLimit,
+    augmented_path, binding, binding_named, home, is_stale, mask_email, AccountLimit, LimitWindow,
+    NamedWindow, ProviderLimit,
 };
 
 /// claudex-usage's cache file, relative to `$HOME`.
@@ -151,15 +151,27 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
     if raw.is_empty() {
         return None;
     }
+    let captured_at = v["fetched_at"].as_f64().map(|f| f as i64);
+    let stale = is_stale(captured_at, now, STALE_AFTER_SECS);
     let accounts: Vec<AccountLimit> = raw
         .into_iter()
-        .map(|(label, data)| account_from_wham(label, data))
+        .enumerate()
+        .map(|(i, (label, data))| {
+            let mut a = account_from_wham(label, data);
+            a.id = data["account_id"]
+                .as_str()
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("acct{}", i + 1));
+            a.captured_at = captured_at;
+            a.stale = stale;
+            a
+        })
         .collect();
 
     let five_hour = binding(accounts.iter().map(|a| &a.five_hour));
     let seven_day = binding(accounts.iter().map(|a| &a.seven_day));
     let windows = binding_named(&accounts);
-    let captured_at = v["fetched_at"].as_f64().map(|f| f as i64);
     let (note_codes, note) = provider_notes(&accounts, mode);
 
     Some(ProviderLimit {
@@ -169,11 +181,12 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
         five_hour,
         seven_day,
         source: Some(SOURCE.to_string()),
-        stale: is_stale(captured_at, now, STALE_AFTER_SECS),
+        stale,
         stale_after_secs: Some(STALE_AFTER_SECS),
         note,
         note_codes: Some(note_codes),
         accounts: Some(accounts),
+        active_account: None,
         windows: Some(windows),
     })
 }
@@ -226,8 +239,11 @@ fn account_label(email: Option<&str>, index: usize) -> String {
 fn account_from_wham(label: String, data: &Value) -> AccountLimit {
     if !data.is_object() {
         return AccountLimit {
+            id: String::new(),
             label,
             plan: None,
+            captured_at: None,
+            stale: None,
             five_hour: LimitWindow::default(),
             seven_day: LimitWindow::default(),
             windows: Vec::new(),
@@ -237,20 +253,25 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
                     .to_string(),
             ),
             note_codes: vec![CODE_ACCOUNT_FETCH_FAILED.to_string()],
+            detail: None,
         };
     }
     let rl = &data["rate_limit"];
     let (five_hour, seven_day) = windows_from_rate_limit(rl);
     let (note_codes, note) = account_notes(data);
     AccountLimit {
+        id: String::new(),
         label,
         plan: data["plan_type"].as_str().map(str::to_string),
+        captured_at: None,
+        stale: None,
         five_hour,
         seven_day,
         windows: additional_windows(data),
         limit_reached: rl["limit_reached"].as_bool(),
         note,
         note_codes,
+        detail: None,
     }
 }
 
@@ -345,35 +366,6 @@ fn windows_from_rate_limit(rl: &Value) -> (LimitWindow, LimitWindow) {
         }
     }
     (five, seven)
-}
-
-/// The binding view of one window across accounts: the highest used % wins (with that account's
-/// reset time). Accounts without the window don't participate.
-fn binding<'a>(windows: impl Iterator<Item = &'a LimitWindow>) -> LimitWindow {
-    let mut best = LimitWindow::default();
-    for w in windows {
-        if w.used_percentage.unwrap_or(-1.0) > best.used_percentage.unwrap_or(-1.0) {
-            best = w.clone();
-        }
-    }
-    best
-}
-
-/// Binding view of the named (additional) windows: per `id`, the account with the highest used %.
-/// Order follows first appearance so the drawer is stable between polls.
-fn binding_named(accounts: &[AccountLimit]) -> Vec<NamedWindow> {
-    let mut out: Vec<NamedWindow> = Vec::new();
-    for w in accounts.iter().flat_map(|a| a.windows.iter()) {
-        match out.iter_mut().find(|o| o.id == w.id) {
-            Some(existing) => {
-                if w.used_percentage.unwrap_or(-1.0) > existing.used_percentage.unwrap_or(-1.0) {
-                    *existing = w.clone();
-                }
-            }
-            None => out.push(w.clone()),
-        }
-    }
-    out
 }
 
 /// "GPT-5.3-Codex-Spark" → "gpt-5-3-codex-spark": a readable fallback id for a provider bucket
