@@ -107,7 +107,9 @@ function subscribeToSharedNow(onStoreChange: () => void): () => void {
   if (nowSubscribers.size === 1) {
     nowTicker = window.setInterval(() => {
       sharedNow = Math.floor(Date.now() / 1000) * 1000;
-      nowSubscribers.forEach((subscriber) => subscriber());
+      nowSubscribers.forEach((subscriber) => {
+        subscriber();
+      });
     }, 1_000);
   }
   return () => {
@@ -145,7 +147,7 @@ function fmtDur(ms: number | null | undefined): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
-function LiveClock({ render }: { render: (now: number) => ReactNode }) {
+function LiveClock({ render }: { render: (nowMs: number) => ReactNode }) {
   const now = useSharedNow();
   return <>{render(now)}</>;
 }
