@@ -375,7 +375,7 @@ svg { display: block; }
 .fleet-worker.stale { opacity: 0.55; text-decoration: line-through; }
 .fleet-worker-cwd { font-size: 10.5px; }
 /* per-provider rate-limit caps (ccusage-style segmented bars) */
-.fleet-provcaps { /* 24 label + 140 bar + 44 percentage + 72 reset + 3 × 8 gaps */ --fleet-capline-min: 304px; display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--fleet-capline-min), 1fr)); align-items: start; gap: 8px 22px; }
+.fleet-provcaps { /* 40 label + 140 bar + 44 percentage + 72 reset + 3 × 8 gaps */ --fleet-capline-min: 320px; display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--fleet-capline-min), 1fr)); align-items: start; gap: 8px 22px; }
 .fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 0; min-height: 75px; white-space: nowrap; }
 .fleet-provcap :is(span, button) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fleet-provcap.stale { opacity: 0.55; }
@@ -392,7 +392,7 @@ svg { display: block; }
 .fleet-provcap-captured-row { min-height: 14px; color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
-.fleet-capline { --fleet-capline-row-height: 14px; display: grid; grid-template-columns: 24px 140px 44px minmax(72px, 1fr); align-items: center; column-gap: 8px; min-height: var(--fleet-capline-row-height); line-height: var(--fleet-capline-row-height); }
+.fleet-capline { --fleet-capline-row-height: 14px; display: grid; grid-template-columns: 40px 140px 44px minmax(72px, 1fr); align-items: center; column-gap: 8px; min-height: var(--fleet-capline-row-height); line-height: var(--fleet-capline-row-height); }
 .fleet-capline-lbl { min-width: 0; overflow: hidden; color: var(--text-faint); font-size: 10px; text-transform: uppercase; text-overflow: ellipsis; }
 .fleet-seg { position: relative; display: inline-block; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .fleet-capline > .fleet-seg { width: 140px; }
