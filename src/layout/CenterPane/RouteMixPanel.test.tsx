@@ -207,6 +207,32 @@ describe("RouteMixPanel — malformed payloads must not take the drawer down", (
     expect(await screen.findByText("fleet.routeMix.empty")).toBeTruthy();
   });
 
+  it("drops entries with non-numeric counters instead of rendering NaN or undefined", async () => {
+    invoke.mockResolvedValue({
+      windowHours: 6,
+      hours: [
+        {
+          hour: NOW_HOUR,
+          providers: [
+            { provider: "codex" }, // no token fields — would render "codex NaN"
+            { provider: "cursor", dispatches: 1, inputTokens: 700, outputTokens: 300 },
+          ],
+        },
+      ],
+      orchestrators: [
+        { orchestrator: "R" }, // no dispatches — would render "R×undefined"
+        { orchestrator: "T", dispatches: 3, succeeded: 3 },
+      ],
+    });
+    render(<RouteMixPanel claudeFiveHourPct={null} />);
+    expect(await screen.findByText("cursor 1.0k")).toBeTruthy();
+    expect(screen.getByText("T×3")).toBeTruthy();
+    // The malformed entries are gone rather than surfacing invented telemetry.
+    expect(screen.queryByText(/codex/)).toBeNull();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+    expect(screen.queryByText(/undefined/)).toBeNull();
+  });
+
   it("drops malformed buckets and still renders the good ones", async () => {
     invoke.mockResolvedValue({
       windowHours: 6,
