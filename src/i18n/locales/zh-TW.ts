@@ -17,7 +17,7 @@ const zhTW: typeof en = {
   "common.copied": "已複製", // Copied
   "common.retry": "重試", // Retry
   "common.refresh": "重新整理", // Refresh
-  "fleet.title": "叢集", "fleet.refresh": "重新整理", "fleet.capsWaiting": "限額：等待狀態列轉譯…", "fleet.usageUnavailable": "無法取得使用量", "fleet.noActiveWindow": "沒有作用中視窗", "fleet.capturedMinutesAgo": (n) => `${n} 分鐘前擷取`, "fleet.stale": "已過期", "fleet.limitReached": "已達限額", "fleet.resetting": "正在重設…", "fleet.currentProject": "目前專案", "fleet.allAgents": "所有智能體", "fleet.loggedOut": "已登出 — 需要 /login", "fleet.keeperEstimate": "視窗仍有效（keeper 估算）— 此帳號首次轉譯後顯示 %", "fleet.loginUnknown": "登入狀態未知", "fleet.rotateAccounts": "切換 Claude 帳號",
+  "fleet.title": "叢集", "fleet.refresh": "重新整理", "fleet.capsWaiting": "限額：等待狀態列轉譯…", "fleet.usageUnavailable": "無法取得使用量", "fleet.noActiveWindow": "沒有作用中視窗", "fleet.capturedMinutesAgo": (n) => `${n} 分鐘前擷取`, "fleet.stale": "已過期", "fleet.limitReached": "已達限額", "fleet.resetting": "正在重設…", "fleet.currentProject": "目前專案", "fleet.allAgents": "所有智能體", "fleet.loggedOut": "已登出 — 需要 /login", "fleet.keeperEstimate": "視窗仍有效（keeper 估算）— 此帳號首次轉譯後顯示 %", "fleet.loginUnknown": "登入狀態未知", "fleet.rotateAccounts": "切換 Claude 帳號", "fleet.fableWeekly": (pct) => `Fable 約占每週限額的 ${pct}%（估算）`, "fleet.fableWeeklyExact": (pct) => `Fable 約占每週限額的 ${pct}%`,
   "common.loading": "載入中…", // Loading…
   "common.prev": "上一個", // Previous
   "common.next": "下一個", // Next

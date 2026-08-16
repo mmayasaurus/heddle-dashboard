@@ -32,6 +32,8 @@ const en = {
   "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
   "fleet.loginUnknown": "login state unknown",
   "fleet.rotateAccounts": "Rotate Claude accounts",
+  "fleet.fableWeekly": (pct: number) => `Fable ≈${pct}% of weekly (est.)`,
+  "fleet.fableWeeklyExact": (pct: number) => `Fable ${pct}% of weekly`,
   "common.loading": "Loading…",
   "common.prev": "Previous",
   "common.next": "Next",

@@ -392,8 +392,9 @@ svg { display: block; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
 .fleet-capline { display: grid; grid-template-columns: 24px 140px 44px minmax(0, 1fr); align-items: center; column-gap: 8px; }
 .fleet-capline-lbl { color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
-.fleet-seg { width: 140px; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fleet-seg { position: relative; display: inline-block; width: 140px; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .fleet-seg-empty { opacity: 0.3; }
+.fleet-seg-soft-cap-tick { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: currentColor; opacity: 0.8; }
 .fleet-capline-pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .fleet-capline-reset { min-width: 0; font-size: 10.5px; }
 .fleet-provcap-extras { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-left: 32px; }
@@ -413,6 +414,7 @@ svg { display: block; }
 .fleet-provcap-account-rotate { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-account-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; font-size: 9.5px; }
+.fleet-provcap-fable-weekly { display: flex; align-items: center; gap: 6px; min-height: 12px; color: var(--text-dim); font-size: 10px; }
 .fleet-provcap-spacer { visibility: hidden; }
 .fleet-provcap-logged-out { color: var(--yellow); }
 .fleet-provcap-keeper-estimate { color: var(--text-faint); }

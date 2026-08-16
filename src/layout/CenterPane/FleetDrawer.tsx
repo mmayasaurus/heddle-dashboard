@@ -32,6 +32,22 @@ interface ProviderAccount {
   windows?: LimitWindow[];
   limitReached: boolean | null;
   note: string | null;
+  detail?: {
+    fableWeekly?: FableWeeklyDetail | null;
+  } | null;
+  fableWeeklyEstimatePct?: number | null;
+  fableWeeklySamples?: number | null;
+}
+interface FableWeeklyDetail {
+  fablePct: number;
+  otherPct: number;
+  unknownPct: number;
+  samples: number;
+  exact: boolean;
+  minSamples: number;
+  windowResetsAt: number | null;
+  lastCapturedAt: number | null;
+  updatedAt: number | null;
 }
 interface ProviderLimit {
   provider: string;
@@ -46,6 +62,8 @@ interface ProviderLimit {
   accounts?: ProviderAccount[];
   activeAccount?: string | null;
   windows?: LimitWindow[];
+  fableWeeklyEstimatePct?: number | null;
+  fableWeeklySamples?: number | null;
 }
 interface Dispatch {
   id: number;
@@ -407,10 +425,12 @@ function SegBar({
   pct,
   color,
   segments = 10,
+  softCapTick = false,
 }: {
   pct: number | null | undefined;
   color: string;
   segments?: number;
+  softCapTick?: boolean;
 }) {
   const p = Math.max(0, Math.min(100, pct ?? 0));
   const filled = Math.round((p / 100) * segments);
@@ -418,7 +438,29 @@ function SegBar({
     <span className="fleet-seg" style={{ color }}>
       {"█".repeat(filled)}
       <span className="fleet-seg-empty">{"░".repeat(segments - filled)}</span>
+      {softCapTick && <span className="fleet-seg-soft-cap fleet-seg-soft-cap-tick" aria-hidden="true" />}
     </span>
+  );
+}
+
+function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: string }) {
+  const t = useT();
+  const pct = account.fableWeeklyEstimatePct;
+  const detail = account.detail?.fableWeekly;
+
+  if (pct == null) {
+    return <div className="fleet-provcap-account-row fleet-provcap-fable-weekly fleet-provcap-spacer">&nbsp;</div>;
+  }
+
+  const roundedPct = Math.round(pct);
+  const title = detail
+    ? `Fable ${Math.round(detail.fablePct)}% · other ${Math.round(detail.otherPct)}% · unknown ${Math.round(detail.unknownPct)}% · ${detail.samples} samples`
+    : undefined;
+  return (
+    <div className="fleet-provcap-account-row fleet-provcap-fable-weekly" title={title}>
+      <span>{detail?.exact ? t("fleet.fableWeeklyExact", roundedPct) : t("fleet.fableWeekly", roundedPct)}</span>
+      <SegBar pct={pct} color={color} softCapTick />
+    </div>
   );
 }
 
@@ -556,6 +598,7 @@ function ProviderCapBlock({
           </div>
           <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} className="fleet-provcap-account-row" />
           <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className="fleet-provcap-account-row" />
+          <FableWeeklyLine account={selectedAccount} color={color} />
           <LiveClock render={(now) => {
             const capturedMinutes = capturedMinutesAgo(selectedAccount.capturedAt ?? null, now);
             const stale = selectedAccount.stale === true;

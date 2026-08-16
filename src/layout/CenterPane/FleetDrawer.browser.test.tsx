@@ -5,11 +5,13 @@ const invoke = vi.hoisted(() => vi.fn());
 
 vi.mock("../../ipc/transport", () => ({ invoke, isTauri: true }));
 vi.mock("../../i18n", () => ({
-  useT: () => (key: string) => ({
+  useT: () => (key: string, pct?: number) => ({
     "fleet.loggedOut": "logged out — /login needed",
     "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
     "fleet.loginUnknown": "login state unknown",
     "fleet.rotateAccounts": "Rotate Claude accounts",
+    "fleet.fableWeekly": `Fable ≈${pct}% of weekly (est.)`,
+    "fleet.fableWeeklyExact": `Fable ≈${pct}% of weekly`,
   }[key] ?? key),
 }));
 vi.mock("../../store/termStore", () => ({
@@ -55,7 +57,7 @@ describe("FleetDrawer Claude account cycler", () => {
     const accountDetail = document.querySelector(".fleet-provcap-account-detail");
     expect(accountDetail).toBeTruthy();
     const rowCount = accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row").length;
-    expect(rowCount).toBe(5);
+    expect(rowCount).toBe(6);
     expect(screen.queryByText("acct1")).toBeNull();
     expect(screen.queryByText("acct2")).toBeNull();
     expect(screen.getByText("3/3")).toBeTruthy();
@@ -107,5 +109,53 @@ describe("FleetDrawer Claude account cycler", () => {
 
     await waitFor(() => expect(screen.getByText("login state unknown")).toBeTruthy());
     expect(screen.queryByText("window live (keeper est.) — % appears after the first render on this account")).toBeNull();
+  });
+
+  it("reserves an empty Fable weekly row when its estimate is unavailable", async () => {
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    const row = document.querySelector(".fleet-provcap-fable-weekly");
+    expect(row).toBeTruthy();
+    expect(row!.classList.contains("fleet-provcap-spacer")).toBe(true);
+    expect(screen.queryByText(/Fable/)).toBeNull();
+  });
+
+  it("renders an estimated Fable weekly bar with its breakdown tooltip", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{
+          ...claude.accounts[2],
+          fableWeeklyEstimatePct: 37,
+          detail: { fableWeekly: { fablePct: 37, otherPct: 8, unknownPct: 2, samples: 4, exact: false } },
+        }],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("Fable ≈37% of weekly (est.)")).toBeTruthy());
+    const row = document.querySelector(".fleet-provcap-fable-weekly");
+    expect(row?.getAttribute("title")).toBe("Fable 37% · other 8% · unknown 2% · 4 samples");
+    expect(row?.querySelector(".fleet-seg-soft-cap")).toBeTruthy();
+  });
+
+  it("drops the estimate suffix for an exact Fable weekly value", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{
+          ...claude.accounts[2],
+          fableWeeklyEstimatePct: 50,
+          detail: { fableWeekly: { fablePct: 50, otherPct: 0, unknownPct: 0, samples: 1, exact: true } },
+        }],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("Fable ≈50% of weekly")).toBeTruthy());
+    expect(screen.queryByText("Fable ≈50% of weekly (est.)")).toBeNull();
   });
 });
