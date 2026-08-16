@@ -472,7 +472,7 @@ function ProviderCapBlock({
   }, [defaultAccountId]);
   const effectiveSelectedId = selectedAccountId ?? defaultAccountId;
   const selectedAccountIndex = Math.max(0, accounts.findIndex((account) => account.id === effectiveSelectedId));
-  const selectedAccount = accounts.at(selectedAccountIndex);
+  const selectedAccount = accounts[selectedAccountIndex];
   const extraWindows = (p.windows ?? []).filter(
     (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
   );
