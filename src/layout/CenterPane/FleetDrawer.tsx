@@ -341,7 +341,7 @@ export function FleetDrawer() {
               limits.find((l) => l.provider === "claude")?.fiveHour.usedPercentage ?? null
             }
           />
-          <DisciplinePanel liveAgents={roster.filter((a) => a.alive).map((a) => a.name)} />
+          <DisciplinePanel liveAgents={liveAgents.map((a) => a.name)} />
 
           {usage.length > 0 && (
             <>

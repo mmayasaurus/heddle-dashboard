@@ -56,6 +56,13 @@ describe("DisciplinePanel — discipline telemetry (HED-85)", () => {
     render(<DisciplinePanel liveAgents={[]} />);
     expect(await screen.findByText("fleet.discipline.empty")).toBeTruthy();
   });
+
+  it("never claims 'nothing recorded' beside a positive vendor total", async () => {
+    invoke.mockResolvedValue({ windowHours: 24, rows: [], legacyUnattributedMemtrace: 41 });
+    render(<DisciplinePanel liveAgents={[]} />);
+    expect(await screen.findByText("fleet.discipline.legacy:41")).toBeTruthy();
+    expect(screen.queryByText("fleet.discipline.empty")).toBeNull();
+  });
 });
 
 describe("zeroCallAgents — the red-flag decision", () => {

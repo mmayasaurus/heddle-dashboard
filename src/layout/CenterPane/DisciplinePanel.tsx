@@ -56,7 +56,7 @@ export function DisciplinePanel({ liveAgents }: { liveAgents: string[] }) {
           setData(d);
           setErr(null);
         })
-        .catch((e) => {
+        .catch((e: unknown) => {
           if (alive) setErr(String(e));
         });
     void load();
@@ -80,7 +80,12 @@ export function DisciplinePanel({ liveAgents }: { liveAgents: string[] }) {
           <span className="fleet-discipline-red">{t("fleet.discipline.zeroCalls", a)}</span>
         </div>
       ))}
-      {!err && data && data.rows.length === 0 && flagged.length === 0 ? (
+      {/* "Nothing recorded" must not appear beside a positive vendor total — contradictory. */}
+      {!err &&
+      data &&
+      data.rows.length === 0 &&
+      flagged.length === 0 &&
+      data.legacyUnattributedMemtrace === 0 ? (
         <div className="fleet-dim fleet-empty">{t("fleet.discipline.empty")}</div>
       ) : null}
       {data?.rows.map((r) => (
