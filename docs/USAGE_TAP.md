@@ -107,6 +107,22 @@ backend for per-provider refresh buttons.
   `windows[]` with ids `3p-5h` / `3p-weekly`). `usedPercentage` = `(1 − remaining_fraction) × 100`;
   `resetsAt` = `reset_time` as epoch seconds. A bucket without `remaining_fraction` (agy shows those
   as "Disabled") is an empty window.
+- **Never starts a sign-in (HED-114)**: this refresh is a detached, headless child with piped stdio on
+  a 180s timer, so it can never *complete* an interactive login — therefore it must never *start* one.
+  `agy` begins an OAuth flow (opening a browser, asking for a paste-back code) whenever the HOME it
+  inherits has no Antigravity profile; that happened live when the app ran with `HOME` pointed at a
+  test fixture, and the unanswerable prompt hung to the 45s budget, backed off, and repeated — asking
+  the operator to sign in over and over into a flow that structurally could not finish. Two layers:
+  1. **Profile precondition** — no spawn at all unless `$HOME/.gemini/antigravity-cli` already exists
+     (agy *creates* that directory as part of first-run sign-in, so its absence means "a refresh would
+     prompt"). Blocked with `gemini.noProfile`, which names the HOME and says to run `agy` once in a
+     terminal. This one is refused even for the drawer's refresh button.
+  2. **Sticky auth block** — any attempt whose failure looks like it needed a human (the run timing
+     out, or an error naming sign-in/OAuth/credentials/browser) sets `authBlocked` in the snapshot and
+     stops *automatic* refreshes (`gemini.authBlocked`, with the original error). The drawer's refresh
+     button may retry once (an explicit human action, at most one prompt); a successful run clears it.
+  Being wrong here costs a stale gauge; being wrong the other way hijacks the operator's browser on a
+  timer, so both layers fail toward "don't run".
 - **Cost / cadence**: ~3s wall clock and a few Google round trips per run, so it never runs inline.
   `heddle_provider_limits` reads the snapshot and, when it is older than 180s, kicks ONE detached
   refresh thread (`agy … --log-file /dev/null`, so no log file per run under `~/.gemini/…/log/`; 45s

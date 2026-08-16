@@ -170,3 +170,85 @@ fn live_agy_smoke() {
         Err(e) => println!("agy unavailable here: {e}"),
     }
 }
+
+// ── HED-114: a background refresh must never start a sign-in it cannot finish ──────────────────
+
+#[test]
+fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
+    // A browser prompt an unattended child cannot answer shows up as the run hitting its budget.
+    assert!(looks_like_auth_attempt("timed out after 45s"));
+    // …and anything that names the flow directly.
+    for err in [
+        "agy exited non-zero: please sign in to continue",
+        "Sign-In required",
+        "not logged in",
+        "starting OAuth flow",
+        "opening browser to authenticate",
+        "paste the code here",
+        "no credential found",
+    ] {
+        assert!(looks_like_auth_attempt(err), "{err}");
+    }
+    // Ordinary failures must NOT arm the block — they retry normally.
+    for err in [
+        "agy /quota status ERROR",
+        "agy printed no JSON",
+        "agy JSON parse failed: expected value",
+        "cannot create /Users/x/.heddle/usage: Permission denied",
+    ] {
+        assert!(!looks_like_auth_attempt(err), "{err}");
+    }
+}
+
+#[test]
+fn without_an_agy_profile_no_refresh_may_run_not_even_a_forced_one() {
+    // The exact live incident: HOME pointed at a fixture with no ~/.gemini/antigravity-cli, so a
+    // refresh would CREATE it by starting an OAuth flow at the user.
+    let (code, why) =
+        refresh_blocked_reason(None, false, false).expect("auto refresh must be blocked");
+    assert_eq!(code, CODE_NO_PROFILE);
+    assert!(why.contains("not starting a sign-in"), "{why}");
+    // Even an explicit button press is refused: our child has piped stdio and could never finish it.
+    let (code, why) =
+        refresh_blocked_reason(None, false, true).expect("forced refresh must be blocked too");
+    assert_eq!(code, CODE_NO_PROFILE);
+    assert!(why.contains("run `agy` once in a terminal"), "{why}");
+}
+
+#[test]
+fn a_sticky_auth_block_stops_the_timer_but_not_the_person() {
+    let blocked: Value = serde_json::json!({
+        "authBlocked": true,
+        "lastError": "timed out after 45s",
+    });
+    // The 180s timer is silenced — this is what stops the repeat-prompt loop.
+    let (code, why) =
+        refresh_blocked_reason(Some(&blocked), true, false).expect("auto refresh must be blocked");
+    assert_eq!(code, CODE_AUTH_BLOCKED);
+    assert!(why.contains("timed out after 45s"), "{why}");
+    assert!(why.contains("refresh button"), "{why}");
+    // A person at the keyboard may retry once they have signed in.
+    assert!(refresh_blocked_reason(Some(&blocked), true, true).is_none());
+    // With a profile and no block, the timer runs normally.
+    let clean: Value = serde_json::json!({"capturedAt": 1_786_830_000});
+    assert!(refresh_blocked_reason(Some(&clean), true, false).is_none());
+    // authBlocked absent/false behaves the same as clean.
+    let unblocked: Value = serde_json::json!({"authBlocked": false});
+    assert!(refresh_blocked_reason(Some(&unblocked), true, false).is_none());
+}
+
+#[test]
+fn a_successful_refresh_clears_the_block_and_a_failed_one_re_arms_it() {
+    // snapshot_from_agy is what a success writes: it carries no authBlocked flag at all, so the
+    // next poll sees a clean snapshot and the timer resumes.
+    let snap = snapshot_from_agy(&data(), 1_786_830_000);
+    assert!(snap.get("authBlocked").is_none());
+    assert!(refresh_blocked_reason(Some(&snap), true, false).is_none());
+    // The failure path arms it only for auth-shaped errors (asserted directly above); the parse
+    // side then surfaces the pause honestly rather than showing a silently-frozen gauge.
+    let mut armed = snap.clone();
+    armed["authBlocked"] = serde_json::json!(true);
+    armed["lastError"] = serde_json::json!("timed out after 45s");
+    let (code, _) = refresh_blocked_reason(Some(&armed), true, false).unwrap();
+    assert_eq!(code, CODE_AUTH_BLOCKED);
+}
