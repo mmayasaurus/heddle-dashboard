@@ -27,6 +27,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 mod claude;
+pub mod route_mix;
 mod codex;
 mod cursor;
 mod cursor_fetch;
@@ -112,7 +113,7 @@ pub struct ProviderUsage {
 
 /// Open the heddle ledger read-only. `None` (not an error) when heddle has never run on this
 /// machine, so the drawer simply shows "no dispatches yet".
-fn ledger() -> Result<Option<Connection>, String> {
+pub(crate) fn ledger() -> Result<Option<Connection>, String> {
     let path = home().join(".heddle").join("ledger.db");
     if !path.exists() {
         return Ok(None);
@@ -147,7 +148,7 @@ fn map_dispatch(r: &rusqlite::Row) -> rusqlite::Result<Dispatch> {
 /// Run a blocking read on the blocking pool. Every command here touches the filesystem or SQLite,
 /// and synchronous Tauri commands run on the main thread (see README "Contributing"), so a slow
 /// disk or a busy ledger must never stall the UI.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)

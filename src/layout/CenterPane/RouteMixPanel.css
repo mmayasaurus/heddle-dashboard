@@ -1,0 +1,32 @@
+/* RouteMixPanel (HED-69) — panel-scoped styles. Generic fleet-* classes (fleet-sec-title,
+   fleet-prow, fleet-dim, fleet-err, fleet-empty, fleet-sp) come from the drawer's stylesheet;
+   only the routemix-specific bits live here so the drawer's CSS file stays another agent's lane. */
+
+.fleet-routemix {
+  margin-top: 6px;
+}
+
+.fleet-routemix-hour {
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-routemix-prov {
+  margin-right: 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fleet-routemix-cap {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fleet-routemix-orch {
+  flex-wrap: wrap;
+}
+
+.fleet-routemix-orchitem {
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
