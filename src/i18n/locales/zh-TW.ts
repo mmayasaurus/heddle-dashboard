@@ -891,6 +891,21 @@ const zhTW: typeof en = {
   "statusbar.updateReady": "重新啟動以完成更新",
   "statusbar.updateFailed": "更新失敗",
   "statusbar.updateTooltip": "點擊查看詳情",
+  "fleet.comms.title": "Fleet chat", // TODO translate
+  "fleet.comms.rooms": "Rooms", // TODO translate
+  "fleet.comms.membersIn": (room) => `Members — ${room}`, // TODO translate
+  "fleet.comms.open": "open", // TODO translate
+  "fleet.comms.closedRoom": "Closed room — members only", // TODO translate
+  "fleet.comms.unread": "Unread", // TODO translate
+  "fleet.comms.idleFor": (dur) => `idle ${dur}`, // TODO translate
+  "fleet.comms.worker": "worker", // TODO translate
+  "fleet.comms.schemaUnsupported": (n) => `comms schema v${n} isn't supported by this build`, // TODO translate
+  "fleet.comms.emptyState": "No chatroom activity yet — it appears once the fleet starts talking.", // TODO translate
+  "fleet.comms.needsHumanMore": (n) => `+${n} more`, // TODO translate
+  "fleet.comms.floorHolds": (holder) => `${holder} holds the floor`, // TODO translate
+  "fleet.comms.needsHuman": "Needs human", // TODO translate
+  "fleet.comms.operatorSeal": "operator", // TODO translate
+  "fleet.comms.directiveChip": (target) => `DIRECTIVE → ${target}`, // TODO translate
 };
 
 export default zhTW;

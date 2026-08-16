@@ -930,6 +930,22 @@ const en = {
   "statusbar.updateReady": "Restart to update",
   "statusbar.updateFailed": "Update failed",
   "statusbar.updateTooltip": "Click for details",
+  // ── Fleet chatroom (comms) ──
+  "fleet.comms.title": "Fleet chat",
+  "fleet.comms.rooms": "Rooms",
+  "fleet.comms.membersIn": (room: string) => `Members — ${room}`,
+  "fleet.comms.open": "open",
+  "fleet.comms.closedRoom": "Closed room — members only",
+  "fleet.comms.unread": "Unread",
+  "fleet.comms.idleFor": (dur: string) => `idle ${dur}`,
+  "fleet.comms.worker": "worker",
+  "fleet.comms.schemaUnsupported": (n: number) => `comms schema v${n} isn't supported by this build`,
+  "fleet.comms.emptyState": "No chatroom activity yet — it appears once the fleet starts talking.",
+  "fleet.comms.needsHumanMore": (n: number) => `+${n} more`,
+  "fleet.comms.floorHolds": (holder: string) => `${holder} holds the floor`,
+  "fleet.comms.needsHuman": "Needs human",
+  "fleet.comms.operatorSeal": "operator",
+  "fleet.comms.directiveChip": (target: string) => `DIRECTIVE → ${target}`,
 };
 
 export default en;
