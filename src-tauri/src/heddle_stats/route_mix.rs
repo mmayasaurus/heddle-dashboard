@@ -62,8 +62,20 @@ fn route_mix_sync(hours: Option<i64>) -> Result<RouteMix, String> {
     let Some(conn) = super::ledger()? else {
         return Ok(RouteMix { window_hours: hours, hours: vec![], orchestrators: vec![] });
     };
-    let cutoff = cutoff_iso(hours);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = aligned_cutoff_iso(now, hours);
     route_mix_from(&conn, hours, &cutoff)
+}
+
+/// Cutoff aligned to the top of the hour: asking for N hours yields at most N CALENDAR hour
+/// buckets (the current partial hour plus N-1 complete ones) — a rolling cutoff would produce
+/// N+1 buckets with a misleading partial oldest row.
+fn aligned_cutoff_iso(now_secs: i64, hours: i64) -> String {
+    let hour_start = now_secs - now_secs.rem_euclid(3600);
+    epoch_to_iso(hour_start - (hours - 1) * 3600)
 }
 
 /// ISO-UTC cutoff `hours` ago, comparable to the ledger's `toISOString` values by plain string

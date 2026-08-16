@@ -896,6 +896,7 @@ const zhCN: typeof en = {
   "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
     `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
   "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
   "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
   "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
   "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate

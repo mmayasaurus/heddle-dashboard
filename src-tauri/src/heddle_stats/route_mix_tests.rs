@@ -116,3 +116,15 @@
         assert_eq!(epoch_to_iso(1_709_164_799), "2024-02-28T23:59:59.000Z");
         assert_eq!(epoch_to_iso(1_709_164_800), "2024-02-29T00:00:00.000Z");
     }
+
+/// A 6-hour request mid-hour must yield a top-of-hour cutoff 5 hours before the current hour —
+/// so the scoreboard shows at most 6 calendar buckets, never 7 with a partial oldest row.
+#[test]
+fn aligned_cutoff_is_top_of_hour_minus_n_minus_one() {
+    // 2026-08-16T12:30:00Z → current hour starts 12:00; 6h window ⇒ cutoff 07:00.
+    let now = 1_786_883_400; // 2026-08-16T12:30:00Z
+    assert_eq!(aligned_cutoff_iso(now, 6), "2026-08-16T07:00:00.000Z");
+    // Exactly on the hour: identical alignment.
+    assert_eq!(aligned_cutoff_iso(1_786_881_600, 6), "2026-08-16T07:00:00.000Z");
+    assert_eq!(aligned_cutoff_iso(now, 1), "2026-08-16T12:00:00.000Z");
+}
