@@ -17,6 +17,11 @@ will drive heddle lanes.
 6. HED-44 copyright: **Very Good Fiber Goods (VGFG)** — both LICENSEs + authors fields. R (core) / T (dash).
 7. HED-27 smoke.ts: DELETE (deletion OK'd). U.
 8. HED-25: LEDGER classifier calls (classify:effort / classify:assess rows). U.
+9. **Auto account switching (Maya, 2026-08-15 evening): BUILD the out-of-process Claude worker** —
+   `claude -p` under `CLAUDE_CONFIG_DIR` of the account with the most 5h headroom (HED-67/68 → follow-up
+   ticket, U). Route-away for Claude-primary classes at 5h ≥90% stays ON by default (knob documented).
+   Fable: no model-scoped window exists in any readable surface → estimate by per-model attribution of
+   weekly deltas (HED-75, W) + Fable-aware triggers (HED-76, U); Fable ≈% bar with a 50% soft-cap tick.
 Also: DeepSource → YES with a heddle `.deepsource.toml` merged FIRST (S); Deep Reviewers/Gemini/PR-Agent
 → SKIP for heddle (OpenRouter-keyed; 15+ free reviewers already active on the public repos).
 Review sweep (`pr-sweep.sh` → exit 0, every reviewer, every channel, vs HEAD) is a HARD GATE before any
