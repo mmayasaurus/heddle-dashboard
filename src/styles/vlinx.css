@@ -375,10 +375,9 @@ svg { display: block; }
 .fleet-worker.stale { opacity: 0.55; text-decoration: line-through; }
 .fleet-worker-cwd { font-size: 10.5px; }
 /* per-provider rate-limit caps (ccusage-style segmented bars) */
-.fleet-provcaps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px 22px; }
-.fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 216px; }
+.fleet-provcaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(216px, 1fr)); align-items: start; gap: 8px 22px; }
+.fleet-provcap { display: flex; flex-direction: column; gap: 2px; min-width: 216px; min-height: 75px; }
 .fleet-provcap.stale { opacity: 0.55; }
-.fleet-provcap-header { display: flex; flex-direction: column; }
 .fleet-provcap-name { font-weight: 700; text-transform: capitalize; font-size: 11px; letter-spacing: 0.3px; display: flex; align-items: baseline; gap: 6px; }
 .fleet-provcap-note { color: var(--text-faint); cursor: help; font-size: 10px; text-transform: none; }
 .fleet-provcap-model { font-weight: 400; font-size: 9.5px; text-transform: none; letter-spacing: 0; }
@@ -388,15 +387,17 @@ svg { display: block; }
 @media (prefers-reduced-motion: no-preference) {
   .fleet-provcap-refresh.refreshing { animation: fleet-spin 0.7s linear infinite; }
 }
+.fleet-provcap-captured-row { min-height: 12px; color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
-.fleet-capline { display: flex; align-items: center; gap: 8px; }
-.fleet-capline-lbl { width: 20px; flex: none; color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
-.fleet-seg { font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fleet-capline { display: grid; grid-template-columns: 24px 140px 44px minmax(0, 1fr); align-items: center; column-gap: 8px; }
+.fleet-capline-lbl { color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
+.fleet-seg { width: 140px; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .fleet-seg-empty { opacity: 0.3; }
-.fleet-capline-pct { width: 34px; text-align: right; flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
-.fleet-capline-reset { flex: 1; font-size: 10.5px; }
-.fleet-provcap-accounts { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.fleet-capline-pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fleet-capline-reset { min-width: 0; font-size: 10.5px; }
+.fleet-provcap-extras { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; padding-left: 32px; }
+.fleet-provcap-accounts { display: flex; flex-direction: column; gap: 2px; }
 .fleet-provcap-account-toggle { align-self: flex-start; color: var(--text-dim); font-size: 10px; padding: 0 2px; }
 .fleet-provcap-account-toggle:hover { color: var(--text-faint); background: var(--bg-hover); }
 .fleet-provcap-account { display: flex; align-items: baseline; gap: 3px; color: var(--text-dim); font-size: 10px; }
@@ -405,12 +406,14 @@ svg { display: block; }
 .fleet-provcap-account-caps { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
 .fleet-provcap-account-separator { color: var(--text-faint); margin-left: 2px; }
 .fleet-provcap-limit-reached { color: var(--red); margin-left: 2px; }
-.fleet-provcap-account-detail { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.fleet-provcap-account-detail { display: flex; flex-direction: column; gap: 2px; }
+.fleet-provcap-account-row { min-height: 12px; }
 .fleet-provcap-account-head { display: flex; align-items: baseline; gap: 3px; color: var(--text-dim); font-size: 10px; }
 .fleet-provcap-account-position { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .fleet-provcap-account-rotate { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-account-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; font-size: 9.5px; }
+.fleet-provcap-spacer { visibility: hidden; }
 .fleet-provcap-logged-out { color: var(--yellow); }
 .fleet-provcap-keeper-estimate { color: var(--text-faint); }
 .fleet-provcap-window { display: flex; align-items: baseline; gap: 6px; color: var(--text-dim); font-size: 10px; }

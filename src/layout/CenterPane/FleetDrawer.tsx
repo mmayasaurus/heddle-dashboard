@@ -427,16 +427,18 @@ function CapLine({
   win,
   color,
   note,
+  className,
 }: {
   label: string;
   win: LimitWindow;
   color: string;
   note?: string | null;
+  className?: string;
 }) {
   const t = useT();
   const pct = win.usedPercentage;
   return (
-    <div className="fleet-capline">
+    <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
       <span className="fleet-capline-lbl">{label}</span>
       <SegBar pct={pct} color={color} />
       <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
@@ -495,41 +497,44 @@ function ProviderCapBlock({
 
   return (
     <div className={"fleet-provcap" + (isStale ? " stale" : "")}>
-      <div className="fleet-provcap-header">
-        <div className="fleet-provcap-name" style={{ color }}>
-          {p.provider}
-          {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
-          {p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
-          <button
-            className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
-            disabled={refreshing}
-            onClick={() => {
-              void handleRefresh();
-            }}
-            title={`${t("fleet.refresh")} ${p.provider} caps`}
-            aria-label={t("fleet.refresh")}
-            type="button"
-          >
-            ⟳
-          </button>
-        </div>
-        <LiveClock render={(now) => {
-          const capturedMinutes = capturedMinutesAgo(p.capturedAt, now);
-          const isStale = isProviderStale(p, now);
-          return capturedMinutes != null ? (
-            <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
-              {t("fleet.capturedMinutesAgo", capturedMinutes)}{isStale ? ` · ${t("fleet.stale")}` : ""}
-            </span>
-          ) : null;
-        }} />
+      <div className="fleet-provcap-name" style={{ color }}>
+        {p.provider}
+        {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
+        {isClaudeAccounts ? <span className="fleet-dim fleet-provcap-model">{accounts.length} acct</span> : p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+        <button
+          className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
+          disabled={refreshing}
+          onClick={() => {
+            void handleRefresh();
+          }}
+          title={`${t("fleet.refresh")} ${p.provider} caps`}
+          aria-label={t("fleet.refresh")}
+          type="button"
+        >
+          ⟳
+        </button>
       </div>
+      {!isClaudeAccounts && <LiveClock render={(now) => {
+        const capturedMinutes = capturedMinutesAgo(p.capturedAt, now);
+        const providerIsStale = isProviderStale(p, now);
+        return (
+          <div className="fleet-provcap-captured-row">
+            {capturedMinutes != null ? (
+              <span className={"fleet-provcap-captured" + (providerIsStale ? " stale" : "")}>
+                {t("fleet.capturedMinutesAgo", capturedMinutes)}{providerIsStale ? ` · ${t("fleet.stale")}` : ""}
+              </span>
+            ) : "—"}
+          </div>
+        );
+      }} />}
       {!isClaudeAccounts && <>
         <CapLine label="5h" win={p.fiveHour} color={color} note={p.note} />
         <CapLine label="7d" win={p.sevenDay} color={color} />
       </>}
-      {isClaudeAccounts && selectedAccount && (
-        <div className="fleet-provcap-account-detail">
-          <div className="fleet-provcap-account-head">
+      <div className="fleet-provcap-extras">
+        {isClaudeAccounts && selectedAccount && (
+          <div className="fleet-provcap-account-detail">
+          <div className="fleet-provcap-account-row fleet-provcap-account-head">
             <span className="fleet-provcap-account-label">{selectedAccount.id}</span>
             {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
               <span className="fleet-provcap-account-plan">· {selectedAccount.label}</span>
@@ -549,8 +554,8 @@ function ProviderCapBlock({
               </button>
             </>}
           </div>
-          <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} />
-          <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} />
+          <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} className="fleet-provcap-account-row" />
+          <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className="fleet-provcap-account-row" />
           <LiveClock render={(now) => {
             const capturedMinutes = capturedMinutesAgo(selectedAccount.capturedAt ?? null, now);
             const stale = selectedAccount.stale === true;
@@ -558,21 +563,26 @@ function ProviderCapBlock({
               (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
             );
             return (
-              <div className="fleet-provcap-account-state">
-                {capturedMinutes != null && (
-                  <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
-                    {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
-                  </span>
-                )}
+              <>
+                <div className="fleet-provcap-account-row fleet-provcap-captured-row">
+                  {capturedMinutes != null ? (
+                    <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
+                      {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                    </span>
+                  ) : "—"}
+                </div>
+                <div className="fleet-provcap-account-row fleet-provcap-account-state">
                 {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out">{t("fleet.loggedOut")}</span>}
                 {selectedAccount.loggedIn == null && <span className="fleet-dim">{t("fleet.loginUnknown")}</span>}
                 {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate">{t("fleet.keeperEstimate")}</span>}
                 {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
-              </div>
+                {selectedAccount.loggedIn === true && !keeperEstimate && !selectedAccount.limitReached && <span className="fleet-provcap-spacer">&nbsp;</span>}
+                </div>
+              </>
             );
           }} />
         </div>
-      )}
+        )}
       {!isClaudeAccounts && accounts.length > 1 && (
         <div className="fleet-provcap-accounts">
           <button
@@ -611,6 +621,7 @@ function ProviderCapBlock({
           {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
         </div>
       ))}
+      </div>
     </div>
   );
 }

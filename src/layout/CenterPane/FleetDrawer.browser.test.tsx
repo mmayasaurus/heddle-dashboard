@@ -52,6 +52,10 @@ describe("FleetDrawer Claude account cycler", () => {
     render(<FleetDrawer />);
 
     await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    const accountDetail = document.querySelector(".fleet-provcap-account-detail");
+    expect(accountDetail).toBeTruthy();
+    const rowCount = accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row").length;
+    expect(rowCount).toBe(5);
     expect(screen.queryByText("acct1")).toBeNull();
     expect(screen.queryByText("acct2")).toBeNull();
     expect(screen.getByText("3/3")).toBeTruthy();
@@ -60,13 +64,16 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText("acct1")).toBeTruthy();
     expect(screen.getByText("logged out — /login needed")).toBeTruthy();
     expect(screen.queryByText("acct3")).toBeNull();
+    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
     expect(screen.getByText("acct2")).toBeTruthy();
     expect(screen.getByText("window live (keeper est.) — % appears after the first render on this account")).toBeTruthy();
+    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
     expect(screen.getByText("acct3")).toBeTruthy();
+    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
   });
 
   it("renders a single Claude account detail without a rotate control or duplicate cap lines", async () => {
