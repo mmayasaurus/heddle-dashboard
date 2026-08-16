@@ -54,7 +54,7 @@ concurrency:
 
 jobs:
   web:
-    name: web (pnpm build + vitest)
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'web (pnpm build + vitest)' || 'web (pnpm build + vitest) (noop — PR title/body edit)' }}
     # Skip title/body edits (no new commit, no base change) — HED-91; a base
     # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
     # action, so they always run.
@@ -89,7 +89,7 @@ jobs:
         run: pnpm test
 
   rust:
-    name: rust (cargo check)
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'rust (cargo check)' || 'rust (cargo check) (noop — PR title/body edit)' }}
     # Skip title/body edits (no new commit, no base change) — HED-91; a base
     # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
     # action, so they always run.
@@ -118,7 +118,7 @@ jobs:
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
 
   rust-test:
-    name: rust (cargo test)
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'rust (cargo test)' || 'rust (cargo test) (noop — PR title/body edit)' }}
     # Skip title/body edits (no new commit, no base change) — HED-91; a base
     # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
     # action, so they always run.
@@ -145,7 +145,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
   lint:
-    name: lint (eslint) — NON-required, red until HED-14
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'lint (eslint) — NON-required, red until HED-14' || 'lint (eslint) — NON-required, red until HED-14 (noop — PR title/body edit)' }}
     # Skip title/body edits (no new commit, no base change) — HED-91; a base
     # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
     # action, so they always run.
@@ -181,8 +181,17 @@ jobs:
         run: pnpm lint
 
   gate:
-    # Required-check context string — do not rename (see header; HED-13).
-    name: gate
+    # Required-check context string — do not rename (see header; HED-13). The
+    # name is an EXPRESSION for one reason, measured live on heddle#30: a
+    # skipped job still publishes a check-run under its name, GitHub's
+    # required-check evaluation takes the NEWEST run of a given name, and it
+    # treats `skipped` as passing. A no-op run publishing `gate` would therefore
+    # SUPERSEDE the real verdict — any reviewer bot editing the PR body could
+    # turn a RED gate into a passing one. Renaming the no-op keeps it out of the
+    # required context; the last real `gate` check-run stands. Same reasoning
+    # for the leaf jobs above: a skip must never overwrite a real verdict (it
+    # would also hide `lint`'s honest red).
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'gate' || 'gate (noop — PR title/body edit)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [web, rust, rust-test]
