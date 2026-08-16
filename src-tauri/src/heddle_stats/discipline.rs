@@ -26,7 +26,7 @@
 
 use serde::Serialize;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -197,8 +197,8 @@ fn tail_lines(path: &Path, tail_bytes: u64) -> Vec<String> {
 /// Test-only helper so fixtures can live in a temp dir with a controllable tail bound.
 #[cfg(test)]
 pub(crate) fn discipline_from_paths_for_test(
-    fleet: &PathBuf,
-    vendor: &PathBuf,
+    fleet: &Path,
+    vendor: &Path,
     hours: i64,
     cutoff: &str,
     now_iso: &str,
