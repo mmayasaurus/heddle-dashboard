@@ -17,7 +17,7 @@ const ko: typeof en = {
   "common.copied": "복사됨", // Copied
   "common.retry": "다시 시도", // Retry
   "common.refresh": "새로 고침", // Refresh
-  "fleet.title": "플릿", "fleet.refresh": "새로 고침", "fleet.capsWaiting": "한도: 상태 표시줄 렌더링 대기 중…", "fleet.usageUnavailable": "사용량을 사용할 수 없음", "fleet.noActiveWindow": "활성 창 없음", "fleet.capturedMinutesAgo": (n) => `${n}분 전에 캡처됨`, "fleet.stale": "오래됨", "fleet.limitReached": "한도 도달", "fleet.resetting": "재설정 중…", "fleet.currentProject": "현재 프로젝트", "fleet.allAgents": "모든 에이전트", "fleet.loggedOut": "로그아웃됨 — /login 필요", "fleet.keeperEstimate": "창 활성 상태(keeper 추정) — 이 계정의 첫 렌더 후 % 표시", "fleet.loginUnknown": "로그인 상태 알 수 없음", "fleet.rotateAccounts": "Claude 계정 전환",
+  "fleet.title": "플릿", "fleet.refresh": "새로 고침", "fleet.capsWaiting": "한도: 상태 표시줄 렌더링 대기 중…", "fleet.usageUnavailable": "사용량을 사용할 수 없음", "fleet.noActiveWindow": "활성 창 없음", "fleet.capturedMinutesAgo": (n) => `${n}분 전에 캡처됨`, "fleet.stale": "오래됨", "fleet.limitReached": "한도 도달", "fleet.resetting": "재설정 중…", "fleet.currentProject": "현재 프로젝트", "fleet.allAgents": "모든 에이전트", "fleet.loggedOut": "로그아웃됨 — /login 필요", "fleet.keeperEstimate": "창 활성 상태(keeper 추정) — 이 계정의 첫 렌더 후 % 표시", "fleet.loginUnknown": "로그인 상태 알 수 없음", "fleet.rotateAccounts": "Claude 계정 전환", "fleet.fableWeekly": (pct) => `Fable 주간 한도의 약 ${pct}% (추정)`, "fleet.fableWeeklyExact": (pct) => `Fable 주간 한도의 ${pct}%`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · 기타 ${other}% · 알 수 없음 ${unknown}% · ${samples}개 샘플`,
   "common.loading": "불러오는 중…", // Loading…
   "common.prev": "이전", // Previous
   "common.next": "다음", // Next
