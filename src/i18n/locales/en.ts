@@ -34,6 +34,7 @@ const en = {
   "fleet.rotateAccounts": "Rotate Claude accounts",
   "fleet.fableWeekly": (pct: number) => `Fable ≈${pct}% of weekly (est.)`,
   "fleet.fableWeeklyExact": (pct: number) => `Fable ${pct}% of weekly`,
+  "fleet.fableWeeklyBreakdown": (fable: number, other: number, unknown: number, samples: number) => `Fable ${fable}% · other ${other}% · unknown ${unknown}% · ${samples} samples`,
   "common.loading": "Loading…",
   "common.prev": "Previous",
   "common.next": "Next",

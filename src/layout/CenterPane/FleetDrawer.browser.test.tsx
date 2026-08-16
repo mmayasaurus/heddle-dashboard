@@ -5,13 +5,15 @@ const invoke = vi.hoisted(() => vi.fn());
 
 vi.mock("../../ipc/transport", () => ({ invoke, isTauri: true }));
 vi.mock("../../i18n", () => ({
-  useT: () => (key: string, pct?: number) => ({
+  useT: () => (key: string, ...args: number[]) => ({
     "fleet.loggedOut": "logged out — /login needed",
     "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
     "fleet.loginUnknown": "login state unknown",
     "fleet.rotateAccounts": "Rotate Claude accounts",
-    "fleet.fableWeekly": `Fable ≈${pct}% of weekly (est.)`,
-    "fleet.fableWeeklyExact": `Fable ≈${pct}% of weekly`,
+    "fleet.capturedMinutesAgo": `captured ${args[0]} min ago`,
+    "fleet.fableWeekly": `Fable ≈${args[0]}% of weekly (est.)`,
+    "fleet.fableWeeklyExact": `Fable ${args[0]}% of weekly`,
+    "fleet.fableWeeklyBreakdown": `breakdown: ${args[0]}/${args[1]}/${args[2]} (${args[3]})`,
   }[key] ?? key),
 }));
 vi.mock("../../store/termStore", () => ({
@@ -40,6 +42,14 @@ const claude = {
   ],
 };
 
+function accountRowCount(accountId: string) {
+  const accountDetail = screen.getByText(accountId).closest(".fleet-provcap-account-detail");
+  expect(accountDetail).toBeTruthy();
+  return Array.from(accountDetail!.children).filter((child) =>
+    child.classList.contains("fleet-provcap-account-row"),
+  ).length;
+}
+
 describe("FleetDrawer Claude account cycler", () => {
   beforeEach(() => {
     localStorage.setItem("heddle-fleet-open", "1");
@@ -54,9 +64,7 @@ describe("FleetDrawer Claude account cycler", () => {
     render(<FleetDrawer />);
 
     await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
-    const accountDetail = document.querySelector(".fleet-provcap-account-detail");
-    expect(accountDetail).toBeTruthy();
-    const rowCount = accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row").length;
+    const rowCount = accountRowCount("acct3");
     expect(rowCount).toBe(6);
     expect(screen.queryByText("acct1")).toBeNull();
     expect(screen.queryByText("acct2")).toBeNull();
@@ -66,16 +74,16 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText("acct1")).toBeTruthy();
     expect(screen.getByText("logged out — /login needed")).toBeTruthy();
     expect(screen.queryByText("acct3")).toBeNull();
-    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
+    expect(accountRowCount("acct1")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
     expect(screen.getByText("acct2")).toBeTruthy();
     expect(screen.getByText("window live (keeper est.) — % appears after the first render on this account")).toBeTruthy();
-    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
+    expect(accountRowCount("acct2")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
     expect(screen.getByText("acct3")).toBeTruthy();
-    expect(accountDetail!.querySelectorAll(":scope > .fleet-provcap-account-row")).toHaveLength(rowCount);
+    expect(accountRowCount("acct3")).toBe(rowCount);
   });
 
   it("renders a single Claude account detail without a rotate control or duplicate cap lines", async () => {
@@ -137,7 +145,7 @@ describe("FleetDrawer Claude account cycler", () => {
 
     await waitFor(() => expect(screen.getByText("Fable ≈37% of weekly (est.)")).toBeTruthy());
     const row = document.querySelector(".fleet-provcap-fable-weekly");
-    expect(row?.getAttribute("title")).toBe("Fable 37% · other 8% · unknown 2% · 4 samples");
+    expect(row?.getAttribute("title")).toBe("breakdown: 37/8/2 (4)");
     expect(row?.querySelector(".fleet-seg-soft-cap")).toBeTruthy();
   });
 
@@ -155,7 +163,21 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("Fable ≈50% of weekly")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Fable 50% of weekly")).toBeTruthy());
     expect(screen.queryByText("Fable ≈50% of weekly (est.)")).toBeNull();
+  });
+
+  it("uses the legacy fallback timestamp for the matching Claude account", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[2], capturedAt: null }],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    expect(screen.getByText(/captured \d+ min ago/)).toBeTruthy();
   });
 });

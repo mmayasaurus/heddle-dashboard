@@ -454,7 +454,7 @@ function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: 
 
   const roundedPct = Math.round(pct);
   const title = detail
-    ? `Fable ${Math.round(detail.fablePct)}% · other ${Math.round(detail.otherPct)}% · unknown ${Math.round(detail.unknownPct)}% · ${detail.samples} samples`
+    ? t("fleet.fableWeeklyBreakdown", Math.round(detail.fablePct), Math.round(detail.otherPct), Math.round(detail.unknownPct), detail.samples)
     : undefined;
   return (
     <div className="fleet-provcap-account-row fleet-provcap-fable-weekly" title={title}>
@@ -520,6 +520,7 @@ function ProviderCapBlock({
   const extraWindows = (p.windows ?? []).filter(
     (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
   );
+  const hasExtras = isClaudeAccounts || accounts.length > 1 || extraWindows.length > 0;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -573,58 +574,65 @@ function ProviderCapBlock({
         <CapLine label="5h" win={p.fiveHour} color={color} note={p.note} />
         <CapLine label="7d" win={p.sevenDay} color={color} />
       </>}
-      <div className="fleet-provcap-extras">
+      {hasExtras && <div className="fleet-provcap-extras">
         {isClaudeAccounts && selectedAccount && (
           <div className="fleet-provcap-account-detail">
-          <div className="fleet-provcap-account-row fleet-provcap-account-head">
-            <span className="fleet-provcap-account-label">{selectedAccount.id}</span>
-            {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
-              <span className="fleet-provcap-account-plan">· {selectedAccount.label}</span>
-            )}
-            {accounts.length > 1 && <>
-              <span className="fleet-sp" />
-              <span className="fleet-provcap-account-position">{selectedAccountIndex + 1}/{accounts.length}</span>
-              <button
-                className="fleet-provcap-account-rotate"
-                onClick={() => {
-                  setSelectedAccountId(accounts[(selectedAccountIndex + 1) % accounts.length].id);
-                }}
-                aria-label={t("fleet.rotateAccounts")}
-                type="button"
-              >
-                ⟳
-              </button>
-            </>}
+            <div className="fleet-provcap-account-row fleet-provcap-account-head">
+              <span className="fleet-provcap-account-label">{selectedAccount.id}</span>
+              {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
+                <span className="fleet-provcap-account-plan">· {selectedAccount.label}</span>
+              )}
+              {accounts.length > 1 && <>
+                <span className="fleet-sp" />
+                <span className="fleet-provcap-account-position">{selectedAccountIndex + 1}/{accounts.length}</span>
+                <button
+                  className="fleet-provcap-account-rotate"
+                  onClick={() => {
+                    setSelectedAccountId(accounts[(selectedAccountIndex + 1) % accounts.length].id);
+                  }}
+                  aria-label={t("fleet.rotateAccounts")}
+                  type="button"
+                >
+                  ⟳
+                </button>
+              </>}
+            </div>
+            <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} className="fleet-provcap-account-row" />
+            <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className="fleet-provcap-account-row" />
+            <FableWeeklyLine account={selectedAccount} color={color} />
+            <LiveClock render={(now) => {
+              const capturedAt = selectedAccount.capturedAt ?? (p.activeAccount === selectedAccount.id ? p.capturedAt : null);
+              const capturedMinutes = capturedMinutesAgo(capturedAt, now);
+              const stale = selectedAccount.stale === true;
+              const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
+                (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
+              );
+              const stateMessages = [
+                selectedAccount.loggedIn === false ? t("fleet.loggedOut") : null,
+                selectedAccount.loggedIn == null ? t("fleet.loginUnknown") : null,
+                selectedAccount.loggedIn === true && keeperEstimate ? t("fleet.keeperEstimate") : null,
+                selectedAccount.limitReached ? t("fleet.limitReached") : null,
+              ].filter((message): message is string => message != null);
+              return (
+                <>
+                  <div className="fleet-provcap-account-row fleet-provcap-captured-row">
+                    {capturedMinutes != null ? (
+                      <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
+                        {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                      </span>
+                    ) : "—"}
+                  </div>
+                  <div className="fleet-provcap-account-row fleet-provcap-account-state" title={stateMessages.join(" · ") || undefined}>
+                    {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out">{t("fleet.loggedOut")}</span>}
+                    {selectedAccount.loggedIn == null && <span className="fleet-dim">{t("fleet.loginUnknown")}</span>}
+                    {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate">{t("fleet.keeperEstimate")}</span>}
+                    {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
+                    {selectedAccount.loggedIn === true && !keeperEstimate && !selectedAccount.limitReached && <span className="fleet-provcap-spacer">&nbsp;</span>}
+                  </div>
+                </>
+              );
+            }} />
           </div>
-          <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} className="fleet-provcap-account-row" />
-          <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className="fleet-provcap-account-row" />
-          <FableWeeklyLine account={selectedAccount} color={color} />
-          <LiveClock render={(now) => {
-            const capturedMinutes = capturedMinutesAgo(selectedAccount.capturedAt ?? null, now);
-            const stale = selectedAccount.stale === true;
-            const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
-              (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
-            );
-            return (
-              <>
-                <div className="fleet-provcap-account-row fleet-provcap-captured-row">
-                  {capturedMinutes != null ? (
-                    <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
-                      {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
-                    </span>
-                  ) : "—"}
-                </div>
-                <div className="fleet-provcap-account-row fleet-provcap-account-state">
-                {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out">{t("fleet.loggedOut")}</span>}
-                {selectedAccount.loggedIn == null && <span className="fleet-dim">{t("fleet.loginUnknown")}</span>}
-                {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate">{t("fleet.keeperEstimate")}</span>}
-                {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
-                {selectedAccount.loggedIn === true && !keeperEstimate && !selectedAccount.limitReached && <span className="fleet-provcap-spacer">&nbsp;</span>}
-                </div>
-              </>
-            );
-          }} />
-        </div>
         )}
       {!isClaudeAccounts && accounts.length > 1 && (
         <div className="fleet-provcap-accounts">
@@ -664,7 +672,7 @@ function ProviderCapBlock({
           {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
         </div>
       ))}
-      </div>
+      </div>}
     </div>
   );
 }

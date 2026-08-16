@@ -390,9 +390,9 @@ svg { display: block; }
 .fleet-provcap-captured-row { min-height: 12px; color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
-.fleet-capline { display: grid; grid-template-columns: 24px 140px 44px minmax(0, 1fr); align-items: center; column-gap: 8px; }
+.fleet-capline { display: grid; grid-template-columns: 24px minmax(100px, 140px) 44px minmax(0, 1fr); align-items: center; column-gap: 8px; }
 .fleet-capline-lbl { color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
-.fleet-seg { position: relative; display: inline-block; width: 140px; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fleet-seg { position: relative; display: inline-block; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .fleet-seg-empty { opacity: 0.3; }
 .fleet-seg-soft-cap-tick { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: currentColor; opacity: 0.8; }
 .fleet-capline-pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -413,7 +413,7 @@ svg { display: block; }
 .fleet-provcap-account-position { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .fleet-provcap-account-rotate { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
-.fleet-provcap-account-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; font-size: 9.5px; }
+.fleet-provcap-account-state { display: flex; flex-wrap: nowrap; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; align-items: baseline; font-size: 9.5px; }
 .fleet-provcap-fable-weekly { display: flex; align-items: center; gap: 6px; min-height: 12px; color: var(--text-dim); font-size: 10px; }
 .fleet-provcap-spacer { visibility: hidden; }
 .fleet-provcap-logged-out { color: var(--yellow); }
