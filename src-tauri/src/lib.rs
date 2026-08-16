@@ -53,13 +53,14 @@ use web::WebServer;
 
 use std::path::{Path, PathBuf};
 
-/// Pending `vela <path>` request shared by first/second instances and taken after frontend listeners exist.
+/// Pending `heddle <path>` request shared by first/second instances and taken after frontend listeners exist.
 #[cfg(feature = "gui")]
 pub(crate) struct PendingOpenProject(pub std::sync::Mutex<Option<String>>);
 
-/// Brief `vela` CLI help invoked through a hidden shim argument so normal GUI startup stays quiet.
-pub fn print_vela_help() {
-    println!("usage: vela <project-path>\n\nOpen a project in heddle, or switch to it if it is already open.");
+/// Brief `heddle` CLI help invoked through a hidden shim argument (`--heddle-help`, legacy `--vela-help`)
+/// so normal GUI startup stays quiet.
+pub fn print_user_cli_help() {
+    println!("usage: heddle <project-path>\n\nOpen a project in heddle, or switch to it if it is already open.");
 }
 
 /// Parse `--open-project <path>` or a development-friendly positional project path while ignoring
@@ -69,7 +70,7 @@ pub fn open_project_from_args(args: &[String], cwd: &Path) -> Result<Option<Path
         Some("--open-project") => {
             if args.len() != 3 {
                 return Err(
-                    "expected exactly one project path\nusage: vela <project-path>".to_string(),
+                    "expected exactly one project path\nusage: heddle <project-path>".to_string(),
                 );
             }
             &args[2]
@@ -234,12 +235,19 @@ pub const GIT_COMMIT: &str = match option_env!("VLX_GIT_COMMIT") {
 /// Binary semver from Cargo.toml.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// heddle's home on GitHub — the only external destinations the Help menu opens (HED-38: no
+/// auto-updater, no VelaTerm/heddle.app hosts).
+pub const HEDDLE_REPO_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard";
+pub const HEDDLE_ISSUES_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard/issues";
+pub const HEDDLE_RELEASES_URL: &str = "https://github.com/mmayasaurus/heddle-dashboard/releases";
+
 /// Print stable version/commit output for --version/-V and exit without windows or services.
 ///
-/// SSH provisioning parses line one as `velaterm <semver>` and line two as `commit: <hash>` to decide
-/// binary reuse. Keep this format stable unless the remote parser changes with it.
+/// Line one is `heddle <semver>` (upstream printed `velaterm <semver>`), line two `commit: <hash>`.
+/// Nothing in this repo parses line one by name (SSH provisioning only checks that `--version` runs);
+/// keep the shape stable anyway for scripts.
 pub fn print_version() {
-    println!("velaterm {VERSION}");
+    println!("heddle {VERSION}");
     println!("commit: {GIT_COMMIT}");
 }
 
@@ -392,10 +400,8 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        // Desktop updater checks latest.json and installs signed packages; process supports relaunch.
-        // Endpoint/key live in tauri.conf.json, and release.sh enables artifacts only with a signing key.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        // No auto-updater: heddle never phones an update endpoint (HED-38). Releases are published on
+        // GitHub; the Help menu links there. (The updater + process plugins were removed with it.)
         .manage(PtyManager::new())
         .manage(WebServer::new())
         .manage(browser::BrowserManager::new())
@@ -441,26 +447,27 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     .version(Some(app.package_info().version.to_string()))
                     .copyright(Some("© 2026 Very Good Fiber Goods (VGFG) · based on VelaTerm © VLINX Software (MIT)"))
                     .build();
-                let check_update_item =
-                    MenuItemBuilder::with_id("check-update", "Check for Updates…").build(app)?;
+                // No in-app updater (HED-38): point users at the GitHub releases page instead.
+                let releases_item =
+                    MenuItemBuilder::with_id("releases", "Releases on GitHub…").build(app)?;
                 let settings_item = MenuItemBuilder::with_id("settings", "Settings…")
                     .accelerator("CmdOrCtrl+,")
                     .build(app)?;
                 let install_vela_item = MenuItemBuilder::with_id(
                     "install-vela-command",
-                    "Install 'vela' Command in PATH…",
+                    "Install 'heddle' Command in PATH…",
                 )
                 .enabled(!cfg!(debug_assertions))
                 .build(app)?;
                 let uninstall_vela_item = MenuItemBuilder::with_id(
                     "uninstall-vela-command",
-                    "Uninstall 'vela' Command from PATH…",
+                    "Uninstall 'heddle' Command from PATH…",
                 )
                 .enabled(!cfg!(debug_assertions))
                 .build(app)?;
                 let app_menu = SubmenuBuilder::new(app, &app_name)
                     .about(Some(about_meta))
-                    .item(&check_update_item)
+                    .item(&releases_item)
                     .separator()
                     .item(&settings_item)
                     .separator()
@@ -519,7 +526,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     let id = event.id().0.as_str();
                     match id {
                         // Forward custom application and terminal commands to the frontend.
-                        "settings" | "check-update" | "share" | "split-right" | "split-down" => {
+                        "settings" | "share" | "split-right" | "split-down" => {
                             let _ = app_handle.emit("menu://action", id);
                         }
                         // Like VS Code, install/remove the PATH shim only on explicit user action and
@@ -535,20 +542,20 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                             let (message, kind) = match result {
                                 Ok(status) if status.installed => (
                                     format!(
-                                        "The 'vela' command is ready at:\n{}\n\nRun: vela <project-path>",
+                                        "The 'heddle' command is ready at:\n{}\n\nRun: heddle <project-path>",
                                         status.path.as_deref().unwrap_or("PATH")
                                     ),
                                     MessageDialogKind::Info,
                                 ),
                                 Ok(status) if status.conflict.is_some() => (
                                     format!(
-                                        "A different 'vela' command remains at:\n{}\n\nheddle did not modify it.",
+                                        "A different 'heddle' command remains at:\n{}\n\nheddle did not modify it.",
                                         status.conflict.as_deref().unwrap_or("PATH")
                                     ),
                                     MessageDialogKind::Warning,
                                 ),
                                 Ok(_) => (
-                                    "The heddle-managed 'vela' command was removed from PATH."
+                                    "Removed the heddle-managed 'heddle' command (and any legacy 'vela' shim) from PATH, if present."
                                         .to_string(),
                                     MessageDialogKind::Info,
                                 ),
@@ -558,23 +565,29 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                                 .dialog()
                                 .message(message)
                                 .title(if installing {
-                                    "Install 'vela' Command"
+                                    "Install 'heddle' Command"
                                 } else {
-                                    "Uninstall 'vela' Command"
+                                    "Uninstall 'heddle' Command"
                                 })
                                 .kind(kind)
                                 .show(|_| {});
                         }
-                        // Open help URLs directly through the Rust-side opener.
+                        // Open help URLs directly through the Rust-side opener. All of them point at the
+                        // heddle GitHub repository — the app never contacts a VelaTerm/heddle.app host.
                         "visit-website" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://heddle.app", None::<&str>);
+                                .open_url(HEDDLE_REPO_URL, None::<&str>);
                         }
                         "send-feedback" => {
                             let _ = app_handle
                                 .opener()
-                                .open_url("https://heddle.app/feedback", None::<&str>);
+                                .open_url(HEDDLE_ISSUES_URL, None::<&str>);
+                        }
+                        "releases" => {
+                            let _ = app_handle
+                                .opener()
+                                .open_url(HEDDLE_RELEASES_URL, None::<&str>);
                         }
                         _ => {}
                     }
@@ -594,7 +607,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 .map_err(|e| format!("failed to create data dir: {e}"))?;
             // Record data_dir so Windows SSH connections prefer bundled tools over a broken/missing PATH install.
             ssh_remote::set_data_dir(data_dir.clone());
-            let db = Db::open(&data_dir.join("vlx-term.db"))?;
+            let db = Db::open(&db::app_db_path(&data_dir))?;
 
             // When cleanup is enabled, remove pasted images older than 24h left by crashes. Normal exit
             // removes this process's files precisely; disabling the setting skips both paths.
@@ -616,10 +629,10 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             #[cfg(all(not(debug_assertions), not(target_os = "macos")))]
             match agent::spawn_cli::install_user_cli() {
                 Ok(status) => println!(
-                    "vela command ready: {}",
+                    "heddle command ready: {}",
                     status.path.as_deref().unwrap_or("PATH")
                 ),
-                Err(e) => eprintln!("failed to install vela command in PATH: {e}"),
+                Err(e) => eprintln!("failed to install heddle command in PATH: {e}"),
             }
             // Refresh bundled skills in both Claude/Codex user directories on every version.
             agent::spawn_cli::refresh_installed_skills();
@@ -822,6 +835,8 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             commands::url_trust_fingerprint,
             commands::open_devtools,
             // Desktop-only SSH connection, provisioning, serve, forwarding, and auto-login.
+            // (Disabled in heddle builds — HED-42; `ssh_remote_available` tells the UI.)
+            commands::ssh_remote_available,
             commands::ssh_probe_host,
             commands::ssh_trust_host,
             commands::ssh_connect,
@@ -1029,7 +1044,7 @@ fn serve_data_dir(args: &ServeArgs, identifier: &str) -> Result<std::path::PathB
     )
 }
 
-/// Pure-CLI headless entry point for `vlx-term --serve`.
+/// Pure-CLI headless entry point for `heddle --serve`.
 ///
 /// Build no Tauri app/window/display dependency. Construct GUI-equivalent Db/PtyManager/HookServer
 /// state under AppCtx::Headless and reuse the HTTPS/login/WebSocket/PTY service. Ctrl+C/SIGTERM shuts
@@ -1042,16 +1057,16 @@ pub fn run_serve(args: &[String]) {
     let parsed = match parse_serve_args(args, env_password) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("vlx-term --serve failed to start: {e}");
+            eprintln!("heddle --serve failed to start: {e}");
             eprintln!(
-                "usage: vlx-term --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
+                "usage: heddle --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
             );
             std::process::exit(1);
         }
     };
 
     if let Err(e) = serve_main(&parsed) {
-        eprintln!("vlx-term --serve failed to start: {e}");
+        eprintln!("heddle --serve failed to start: {e}");
         std::process::exit(1);
     }
 }
@@ -1061,7 +1076,7 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     let identifier = serve_identifier();
     let data_dir = serve_data_dir(args, &identifier)?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("failed to create data dir: {e}"))?;
-    let db = Db::open(&data_dir.join("vlx-term.db"))?;
+    let db = Db::open(&db::app_db_path(&data_dir))?;
 
     // Match GUI cleanup of stale pasted images from abnormal exits when enabled.
     if pasted_image_cleanup_enabled(&db) {
@@ -1107,7 +1122,7 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     }
     let status = web.start(ctx.clone(), &args.password, Some(args.port), mode)?;
 
-    println!("vlx-term headless server started");
+    println!("heddle headless server started");
     println!("  data dir: {}", data_dir.display());
 
     // Print a fully usable preferred URL first. LAN TLS requires the complete #pair fragment with
