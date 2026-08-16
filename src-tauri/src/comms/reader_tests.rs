@@ -462,3 +462,52 @@ fn initial_load_returns_newest_tail_and_limit_is_capped_at_500() {
     let fids: Vec<i64> = forward.messages.iter().map(|m| m.id).collect();
     assert_eq!(fids, vec![506, 507]);
 }
+
+#[test]
+fn an_open_needs_human_item_behind_a_long_run_of_replied_ones_is_still_reported() {
+    // gitar's edge case on #25: with a single 200-row candidate batch, an open item sitting past
+    // position 200 (because the newest candidates are all already replied) was silently dropped —
+    // the queue would under-report an item that genuinely needs Maya. The descending page walk
+    // must keep descending until it finds open items or the rows run out.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA_SQL).unwrap();
+    conn.execute_batch(
+        "INSERT INTO participants (address, kind, first_seen, last_seen) VALUES \
+         ('V', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'), \
+         ('R', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
+    )
+    .unwrap();
+    // id 1 = the OLD open item. ids 2..=261 = 260 newer needs-human rows, every one replied.
+    conn.execute_batch(
+        "INSERT INTO messages (ts, sender, target, kind, tier, verified, body) \
+         VALUES ('2026-01-01T00:00:00.000Z', 'V', '#fleet', 'needs-human', 'agent-message', 0, \
+                 'the genuinely open one, buried under 260 answered requests');",
+    )
+    .unwrap();
+    conn.execute_batch(
+        "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 260) \
+         INSERT INTO messages (ts, sender, target, kind, tier, verified, body) \
+         SELECT '2026-01-02T00:00:00.000Z', 'V', '#fleet', 'needs-human', 'agent-message', 0, \
+                'answered ' || n FROM c;",
+    )
+    .unwrap();
+    // Reply to every one of those 260 (ids 2..=261), leaving only id 1 open.
+    conn.execute_batch(
+        "WITH RECURSIVE c(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM c WHERE n < 261) \
+         INSERT INTO messages (ts, sender, target, kind, tier, verified, body, reply_to) \
+         SELECT '2026-01-03T00:00:00.000Z', 'R', '#fleet', 'chat', 'agent-message', 0, \
+                'answered', n FROM c;",
+    )
+    .unwrap();
+    drop(conn);
+
+    let snap = rooms_at(&path).unwrap();
+    let ids: Vec<i64> = snap.needs_human.iter().map(|r| r.id).collect();
+    assert_eq!(
+        ids,
+        vec![1],
+        "the one open item must survive the walk past 260 replied candidates"
+    );
+}
