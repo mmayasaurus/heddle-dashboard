@@ -109,7 +109,7 @@ fn read_json(path: &Path) -> Option<Value> {
 fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit> {
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
-        let file = read_json(&dir.join(format!("claude-{}.json", a.id)));
+        let file = freshest_account_file(dir, &a.id);
         rows.push(row(a, file.as_ref(), now));
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -148,6 +148,29 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
         rows.push(row(&acct, file.as_ref(), now));
     }
     rows
+}
+
+/// The statusline tap has measured usage; the keeper anchor records an otherwise invisible
+/// headless ping. Match the keeper's `window()` rule: whichever was captured most recently wins.
+fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
+    let tap = read_json(&dir.join(format!("claude-{id}.json")));
+    let keeper = read_json(&dir.join(format!("claude-{id}.keeper.json"))).map(|anchor| {
+        serde_json::json!({
+            "capturedAt": anchor["startedAt"],
+            "rate_limits": {
+                "five_hour": {"used_percentage": Value::Null, "resets_at": anchor["resets_at"]},
+                "seven_day": {"used_percentage": Value::Null, "resets_at": Value::Null},
+            },
+        })
+    });
+    match (tap, keeper) {
+        (Some(tap), Some(keeper)) => {
+            let tap_at = tap["capturedAt"].as_i64().unwrap_or_default();
+            let keeper_at = keeper["capturedAt"].as_i64().unwrap_or_default();
+            Some(if tap_at >= keeper_at { tap } else { keeper })
+        }
+        (tap, keeper) => tap.or(keeper),
+    }
 }
 
 /// The tap-shaped empty entry, for when neither the active account nor the legacy file has data.

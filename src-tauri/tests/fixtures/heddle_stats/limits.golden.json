@@ -1,16 +1,119 @@
 {
   "limits": [
     {
-      "accounts": null,
-      "activeAccount": null,
+      "accounts": [
+        {
+          "capturedAt": 1786831140,
+          "detail": {
+            "account": "acct1",
+            "configDir": null,
+            "model": "claude-fable-5"
+          },
+          "fiveHour": {
+            "resetsAt": 1786846200,
+            "usedPercentage": 32.0
+          },
+          "id": "acct1",
+          "label": "o…@example.com",
+          "limitReached": false,
+          "loggedIn": true,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": 1786892400,
+            "usedPercentage": 24.0
+          },
+          "stale": false,
+          "windows": []
+        },
+        {
+          "capturedAt": null,
+          "detail": {
+            "account": "acct2",
+            "configDir": "/tmp/acct2",
+            "model": null
+          },
+          "fiveHour": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "id": "acct2",
+          "label": "t…@example.org",
+          "limitReached": null,
+          "loggedIn": true,
+          "note": "no capture yet — no session on this account has rendered a statusline since the tap was installed",
+          "noteCodes": [
+            "claude.noCapture"
+          ],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": null,
+          "windows": []
+        },
+        {
+          "capturedAt": 1786831170,
+          "detail": {
+            "account": "acct3",
+            "configDir": "/tmp/acct3",
+            "model": null
+          },
+          "fiveHour": {
+            "resetsAt": 1786849200,
+            "usedPercentage": null
+          },
+          "id": "acct3",
+          "label": "t…@example.net",
+          "limitReached": null,
+          "loggedIn": false,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": false,
+          "windows": []
+        },
+        {
+          "capturedAt": 1786831180,
+          "detail": {
+            "account": "acct4",
+            "configDir": "/tmp/acct4",
+            "model": null
+          },
+          "fiveHour": {
+            "resetsAt": 1786849200,
+            "usedPercentage": null
+          },
+          "id": "acct4",
+          "label": "f…@example.net",
+          "limitReached": null,
+          "loggedIn": true,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": false,
+          "windows": []
+        }
+      ],
+      "activeAccount": "acct1",
       "capturedAt": 1786831140,
       "fiveHour": {
         "resetsAt": 1786846200,
         "usedPercentage": 32.0
       },
-      "model": "claude-fable-5",
+      "model": "claude-fable-5 · 4 acct",
       "note": null,
-      "noteCodes": null,
+      "noteCodes": [],
       "provider": "claude",
       "sevenDay": {
         "resetsAt": 1786892400,
@@ -19,7 +122,7 @@
       "source": "statusline-tap",
       "stale": false,
       "staleAfterSecs": 600,
-      "windows": null
+      "windows": []
     },
     {
       "accounts": [

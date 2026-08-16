@@ -8,6 +8,8 @@ vi.mock("../../i18n", () => ({
   useT: () => (key: string) => ({
     "fleet.loggedOut": "logged out — /login needed",
     "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
+    "fleet.loginUnknown": "login state unknown",
+    "fleet.rotateAccounts": "Rotate Claude accounts",
   }[key] ?? key),
 }));
 vi.mock("../../store/termStore", () => ({
@@ -65,5 +67,38 @@ describe("FleetDrawer Claude account cycler", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
     expect(screen.getByText("acct3")).toBeTruthy();
+  });
+
+  it("renders a single Claude account detail without a rotate control or duplicate cap lines", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        model: "claude · 1 acct",
+        accounts: [claude.accounts[2]],
+        activeAccount: "acct3",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Rotate Claude accounts" })).toBeNull();
+    expect(screen.queryByText("1/1")).toBeNull();
+    expect(screen.getAllByText("5h")).toHaveLength(1);
+  });
+
+  it("shows unknown login state without a keeper estimate", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[1], loggedIn: null }],
+        activeAccount: "acct2",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("login state unknown")).toBeTruthy());
+    expect(screen.queryByText("window live (keeper est.) — % appears after the first render on this account")).toBeNull();
   });
 });

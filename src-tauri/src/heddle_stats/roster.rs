@@ -67,11 +67,13 @@ fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or(comm);
+            // Linux caveat: `comm` truncates to 15 characters and node-wrapper launches report
+            // `node`; this macOS-only app does not handle either case.
+            let basename = basename.to_ascii_lowercase();
+            let expect = expect.to_ascii_lowercase();
             Some((
                 pid,
-                basename
-                    .to_ascii_lowercase()
-                    .contains(&expect.to_ascii_lowercase()),
+                basename == expect || basename == format!("{expect}.exe"),
             ))
         })
         .collect()
@@ -84,14 +86,47 @@ mod tests {
     #[test]
     fn ps_liveness_requires_a_claude_executable_for_each_candidate_pid() {
         let live = parse_ps_liveness(
-            "  101 Google Chrome H\n  102 claude\n  103 /Users/x/.local/bin/claude\n",
+            "  101 Google Chrome H\n  102 claude\n  103 /Users/x/.local/bin/claude\n  104 claude-helper\n  105 not-claude\n  106 CLAUDE.EXE\n",
             "claude",
         );
 
         assert_eq!(live.get(&101), Some(&false));
         assert_eq!(live.get(&102), Some(&true));
         assert_eq!(live.get(&103), Some(&true));
+        assert_eq!(live.get(&104), Some(&false));
+        assert_eq!(live.get(&105), Some(&false));
+        assert_eq!(live.get(&106), Some(&true));
         assert!(!live.get(&104).copied().unwrap_or(false));
+    }
+
+    #[test]
+    fn worker_matching_prefers_the_live_duplicate_agent_name() {
+        let agents = vec![
+            FleetAgent {
+                name: "r".to_string(),
+                pid: 1,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "r".to_string(),
+                pid: 2,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+        ];
+
+        assert_eq!(matching_agent_index(&agents, Some("r")), Some(1));
     }
 }
 
@@ -147,6 +182,10 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         return agents;
     }
 
+    verify_and_retain(agents)
+}
+
+fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
     let pids = agents
         .iter()
         .map(|agent| agent.pid.to_string())
@@ -156,7 +195,10 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         .args(["-p", &pids, "-o", "pid=,comm="])
         .output()
         .ok()
-        .map(|output| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"));
+        .and_then(|output| {
+            (output.status.success() && !output.stdout.is_empty())
+                .then(|| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"))
+        });
     const SESSION_STALE_AFTER_MS: i64 = 48 * 60 * 60 * 1000;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -178,6 +220,17 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         kept.push(agent);
     }
     kept
+}
+
+fn matching_agent_index(agents: &[FleetAgent], orchestrator: Option<&str>) -> Option<usize> {
+    agents
+        .iter()
+        .position(|agent| agent.alive && Some(agent.name.as_str()) == orchestrator)
+        .or_else(|| {
+            agents
+                .iter()
+                .position(|agent| Some(agent.name.as_str()) == orchestrator)
+        })
 }
 
 fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
@@ -215,10 +268,8 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 
     let mut orphaned = Vec::new();
     for (orchestrator, worker) in rows.flatten() {
-        if let Some(agent) = agents
-            .iter_mut()
-            .find(|agent| Some(agent.name.as_str()) == orchestrator.as_deref())
-        {
+        if let Some(index) = matching_agent_index(agents, orchestrator.as_deref()) {
+            let agent = &mut agents[index];
             agent.workers.push(worker);
         } else {
             orphaned.push(worker);

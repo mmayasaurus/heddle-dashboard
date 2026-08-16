@@ -30,6 +30,8 @@ const en = {
   "fleet.allAgents": "All agents",
   "fleet.loggedOut": "logged out — /login needed",
   "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
+  "fleet.loginUnknown": "login state unknown",
+  "fleet.rotateAccounts": "Rotate Claude accounts",
   "common.loading": "Loading…",
   "common.prev": "Previous",
   "common.next": "Next",
