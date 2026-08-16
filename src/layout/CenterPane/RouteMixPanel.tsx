@@ -152,7 +152,7 @@ export function RouteMixPanel({ claudeFiveHourPct }: { claudeFiveHourPct: number
           setLoaded(true);
           setErr(null);
         })
-        .catch((e) => {
+        .catch((e: unknown) => {
           if (alive) setErr(String(e));
         });
     void load();

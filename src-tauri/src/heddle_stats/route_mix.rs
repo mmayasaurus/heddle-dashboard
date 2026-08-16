@@ -135,7 +135,12 @@ fn route_mix_from(conn: &Connection, window_hours: i64, cutoff: &str) -> Result<
         }
     }
 
-    // Orchestrator counts over the whole window.
+    let orchestrators = orchestrator_counts(conn, cutoff)?;
+    Ok(RouteMix { window_hours, hours, orchestrators })
+}
+
+/// Per-orchestrator dispatch counts over the whole window (same TEST exclusion as the buckets).
+fn orchestrator_counts(conn: &Connection, cutoff: &str) -> Result<Vec<OrchestratorCount>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT COALESCE(orchestrator, '?') AS orchestrator,
@@ -146,19 +151,16 @@ fn route_mix_from(conn: &Connection, window_hours: i64, cutoff: &str) -> Result<
              ORDER BY dispatches DESC, orchestrator ASC",
         )
         .map_err(|e| e.to_string())?;
-    let orchestrators = stmt
-        .query_map([cutoff], |r| {
-            Ok(OrchestratorCount {
-                orchestrator: r.get("orchestrator")?,
-                dispatches: r.get("dispatches")?,
-                succeeded: r.get::<_, Option<i64>>("succeeded")?.unwrap_or(0),
-            })
+    stmt.query_map([cutoff], |r| {
+        Ok(OrchestratorCount {
+            orchestrator: r.get("orchestrator")?,
+            dispatches: r.get("dispatches")?,
+            succeeded: r.get::<_, Option<i64>>("succeeded")?.unwrap_or(0),
         })
-        .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|e| e.to_string())?;
-
-    Ok(RouteMix { window_hours, hours, orchestrators })
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

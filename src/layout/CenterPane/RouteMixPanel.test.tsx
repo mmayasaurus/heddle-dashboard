@@ -75,13 +75,14 @@ describe("RouteMixPanel — route-mix scoreboard (HED-69)", () => {
   });
 
   it("never flashes the empty state before the first load, then shows it honestly", async () => {
-    let resolve!: (v: unknown) => void;
+    let resolve!: (value: unknown) => void;
     invoke.mockReturnValue(new Promise((res) => (resolve = res)));
     render(<RouteMixPanel claudeFiveHourPct={null} />);
     // Pending load: no empty-state claim about a ledger nobody has read yet.
     expect(screen.queryByText("fleet.routeMix.empty")).toBeNull();
     await act(async () => {
       resolve({ windowHours: 6, hours: [], orchestrators: [] });
+      await Promise.resolve(); // let the .then chain deliver before asserting
     });
     expect(screen.getByText("fleet.routeMix.empty")).toBeTruthy();
   });
