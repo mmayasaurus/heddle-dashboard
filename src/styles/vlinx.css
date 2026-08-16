@@ -385,7 +385,9 @@ svg { display: block; }
 .fleet-provcap-refresh { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-refresh:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-refresh:disabled { opacity: 0.5; }
-.fleet-provcap-refresh.refreshing { animation: fleet-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .fleet-provcap-refresh.refreshing { animation: fleet-spin 0.7s linear infinite; }
+}
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
 .fleet-capline { display: flex; align-items: center; gap: 8px; }
