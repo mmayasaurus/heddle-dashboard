@@ -188,6 +188,8 @@ pub(super) fn parse_cache(v: &Value, now: i64) -> Option<ProviderLimit> {
         accounts: Some(accounts),
         active_account: None,
         windows: Some(windows),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     })
 }
 
@@ -242,6 +244,7 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
             id: String::new(),
             label,
             plan: None,
+            logged_in: None,
             captured_at: None,
             stale: None,
             five_hour: LimitWindow::default(),
@@ -254,6 +257,8 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
             ),
             note_codes: vec![CODE_ACCOUNT_FETCH_FAILED.to_string()],
             detail: None,
+            fable_weekly_estimate_pct: None,
+            fable_weekly_samples: None,
         };
     }
     let rl = &data["rate_limit"];
@@ -263,6 +268,7 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
         id: String::new(),
         label,
         plan: data["plan_type"].as_str().map(str::to_string),
+        logged_in: None,
         captured_at: None,
         stale: None,
         five_hour,
@@ -272,6 +278,8 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
         note,
         note_codes,
         detail: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
 }
 

@@ -340,6 +340,7 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             .as_str()
             .or(acct["membershipHint"].as_str())
             .map(str::to_string),
+        logged_in: None,
         captured_at: fetched_at,
         stale: is_stale(fetched_at, now, STALE_AFTER_SECS),
         five_hour: LimitWindow::default(),
@@ -356,6 +357,8 @@ pub(super) fn account_row(acct: &Value, now: i64) -> AccountLimit {
             cycle_end,
             on_demand,
         )),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
 }
 

@@ -1,16 +1,143 @@
 {
   "limits": [
     {
-      "accounts": null,
-      "activeAccount": null,
+      "accounts": [
+        {
+          "capturedAt": 1786831140,
+          "detail": {
+            "account": "acct1",
+            "configDir": null,
+            "fableWeekly": {
+              "exact": false,
+              "fablePct": 0.0,
+              "lastCapturedAt": 1786831140,
+              "minSamples": 3,
+              "otherPct": 0.0,
+              "samples": 0,
+              "unknownPct": 24.0,
+              "updatedAt": 1786831200,
+              "windowResetsAt": 1786892400
+            },
+            "model": "claude-fable-5"
+          },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": 0,
+          "fiveHour": {
+            "resetsAt": 1786846200,
+            "usedPercentage": 32.0
+          },
+          "id": "acct1",
+          "label": "o…@example.com",
+          "limitReached": false,
+          "loggedIn": true,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": 1786892400,
+            "usedPercentage": 24.0
+          },
+          "stale": false,
+          "windows": []
+        },
+        {
+          "capturedAt": null,
+          "detail": {
+            "account": "acct2",
+            "configDir": "/tmp/acct2",
+            "fableWeekly": null,
+            "model": null
+          },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
+          "fiveHour": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "id": "acct2",
+          "label": "t…@example.org",
+          "limitReached": null,
+          "loggedIn": true,
+          "note": "no capture yet — no session on this account has rendered a statusline since the tap was installed",
+          "noteCodes": [
+            "claude.noCapture"
+          ],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": null,
+          "windows": []
+        },
+        {
+          "capturedAt": 1786831170,
+          "detail": {
+            "account": "acct3",
+            "configDir": "/tmp/acct3",
+            "fableWeekly": null,
+            "model": null
+          },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
+          "fiveHour": {
+            "resetsAt": 1786849200,
+            "usedPercentage": null
+          },
+          "id": "acct3",
+          "label": "t…@example.net",
+          "limitReached": null,
+          "loggedIn": false,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": false,
+          "windows": []
+        },
+        {
+          "capturedAt": 1786831180,
+          "detail": {
+            "account": "acct4",
+            "configDir": "/tmp/acct4",
+            "fableWeekly": null,
+            "model": null
+          },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
+          "fiveHour": {
+            "resetsAt": 1786849200,
+            "usedPercentage": null
+          },
+          "id": "acct4",
+          "label": "f…@example.net",
+          "limitReached": null,
+          "loggedIn": true,
+          "note": null,
+          "noteCodes": [],
+          "plan": null,
+          "sevenDay": {
+            "resetsAt": null,
+            "usedPercentage": null
+          },
+          "stale": false,
+          "windows": []
+        }
+      ],
+      "activeAccount": "acct1",
       "capturedAt": 1786831140,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": 0,
       "fiveHour": {
         "resetsAt": 1786846200,
         "usedPercentage": 32.0
       },
-      "model": "claude-fable-5",
+      "model": "claude-fable-5 · 4 acct",
       "note": null,
-      "noteCodes": null,
+      "noteCodes": [],
       "provider": "claude",
       "sevenDay": {
         "resetsAt": 1786892400,
@@ -19,13 +146,15 @@
       "source": "statusline-tap",
       "stale": false,
       "staleAfterSecs": 600,
-      "windows": null
+      "windows": []
     },
     {
       "accounts": [
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -33,6 +162,7 @@
           "id": "00000000-0000-0000-0000-000000000007",
           "label": "a…@example.com",
           "limitReached": false,
+          "loggedIn": null,
           "note": null,
           "noteCodes": [],
           "plan": "prolite",
@@ -56,6 +186,8 @@
         {
           "capturedAt": 1786831170,
           "detail": null,
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -63,6 +195,7 @@
           "id": "00000000-0000-0000-0000-000000000005",
           "label": "b…@example.org",
           "limitReached": false,
+          "loggedIn": null,
           "note": null,
           "noteCodes": [],
           "plan": "pro",
@@ -86,6 +219,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831170,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -151,6 +286,8 @@
             "source": "cursor-ide",
             "tokenExpiresAt": 1789423200
           },
+          "fableWeeklyEstimatePct": null,
+          "fableWeeklySamples": null,
           "fiveHour": {
             "resetsAt": null,
             "usedPercentage": null
@@ -158,6 +295,7 @@
           "id": "cursor-ide",
           "label": "v…@example.com",
           "limitReached": false,
+          "loggedIn": null,
           "note": "You've used 17% of your included total usage; You've used 87% of your included API usage; included API pool used up ($400.00 of $400.00) — named third-party models bill on-demand until the cycle resets",
           "noteCodes": [
             "cursor.includedApiExhausted"
@@ -201,6 +339,8 @@
       ],
       "activeAccount": null,
       "capturedAt": 1786831155,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": null,
         "usedPercentage": null
@@ -250,6 +390,8 @@
       "accounts": null,
       "activeAccount": null,
       "capturedAt": 1786831110,
+      "fableWeeklyEstimatePct": null,
+      "fableWeeklySamples": null,
       "fiveHour": {
         "resetsAt": 1786840240,
         "usedPercentage": 3.931260108947765

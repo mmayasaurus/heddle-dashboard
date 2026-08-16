@@ -180,3 +180,48 @@ describe("foldCapSample / deriveCapDelta — the cap-delta arithmetic", () => {
     expect(deriveCapDelta(s, "2026-08-16T03")).toEqual({ kind: "delta", points: 4, afterReset: true });
   });
 });
+
+describe("RouteMixPanel — malformed payloads must not take the drawer down", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(T0);
+    resetCapStoreForTest();
+    invoke.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  // This panel renders inside FleetDrawer: a throw here unmounts the WHOLE drawer, taking the
+  // roster, caps and dispatch list with it. Regression caught for real — FleetDrawer's browser
+  // test resolves unknown commands to [], and `[].hours.map` crashed the drawer.
+  it.each([
+    ["an array (a catch-all mock or an older backend)", [] as unknown],
+    ["null", null as unknown],
+    ["an object with no hours key", { windowHours: 6 } as unknown],
+  ])("renders the honest empty state instead of throwing for %s", async (_label, payload) => {
+    invoke.mockResolvedValue(payload);
+    render(<RouteMixPanel claudeFiveHourPct={null} />);
+    // Reaching the empty state at all proves the component mounted and survived the payload.
+    expect(await screen.findByText("fleet.routeMix.empty")).toBeTruthy();
+  });
+
+  it("drops malformed buckets and still renders the good ones", async () => {
+    invoke.mockResolvedValue({
+      windowHours: 6,
+      hours: [
+        null, // no bucket at all
+        { hour: "2026-08-16T01" }, // missing providers array — would crash .map
+        { hour: NOW_HOUR, providers: [{ provider: "codex", dispatches: 1, inputTokens: 900, outputTokens: 100 }] },
+      ],
+      orchestrators: [null, { orchestrator: "R", dispatches: 2, succeeded: 2 }],
+    });
+    render(<RouteMixPanel claudeFiveHourPct={null} />);
+    // The one well-formed bucket and orchestrator survive; the malformed entries are dropped
+    // rather than taking the drawer down with them.
+    expect(await screen.findByText("codex 1.0k")).toBeTruthy();
+    expect(screen.getByText("R×2")).toBeTruthy();
+    expect(screen.queryByText("fleet.routeMix.empty")).toBeNull();
+  });
+});

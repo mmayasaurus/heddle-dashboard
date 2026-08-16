@@ -7,7 +7,8 @@ const REGISTRY: &str = r#"{
   "claude": [
     {"id": "acct1", "configDir": null, "email": "one@example.com", "loggedIn": true},
     {"id": "acct2", "configDir": "/tmp/heddle-claude-tests/.claude-acct2", "email": "two@example.org", "loggedIn": true},
-    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": true}
+    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": false},
+    {"id": "acct4", "configDir": "/tmp/heddle-claude-tests/.claude-acct4", "email": "four@example.net", "loggedIn": true}
   ]
 }"#;
 
@@ -47,7 +48,7 @@ fn registry() -> Vec<Account> {
 #[test]
 fn registry_parses_ids_config_dirs_and_emails() {
     let r = registry();
-    assert_eq!(r.len(), 3);
+    assert_eq!(r.len(), 4);
     assert_eq!(r[0].id, "acct1");
     assert_eq!(r[0].config_dir, None);
     assert_eq!(
@@ -55,6 +56,8 @@ fn registry_parses_ids_config_dirs_and_emails() {
         Some(Path::new("/tmp/heddle-claude-tests/.claude-acct2"))
     );
     assert_eq!(r[2].email.as_deref(), Some("three@example.net"));
+    assert_eq!(r[0].logged_in, Some(true));
+    assert_eq!(r[2].logged_in, Some(false));
     assert!(parse_registry(&serde_json::json!({})).is_empty());
 }
 
@@ -114,19 +117,20 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     // acct3: no capture yet.
     let l = build(&s.0, &registry(), None, now).unwrap();
     assert_eq!(l.provider, "claude");
-    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 3 acct"));
+    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 4 acct"));
     assert_eq!(l.active_account.as_deref(), Some("acct1"));
     assert_eq!(l.five_hour.used_percentage, Some(32.0));
     assert_eq!(l.source.as_deref(), Some("statusline-tap"));
     assert_eq!(l.stale, Some(false));
     let rows = l.accounts.unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
     assert_eq!(rows[0].id, "acct1");
     assert_eq!(rows[0].label, "o…@example.com");
     assert_eq!(rows[0].five_hour.used_percentage, Some(32.0));
     assert_eq!(rows[0].captured_at, Some(now - 60));
     assert_eq!(rows[0].stale, Some(false));
     assert_eq!(rows[0].limit_reached, Some(false));
+    assert_eq!(rows[0].logged_in, Some(true));
     assert_eq!(rows[0].detail.as_ref().unwrap()["model"], "claude-fable-5");
     // acct2: at 100% → limitReached + code; captured 700s ago → stale.
     assert_eq!(rows[1].id, "acct2");
@@ -139,12 +143,51 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     assert_eq!(rows[2].five_hour, LimitWindow::default());
     assert_eq!(rows[2].limit_reached, None);
     assert_eq!(rows[2].note_codes, vec![CODE_NO_CAPTURE]);
+    assert_eq!(rows[2].logged_in, Some(false));
+    assert_eq!(rows[3].id, "acct4");
+    assert_eq!(rows[3].note_codes, vec![CODE_NO_CAPTURE]);
     // Full emails never leak.
     let js = serde_json::to_string(&rows).unwrap();
     assert!(
         !js.contains("one@") && !js.contains("two@") && !js.contains("three@"),
         "{js}"
     );
+}
+
+#[test]
+fn keeper_anchors_supply_registered_account_windows_when_fresher_than_the_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("keeper-rows");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write(
+        "claude-acct3.keeper.json",
+        &format!(
+            r#"{{"account":"acct3","startedAt":{},"resets_at":{},"used":null}}"#,
+            now - 30,
+            now + 5 * 3600
+        ),
+    );
+    s.write(
+        "claude-acct4.keeper.json",
+        &format!(
+            r#"{{"account":"acct4","startedAt":{},"resets_at":{},"used":null}}"#,
+            now - 20,
+            now + 5 * 3600
+        ),
+    );
+
+    let rows = account_rows(&s.0, &registry(), now);
+    assert_eq!(rows[2].id, "acct3");
+    assert_eq!(rows[2].captured_at, Some(now - 30));
+    assert_eq!(rows[2].five_hour.used_percentage, None);
+    assert_eq!(rows[2].five_hour.resets_at, Some(now + 5 * 3600));
+    assert_eq!(rows[2].note_codes, Vec::<String>::new());
+    assert_eq!(rows[3].id, "acct4");
+    assert_eq!(rows[3].captured_at, Some(now - 20));
+    assert_eq!(rows[3].five_hour.resets_at, Some(now + 5 * 3600));
 }
 
 #[test]
@@ -219,8 +262,147 @@ fn unregistered_per_account_files_are_appended_as_extra_rows() {
     );
     let l = build(&s.0, &registry(), None, now).unwrap();
     let rows = l.accounts.unwrap();
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows[3].id, "unknown-claude-x");
-    assert_eq!(rows[3].label, "unknown-claude-x");
-    assert_eq!(rows[3].five_hour.used_percentage, Some(3.0));
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[4].id, "unknown-claude-x");
+    assert_eq!(rows[4].label, "unknown-claude-x");
+    assert_eq!(rows[4].five_hour.used_percentage, Some(3.0));
+}
+
+#[test]
+fn polls_accumulate_a_persisted_fable_estimate_per_account_and_surface_it_on_the_active_row() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("fable");
+    let reg = registry();
+    // Poll 1: acct1 rendered a Fable session at 10% weekly.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now - 300, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now - 300).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_samples, Some(0));
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+    assert!(
+        s.0.join("claude-acct1.attrib.json").exists(),
+        "attribution persisted"
+    );
+    // Polls 2-4: +2 (Fable), +1 (Haiku), +2 (Fable) → estimate 4% on 3 samples.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 12.0, now - 240, "acct1"),
+    );
+    build(&s.0, &reg, None, now - 240).unwrap();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-haiku-4-5", 30.0, 13.0, now - 180, "acct1"),
+    );
+    build(&s.0, &reg, None, now - 180).unwrap();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 15.0, now - 120, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now - 120).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_samples, Some(3));
+    assert_eq!(r.fable_weekly_estimate_pct, Some(4.0));
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["fablePct"], 4.0);
+    assert_eq!(fw["otherPct"], 1.0);
+    assert_eq!(fw["unknownPct"], 10.0);
+    top_level_and_idempotency(&s, &reg, now);
+    // The attribution file itself is never mistaken for an unregistered account row.
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert!(l.accounts.unwrap().iter().all(|r| !r.id.contains("attrib")));
+    // The persisted state survives a fresh process: read it back and check.
+    let persisted: Attrib = serde_json::from_str(
+        &std::fs::read_to_string(s.0.join("claude-acct1.attrib.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(persisted.samples, 3);
+    assert_eq!(persisted.fable_pct, 4.0);
+}
+
+#[test]
+fn single_file_mode_without_a_registry_still_accumulates_the_fable_estimate() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("legacy-fable");
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now - 300, "acct1"),
+    );
+    let l = build(&s.0, &[], None, now - 300).unwrap();
+    assert_eq!(l.fable_weekly_samples, Some(0));
+    assert_eq!(l.fable_weekly_estimate_pct, None);
+    assert!(s.0.join("claude-default.attrib.json").exists());
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 12.0, now - 240, "acct1"),
+    );
+    build(&s.0, &[], None, now - 240).unwrap();
+    s.write(
+        "claude.json",
+        &tap_file("claude-haiku-4-5", 30.0, 13.0, now - 180, "acct1"),
+    );
+    build(&s.0, &[], None, now - 180).unwrap();
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 15.0, now - 120, "acct1"),
+    );
+    let l = build(&s.0, &[], None, now - 120).unwrap();
+    assert_eq!(l.fable_weekly_samples, Some(3));
+    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
+    // Still the plain single-file entry otherwise (no rows).
+    assert!(l.accounts.is_none());
+}
+
+/// Second half of the accumulation test (split for the length gate): the active row's numbers ride
+/// on the top level, other accounts stay null, and re-polling the same capture never double counts.
+fn top_level_and_idempotency(s: &Scratch, reg: &[Account], now: i64) {
+    let l = build(&s.0, reg, None, now - 120).unwrap();
+    assert_eq!(l.active_account.as_deref(), Some("acct1"));
+    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
+    assert_eq!(l.fable_weekly_samples, Some(3));
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[1].fable_weekly_estimate_pct,
+        None
+    );
+    let l = build(&s.0, reg, None, now).unwrap();
+    assert_eq!(l.accounts.unwrap()[0].fable_weekly_samples, Some(3));
+}
+
+#[test]
+fn a_row_without_a_current_capture_never_surfaces_a_historical_estimate() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("stale-estimate");
+    let reg = registry();
+    // Build up a confident estimate for acct1…
+    for (i, (model, used)) in [
+        ("claude-fable-5", 10.0),
+        ("claude-fable-5", 12.0),
+        ("claude-haiku-4-5", 13.0),
+        ("claude-fable-5", 15.0),
+    ]
+    .iter()
+    .enumerate()
+    {
+        s.write(
+            "claude-acct1.json",
+            &tap_file(model, 30.0, *used, now - 400 + (i as i64) * 60, "acct1"),
+        );
+        build(&s.0, &reg, None, now - 400 + (i as i64) * 60).unwrap();
+    }
+    // …then the tap file disappears (session gone, file cleaned up).
+    std::fs::remove_file(s.0.join("claude-acct1.json")).unwrap();
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.note_codes, vec![CODE_NO_CAPTURE]);
+    assert_eq!(
+        r.fable_weekly_estimate_pct, None,
+        "no live-looking bar next to 'no capture yet'"
+    );
+    assert_eq!(r.fable_weekly_samples, None);
+    // The history stays inspectable in the detail breakdown.
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["samples"], 3);
+    assert_eq!(fw["fablePct"], 4.0);
 }

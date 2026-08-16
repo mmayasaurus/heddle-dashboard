@@ -12,7 +12,19 @@
 //   3. resets_at is epoch SECONDS (matches Claude Code + claude-hud's `new Date(v*1000)`).
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+
+function expandHome(path) {
+  return path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+}
+
+function resolvedConfigDir(path) {
+  return path ? resolve(expandHome(path)) : null;
+}
+
+function safeAccountSegment(account) {
+  return String(account).replace(/[^A-Za-z0-9._-]/g, "_");
+}
 
 let raw = "";
 process.stdin.setEncoding("utf8");
@@ -42,9 +54,10 @@ process.stdin.on("end", () => {
       let acct = null;
       try {
         const reg = JSON.parse(readFileSync(join(homedir(), ".heddle", "accounts.json"), "utf8"));
-        const cfg = process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : null;
-        const hit = (reg[provider] || []).find((a) => (a.configDir ? resolve(a.configDir) : null) === cfg);
-        acct = hit ? hit.id : (cfg ? "unknown-" + cfg.split("/").pop() : "acct1");
+        const cfg = resolvedConfigDir(process.env.CLAUDE_CONFIG_DIR);
+        const accounts = reg[provider] || [];
+        const hit = accounts.find((a) => resolvedConfigDir(a.configDir) === cfg);
+        acct = hit ? hit.id : (cfg ? "unknown-" + basename(cfg) : (accounts.find((a) => a.configDir == null)?.id ?? "default"));
       } catch { acct = null; }
       const payload = JSON.stringify({
         model,
@@ -54,7 +67,7 @@ process.stdin.on("end", () => {
         configDir: process.env.CLAUDE_CONFIG_DIR || null,
       });
       writeFileSync(join(dir, `${provider}.json`), payload);
-      if (acct) writeFileSync(join(dir, `${provider}-${acct}.json`), payload);
+      if (acct) writeFileSync(join(dir, `${provider}-${safeAccountSegment(acct)}.json`), payload);
     }
   } catch {
     /* never fail the statusline */
