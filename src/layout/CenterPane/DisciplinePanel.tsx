@@ -46,8 +46,13 @@ function normalizeDiscipline(d: unknown): Discipline {
       (r): r is DisciplineRow =>
         !!r &&
         typeof r.agent === "string" &&
-        typeof r.memtraceCalls === "number" &&
-        typeof r.serenaCalls === "number",
+        Number.isFinite(r.memtraceCalls) &&
+        Number.isFinite(r.serenaCalls) &&
+        // gate MUST be validated, not merely read: an undefined gate renders the red "gate OFF"
+        // state, which is precisely the false accusation this coercion exists to prevent. A row
+        // that cannot say whether the gate was on has no business claiming it was off.
+        typeof r.gate === "boolean" &&
+        Number.isFinite(r.deniedCalls),
     ),
     legacyUnattributedMemtrace:
       typeof o.legacyUnattributedMemtrace === "number" ? o.legacyUnattributedMemtrace : 0,

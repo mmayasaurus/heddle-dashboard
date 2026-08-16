@@ -97,6 +97,23 @@ describe("DisciplinePanel — malformed payloads must not take the drawer down",
     expect(await screen.findByText("fleet.discipline.empty")).toBeTruthy();
   });
 
+  it("drops a row that omits gate rather than rendering it as the red gate-OFF accusation", async () => {
+    invoke.mockResolvedValue({
+      windowHours: 24,
+      rows: [
+        // Passes the counter checks but says nothing about the gate. Reading r.gate here would
+        // render the red "gate OFF" chip against S on data the backend never sent.
+        { agent: "S", repoId: "heddle", memtraceCalls: 3, serenaCalls: 1, deniedCalls: 0, lastTs: "2026-08-16T00:54:30Z" },
+        { agent: "W", repoId: "heddle", memtraceCalls: 4, serenaCalls: 0, deniedCalls: 0, gate: true, lastTs: "2026-08-16T00:54:30Z" },
+      ],
+      legacyUnattributedMemtrace: 0,
+    });
+    render(<DisciplinePanel liveAgents={[]} />);
+    await waitFor(() => expect(screen.getByText("memtrace ×4")).toBeTruthy());
+    expect(screen.queryByText("fleet.discipline.gateOff")).toBeNull();
+    expect(screen.queryByText("memtrace ×3")).toBeNull();
+  });
+
   it("drops rows missing their counters instead of rendering invented numbers", async () => {
     invoke.mockResolvedValue({
       windowHours: 24,
