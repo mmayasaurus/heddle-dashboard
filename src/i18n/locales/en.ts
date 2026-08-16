@@ -946,6 +946,7 @@ const en = {
   "fleet.comms.needsHuman": "Needs human",
   "fleet.comms.operatorSeal": "operator",
   "fleet.comms.directiveChip": (target: string) => `DIRECTIVE → ${target}`,
+  "fleet.comms.fleetPresence": "Fleet",
 };
 
 export default en;

@@ -35,8 +35,8 @@ function mkMsg(id: number, target: string): CommsMessage {
     deliveries: null,
   };
 }
-function mkNeedsHumanRow(id: number): CommsNeedsHumanRow {
-  return { id, ts: "2026-08-16T17:00:00Z", sender: "U", target: "#fleet", kind: "needs-human", body: `row ${id}` };
+function mkNeedsHumanRow(id: number, overrides: Partial<CommsNeedsHumanRow> = {}): CommsNeedsHumanRow {
+  return { id, ts: "2026-08-16T17:00:00Z", sender: "U", target: "#fleet", kind: "needs-human", body: `row ${id}`, ...overrides };
 }
 
 let roomsResponse: {
@@ -196,5 +196,63 @@ describe("ChatroomPane shell", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("fix 6: the needs-human badge renders '50+' at the 50-row cap, and the exact count otherwise", async () => {
+    roomsResponse.needsHuman = Array.from({ length: 50 }, (_, i) => mkNeedsHumanRow(i + 1));
+    render(<ChatroomPane />);
+    expect((await screen.findByTestId("comms-strip-needs-badge")).textContent).toBe("50+");
+  });
+
+  it("fix 6: 49 rows render the exact count, not '50+'", async () => {
+    roomsResponse.needsHuman = Array.from({ length: 49 }, (_, i) => mkNeedsHumanRow(i + 1));
+    render(<ChatroomPane />);
+    expect((await screen.findByTestId("comms-strip-needs-badge")).textContent).toBe("49");
+  });
+
+  it("fix 4: a needs-human click to a target outside rooms[] pins activeTarget so the next rooms poll can't bounce it back to #fleet", async () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem(OPEN_KEY, "1");
+      roomsResponse.rooms = [mkRoom({ target: "#fleet" })];
+      roomsResponse.needsHuman = [mkNeedsHumanRow(1, { target: "T.2" })];
+
+      const { container } = render(<ChatroomPane />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // Auto-defaults to #fleet first (the only known room).
+      expect(container.querySelector(".comms-chat-name")?.textContent).toBe("#fleet");
+
+      fireEvent.click(screen.getByTestId("comms-needs-row-1"));
+      expect(container.querySelector(".comms-chat-name")?.textContent).toBe("T.2");
+
+      // Force a genuinely new rooms snapshot (new array/object refs) so the next 5s poll actually
+      // re-renders and re-evaluates the fallback effect, instead of bailing out on an unchanged
+      // reference. T.2 is still absent from rooms[] — must not bounce back to #fleet.
+      roomsResponse = { ...roomsResponse, rooms: [mkRoom({ target: "#fleet" })] };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(container.querySelector(".comms-chat-name")?.textContent).toBe("T.2");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fix 8: Escape collapses the overlay while expanded, but does nothing while collapsed", async () => {
+    render(<ChatroomPane />);
+    fireEvent.click(screen.getByTestId("comms-strip"));
+    expect(await screen.findByTestId("comms-overlay")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByTestId("comms-strip")).toBeTruthy();
+    expect(localStorage.getItem(OPEN_KEY)).toBe("0");
+    expect(screen.queryByTestId("comms-overlay")).toBeNull();
+
+    // While collapsed, Escape must not do anything (still collapsed, no error).
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByTestId("comms-strip")).toBeTruthy();
   });
 });

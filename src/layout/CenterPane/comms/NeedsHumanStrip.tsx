@@ -7,6 +7,10 @@ import { useT } from "../../../i18n";
 import type { CommsNeedsHumanRow } from "./useCommsPoll";
 
 const VISIBLE_ROWS = 3;
+/** The backend caps needsHuman at this many rows — when the list is exactly this long, the
+ *  overflow count below is only a floor (the real total could be higher), so it gets a trailing
+ *  "+" the same way the strip badge's capped count does. */
+const NEEDS_HUMAN_CAP = 50;
 
 export interface NeedsHumanStripProps {
   rows: CommsNeedsHumanRow[];
@@ -31,7 +35,10 @@ export function NeedsHumanStrip({ rows, onRowClick }: NeedsHumanStripProps) {
           data-testid={`comms-needs-row-${row.id}`}
           onClick={() => onRowClick(row)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") onRowClick(row);
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onRowClick(row);
+            }
           }}
         >
           <span className="comms-needs-tag">{row.kind}</span>
@@ -44,6 +51,7 @@ export function NeedsHumanStrip({ rows, onRowClick }: NeedsHumanStripProps) {
       {extra > 0 && (
         <div className="comms-needs-more" data-testid="comms-needs-more">
           {t("fleet.comms.needsHumanMore", extra)}
+          {rows.length === NEEDS_HUMAN_CAP && "+"}
         </div>
       )}
     </div>

@@ -927,6 +927,7 @@ const ptBR: typeof en = {
   "fleet.comms.needsHuman": "Needs human", // TODO translate
   "fleet.comms.operatorSeal": "operator", // TODO translate
   "fleet.comms.directiveChip": (target) => `DIRECTIVE → ${target}`, // TODO translate
+  "fleet.comms.fleetPresence": "Fleet", // TODO translate
 };
 
 export default ptBR;

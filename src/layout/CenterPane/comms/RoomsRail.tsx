@@ -67,7 +67,7 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
       <h3 className="comms-rail-h">{t("fleet.comms.rooms")}</h3>
       {rooms.map((r) => {
         const active = r.target === activeTarget;
-        const unread = unreadByTarget[r.target] === true;
+        const unread = unreadByTarget[r.target];
         return (
           <div
             key={r.target}
@@ -77,7 +77,10 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
             data-testid={`comms-room-${r.target}`}
             onClick={() => onSelectRoom(r.target)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") onSelectRoom(r.target);
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelectRoom(r.target);
+              }
             }}
           >
             <span className="comms-room-name">{r.target}</span>
@@ -86,7 +89,7 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
             ) : (
               <>
                 <span className="comms-lock" title={t("fleet.comms.closedRoom")}>
-                  &#9013;
+                  🔒
                 </span>
                 <span className="comms-count">{r.memberCount ?? 0}</span>
               </>
@@ -98,7 +101,7 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
         );
       })}
 
-      <h3 className="comms-rail-h">{activeTarget ? t("fleet.comms.membersIn", activeTarget) : t("fleet.comms.rooms")}</h3>
+      <h3 className="comms-rail-h">{t("fleet.comms.fleetPresence")}</h3>
       {roster.map((a) => (
         <RosterRow key={`${a.name}:${a.pid}`} agent={a} />
       ))}

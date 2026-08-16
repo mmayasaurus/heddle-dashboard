@@ -14,15 +14,19 @@ import { FloorBanner } from "./FloorBanner";
 import { NeedsHumanStrip } from "./NeedsHumanStrip";
 import { RoomsRail } from "./RoomsRail";
 import { Transcript } from "./Transcript";
-import { useCommsPoll, type CommsNeedsHumanRow } from "./useCommsPoll";
+import { formatNeedsHumanCount, lsGet, lsSet, useCommsPoll, type CommsNeedsHumanRow } from "./useCommsPoll";
 
 const OPEN_KEY = "heddle.comms.open";
 
 export function ChatroomPane() {
   const t = useT();
-  const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
+  const [open, setOpen] = useState(() => lsGet(OPEN_KEY) === "1");
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
+  // True once a needs-human row click has set activeTarget to an address that may not be in
+  // rooms[] (a DM/agent target) — pins it so the default-room fallback effect below leaves it
+  // alone instead of bouncing back to #fleet on the next rooms poll.
+  const [pinned, setPinned] = useState(false);
 
   const {
     loaded,
@@ -36,33 +40,51 @@ export function ChatroomPane() {
     floor,
     transcriptError,
     roster,
+    rosterError,
     unreadByTarget,
   } = useCommsPoll(open, activeTarget);
 
   // Once rooms are known, default to #fleet (the open everyone-room), else the first open room,
   // else the first listed — covers the initial expand and a previously active room disappearing.
+  // Skipped entirely while pinned (a needs-human click chose a non-room target on purpose).
   useEffect(() => {
     if (rooms.length === 0) return;
+    if (pinned && activeTarget != null) return;
     if (activeTarget && rooms.some((r) => r.target === activeTarget)) return;
     const fallback = rooms.find((r) => r.target === "#fleet") ?? rooms.find((r) => r.open) ?? rooms[0];
     setActiveTarget(fallback.target);
-  }, [rooms, activeTarget]);
+  }, [rooms, activeTarget, pinned]);
+
+  // Escape collapses the overlay while it's expanded; it's never wired up while collapsed, so it
+  // doesn't steal Escape from anything else on the page.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      lsSet(OPEN_KEY, "0");
+      setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   if (!isTauri) return null;
 
   const toggle = () => {
     setOpen((o) => {
-      localStorage.setItem(OPEN_KEY, o ? "0" : "1");
+      lsSet(OPEN_KEY, o ? "0" : "1");
       return !o;
     });
   };
 
   const selectRoom = (target: string) => {
+    setPinned(false);
     setActiveTarget(target);
     setHighlightId(null);
   };
 
   const handleNeedsHumanRowClick = (row: CommsNeedsHumanRow) => {
+    setPinned(true);
     setActiveTarget(row.target);
     setHighlightId(row.id);
   };
@@ -89,7 +111,7 @@ export function ChatroomPane() {
         <span className="comms-strip-title">{t("fleet.comms.title")}</span>
         {needsHuman.length > 0 && (
           <span className="comms-badge comms-badge-alert" data-testid="comms-strip-needs-badge">
-            {needsHuman.length}
+            {formatNeedsHumanCount(needsHuman.length)}
           </span>
         )}
         {recentRefusals > 0 && (
@@ -135,9 +157,9 @@ export function ChatroomPane() {
             </div>
             <NeedsHumanStrip rows={needsHuman} onRowClick={handleNeedsHumanRowClick} />
             <FloorBanner floor={floor} />
-            {(roomsError || transcriptError) && (
+            {(roomsError ?? transcriptError ?? rosterError) && (
               <div className="comms-err" data-testid="comms-error">
-                {roomsError ?? transcriptError}
+                {roomsError ?? transcriptError ?? rosterError}
               </div>
             )}
             <Transcript messages={messages} highlightId={highlightId} />

@@ -7,7 +7,7 @@
 //! content automatically), never through dangerouslySetInnerHTML or a markdown renderer.
 
 import { useEffect } from "react";
-import { useT } from "../../../i18n";
+import { dateLocale, useT } from "../../../i18n";
 import { agentColor, type CommsDeliveries, type CommsMessage } from "./useCommsPoll";
 
 type TrustStyle = "operator" | "directive" | "peer";
@@ -22,7 +22,7 @@ function trustStyleFor(m: CommsMessage): TrustStyle {
 function formatTs(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 const RECEIPT_CATEGORIES: Array<keyof CommsDeliveries> = ["sent", "held", "released", "refused"];
@@ -105,7 +105,10 @@ export function Transcript({ messages, highlightId = null }: TranscriptProps) {
     if (el && typeof el.scrollIntoView === "function") {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
     }
-  }, [highlightId]);
+    // messages is a deliberate dependency: if highlightId's row belongs to a room that hadn't
+    // loaded yet, the element doesn't exist on the first pass — retrying as messages arrive lets
+    // it scroll once the row actually mounts. Scrolling again to the same id is harmless.
+  }, [highlightId, messages]);
 
   return (
     <div className="comms-scroll" data-testid="comms-transcript">

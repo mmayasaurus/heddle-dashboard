@@ -149,6 +149,84 @@ describe("useCommsPoll", () => {
     expect(switchFetch?.[1]).toEqual({ target: "T", sinceId: null });
   });
 
+  it("fix 2: a slow initial fetch delays the poll interval, so a tick that would've raced it can't create duplicate rows", async () => {
+    vi.useFakeTimers();
+    transcriptStore.set("#fleet", [mkMsg(1, "#fleet"), mkMsg(2, "#fleet")]);
+
+    let resolveFresh: (v: unknown) => void = () => {};
+    const freshGate = new Promise((resolve) => {
+      resolveFresh = resolve;
+    });
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "heddle_comms_rooms") return Promise.resolve(roomsResponse);
+      if (cmd === "heddle_comms_transcript") {
+        const target = args?.target as string;
+        const sinceId = (args?.sinceId as number | null) ?? null;
+        const all = transcriptStore.get(target) ?? [];
+        const payload = { schemaOk: true, schemaVersion: 1, messages: all.filter((m) => m.id > (sinceId ?? 0)), floor: null };
+        // Only the initial fresh fetch (sinceId: null) is held open; cursor fetches resolve immediately.
+        return sinceId === null ? freshGate.then(() => payload) : Promise.resolve(payload);
+      }
+      if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected invoke cmd: " + cmd));
+    });
+
+    const { result } = renderHook(() => useCommsPoll(true, "#fleet"));
+    await flush(); // the initial fetchFresh() call is issued but stays pending on freshGate
+
+    // Advance well past one (and then two) 2.5s poll intervals while still pending: since the
+    // interval isn't created until fetchFresh settles, no second transcript call can happen yet.
+    await flush(6000);
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript")).toHaveLength(1);
+    expect(result.current.messages).toEqual([]);
+
+    resolveFresh(undefined);
+    await flush();
+    expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]); // no duplicates from a queued tick
+
+    // The interval now runs normally post-settle, and still appends no duplicates (no new rows upstream).
+    await flush(2500);
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript")).toHaveLength(2);
+    expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]);
+  });
+
+  it("fix 3: switching to a room whose fetch hasn't resolved yet clears floor synchronously, not the old room's floor", async () => {
+    vi.useFakeTimers();
+    floorStore.set("#fleet", { holder: "R", untilTs: null });
+    transcriptStore.set("#fleet", [mkMsg(1, "#fleet")]);
+    transcriptStore.set("T", [mkMsg(2, "T")]);
+
+    const { result, rerender } = renderHook(({ target }: { target: string | null }) => useCommsPoll(true, target), {
+      initialProps: { target: "#fleet" } as { target: string | null },
+    });
+    await flush();
+    expect(result.current.floor).toEqual({ holder: "R", untilTs: null });
+
+    let resolveT: (v: unknown) => void = () => {};
+    const tGate = new Promise((resolve) => {
+      resolveT = resolve;
+    });
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "heddle_comms_rooms") return Promise.resolve(roomsResponse);
+      if (cmd === "heddle_comms_transcript") {
+        const target = args?.target as string;
+        const all = transcriptStore.get(target) ?? [];
+        const payload = { schemaOk: true, schemaVersion: 1, messages: all, floor: floorStore.get(target) ?? null };
+        return target === "T" ? tGate.then(() => payload) : Promise.resolve(payload);
+      }
+      if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected invoke cmd: " + cmd));
+    });
+
+    rerender({ target: "T" });
+    // Synchronous: floor must already be null even though T's fetch is still pending on tGate.
+    expect(result.current.floor).toBeNull();
+
+    resolveT(undefined);
+    await flush();
+    expect(result.current.floor).toBeNull(); // T has no floor in this fixture
+  });
+
   it("test 5: needsHuman is replaced (not unioned) on each rooms poll — a row present in poll N is gone once poll N+1's payload omits it", async () => {
     vi.useFakeTimers();
     roomsResponse.needsHuman = [mkNeedsHumanRow(100)];

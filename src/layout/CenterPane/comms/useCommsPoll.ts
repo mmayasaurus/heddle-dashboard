@@ -128,8 +128,33 @@ export function agentColor(name: string): string | undefined {
   return key ? AGENT_COLORS[key] : undefined;
 }
 
+/** Read localStorage, returning null on any failure (disabled/full/unavailable storage) instead
+ *  of throwing. Every localStorage touch in this module and ChatroomPane.tsx goes through this. */
+export function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** Write localStorage; no-op on failure instead of throwing. */
+export function lsSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* Storage unavailable/full — the write is best-effort. */
+  }
+}
+
+/** The backend caps needsHuman at 50 rows; render an exact 50 as "50+" so a capped count never
+ *  looks like a precise total. */
+export function formatNeedsHumanCount(n: number): string {
+  return n === 50 ? "50+" : String(n);
+}
+
 function getLastSeen(target: string): number {
-  return Number(localStorage.getItem(LAST_SEEN_PREFIX + target)) || 0;
+  return Number(lsGet(LAST_SEEN_PREFIX + target)) || 0;
 }
 
 export interface UseCommsPollResult {
@@ -177,9 +202,12 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   // Per-room read cursor: last max message id seen from the backend (not the same as lastSeen,
   // which is the last id the OPERATOR has viewed). Keyed by target, survives room switches.
   const cursorsRef = useRef<Map<string, number>>(new Map());
+  // In-flight guard for the transcript poll: true while a fetch (fresh or cursor) is running.
+  const busyRef = useRef(false);
 
   // Rooms poll: every 5s, always, regardless of expanded/collapsed — drives the collapsed badge.
   useEffect(() => {
+    if (!isTauri) return;
     let cancelled = false;
     const fetchRooms = async () => {
       if (!isTauri) return;
@@ -209,9 +237,14 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   // Transcript poll: only while expanded, for the active room. Re-runs (fresh replace fetch +
   // cursor reset) whenever the room switches or the pane (re-)expands.
   useEffect(() => {
+    if (!isTauri) return;
     if (!expanded || !activeTarget) return;
     const target = activeTarget;
     let cancelled = false;
+    let intervalId: number | undefined;
+    // A room switch (or first expand) must not go on showing the previous room's floor while the
+    // fresh fetch is still in flight — clear it synchronously, before any async work starts.
+    setFloor(null);
 
     const applyFresh = (t: TranscriptPayload) => {
       setMessagesByRoom((prev) => ({ ...prev, [target]: t.messages }));
@@ -219,13 +252,17 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
       cursorsRef.current.set(target, maxId);
       setFloor(t.floor);
     };
-    const applyCursor = (t: TranscriptPayload, since: number) => {
-      if (t.messages.length > 0) {
+    const applyCursor = (t: TranscriptPayload) => {
+      // Defense in depth: only ever append ids strictly newer than this room's tracked cursor,
+      // even though the backend was already asked to filter by sinceId.
+      const cur = cursorsRef.current.get(target) ?? 0;
+      const fresh = t.messages.filter((m) => m.id > cur);
+      if (fresh.length > 0) {
         setMessagesByRoom((prev) => ({
           ...prev,
-          [target]: [...(prev[target] ?? []), ...t.messages].slice(-MAX_ROOM_MESSAGES),
+          [target]: [...(prev[target] ?? []), ...fresh].slice(-MAX_ROOM_MESSAGES),
         }));
-        const maxId = t.messages.reduce((m, x) => Math.max(m, x.id), since);
+        const maxId = fresh.reduce((m, x) => Math.max(m, x.id), cur);
         cursorsRef.current.set(target, maxId);
       }
       setFloor(t.floor);
@@ -233,6 +270,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
 
     const fetchFresh = async () => {
       if (!isTauri) return;
+      busyRef.current = true;
       try {
         const t = await invoke<TranscriptPayload>("heddle_comms_transcript", { target, sinceId: null });
         if (cancelled) return;
@@ -240,31 +278,44 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
         setTranscriptError(null);
       } catch (e) {
         if (!cancelled) setTranscriptError(String(e));
+      } finally {
+        busyRef.current = false;
       }
     };
     const fetchCursor = async () => {
       if (!isTauri) return;
+      // In-flight guard: a tick that lands while a fetch is still running SKIPS — it never queues.
+      if (busyRef.current) return;
       const since = cursorsRef.current.get(target) ?? 0;
+      busyRef.current = true;
       try {
         const t = await invoke<TranscriptPayload>("heddle_comms_transcript", { target, sinceId: since });
         if (cancelled) return;
-        applyCursor(t, since);
+        applyCursor(t);
         setTranscriptError(null);
       } catch (e) {
         if (!cancelled) setTranscriptError(String(e));
+      } finally {
+        busyRef.current = false;
       }
     };
 
-    void fetchFresh();
-    const id = window.setInterval(() => void fetchCursor(), TRANSCRIPT_POLL_MS);
+    // Start the poll interval only after the initial fetch settles, so a slow first load can't
+    // race a since=0 cursor tick into appending a duplicate page.
+    void fetchFresh().finally(() => {
+      if (cancelled) return;
+      intervalId = window.setInterval(() => void fetchCursor(), TRANSCRIPT_POLL_MS);
+    });
+
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (intervalId !== undefined) window.clearInterval(intervalId);
     };
   }, [expanded, activeTarget]);
 
   // Roster poll: every 10s while expanded (same command/shape FleetDrawer uses).
   useEffect(() => {
+    if (!isTauri) return;
     if (!expanded) return;
     let cancelled = false;
     const fetchRoster = async () => {
@@ -293,8 +344,8 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
     if (!msgs || msgs.length === 0) return;
     const maxId = msgs.reduce((m, x) => Math.max(m, x.id), 0);
     const key = LAST_SEEN_PREFIX + activeTarget;
-    if (maxId > (Number(localStorage.getItem(key)) || 0)) {
-      localStorage.setItem(key, String(maxId));
+    if (maxId > (Number(lsGet(key)) || 0)) {
+      lsSet(key, String(maxId));
       setLastSeenTick((n) => n + 1);
     }
   }, [expanded, activeTarget, messagesByRoom]);
