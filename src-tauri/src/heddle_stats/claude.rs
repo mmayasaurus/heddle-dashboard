@@ -202,6 +202,21 @@ fn empty_top() -> ProviderLimit {
     }
 }
 
+/// No registry: the plain single-file tap entry, with the Fable estimate still accumulating
+/// (attribution keyed "default").
+fn single_file_mode(
+    dir: &Path,
+    legacy_file: Option<&Value>,
+    legacy: Option<ProviderLimit>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let attrib = attribute(dir, "default", legacy_file, now);
+    let mut l = legacy?;
+    l.fable_weekly_estimate_pct = attrib.as_ref().and_then(fable_attrib::estimate);
+    l.fable_weekly_samples = attrib.map(|s| s.samples);
+    Some(l)
+}
+
 pub(super) fn build(
     dir: &Path,
     registry: &[Account],
@@ -213,12 +228,7 @@ pub(super) fn build(
         .as_ref()
         .and_then(|v| tap_limit("claude", v, now));
     if registry.is_empty() {
-        // Single-file mode (no registry): the Fable estimate still accumulates, keyed "default".
-        let attrib = attribute(dir, "default", legacy_file.as_ref(), now);
-        let mut l = legacy?;
-        l.fable_weekly_estimate_pct = attrib.as_ref().and_then(fable_attrib::estimate);
-        l.fable_weekly_samples = attrib.map(|s| s.samples);
-        return Some(l);
+        return single_file_mode(dir, legacy_file.as_ref(), legacy, now);
     }
     let active = active_account(registry, env_dir);
     let rows = account_rows(dir, registry, now);
