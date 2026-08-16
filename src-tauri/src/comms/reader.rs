@@ -229,72 +229,30 @@ fn query_rooms(conn: &Connection) -> Result<Vec<RoomSummary>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The contract-fixed anti-join semantics: unreplied needs-human/permission-request rows, all
-/// targets, newest first, capped 50. ANY reply closes an item, not just the operator's.
+/// The contract-fixed anti-join: unreplied needs-human/permission-request rows, all targets,
+/// newest first, capped 50. ANY reply closes an item, not just the operator's.
 ///
-/// Implemented as a descending PAGE WALK rather than one correlated `NOT EXISTS`, because
-/// `reply_to` has no index in the broker schema and a read-only connection cannot add one — the
-/// correlated form rescans the whole log once per candidate. Walking pages (instead of a single
-/// candidate batch) is what keeps the contract honest when a long run of the newest candidates
-/// happen to be replied: we keep descending until 50 open items are found or the rows run out,
-/// so an open item can never be hidden merely by sitting behind replied ones.
+/// One statement, ONE pass over `messages`: the uncorrelated subquery is evaluated once (SQLite
+/// builds an ephemeral index over it for the `NOT IN` probe) instead of the correlated
+/// `NOT EXISTS` form, which rescans the log once per candidate because `reply_to` has no index in
+/// the broker schema and a read-only connection cannot add one. `reply_to IS NOT NULL` in the
+/// subquery is load-bearing: a single NULL in a `NOT IN` set makes the whole predicate UNKNOWN
+/// and would return an empty queue — i.e. would silently hide every open item.
+///
+/// This also drops the candidate cap an earlier revision had, so an open item can never be
+/// hidden behind a long run of replied ones, at no extra scan cost.
 fn query_needs_human(conn: &Connection) -> Result<Vec<NeedsHumanRow>, String> {
-    const PAGE: i64 = 200;
-    const MAX_PAGES: usize = 25; // 5000 candidate rows — a backlog past this is a fleet emergency
-    let mut open: Vec<NeedsHumanRow> = Vec::new();
-    let mut before = i64::MAX;
-    for _ in 0..MAX_PAGES {
-        let page = needs_human_candidates(conn, before, PAGE)?;
-        if page.is_empty() {
-            break;
-        }
-        before = page[page.len() - 1].id;
-        let ids: Vec<i64> = page.iter().map(|c| c.id).collect();
-        let replied = replied_ids(conn, &ids)?;
-        for row in page {
-            if !replied.contains(&row.id) {
-                open.push(row);
-                if open.len() == 50 {
-                    return Ok(open);
-                }
-            }
-        }
-    }
-    Ok(open)
-}
-
-/// Which of `ids` already have at least one reply — one bounded `IN (...)` per page.
-fn replied_ids(conn: &Connection, ids: &[i64]) -> Result<HashSet<i64>, String> {
-    if ids.is_empty() {
-        return Ok(HashSet::new());
-    }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!("SELECT DISTINCT reply_to FROM messages WHERE reply_to IN ({placeholders})");
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let found = stmt
-        .query_map(rusqlite::params_from_iter(ids.iter()), |r| r.get::<_, i64>(0))
-        .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<HashSet<i64>>>()
-        .map_err(|e| e.to_string())?;
-    Ok(found)
-}
-
-/// One descending page of needs-human/permission-request rows with `id < before`.
-fn needs_human_candidates(
-    conn: &Connection,
-    before: i64,
-    limit: i64,
-) -> Result<Vec<NeedsHumanRow>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.ts, m.sender, m.target, m.kind, m.body \
              FROM messages m \
-             WHERE m.kind IN ('needs-human','permission-request') AND m.id < ?1 \
-             ORDER BY m.id DESC LIMIT ?2",
+             WHERE m.kind IN ('needs-human','permission-request') \
+               AND m.id NOT IN (SELECT reply_to FROM messages WHERE reply_to IS NOT NULL) \
+             ORDER BY m.id DESC LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(rusqlite::params![before, limit], |r| {
+        .query_map([], |r| {
             Ok(NeedsHumanRow {
                 id: r.get("id")?,
                 ts: r.get("ts")?,
