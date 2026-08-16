@@ -297,7 +297,7 @@ export function FleetDrawer() {
               // the bar answers "how close is each provider to a wall" at a glance.
               const win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
               const label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
-              const pct = win?.usedPercentage;
+              const pct = win.usedPercentage;
               const color = providerColor(p.provider);
               return (
                 <span
