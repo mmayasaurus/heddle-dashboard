@@ -404,3 +404,44 @@ fn fable_is_matched_as_a_token_not_a_substring() {
     assert!(!is_fable_model("claude-affable-2"));
     assert!(!is_fable_model("fabled-model"));
 }
+
+#[test]
+fn losing_the_exact_window_seeds_the_books_instead_of_forgetting() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    let mut exact_cap = cap(t0, "claude-fable-5", 14.0, RESET);
+    exact_cap.exact_fable_pct = Some(6.5);
+    ingest(&mut s, &exact_cap, t0);
+    assert_eq!(estimate(&s), Some(6.5));
+    // The provider drops the Fable window mid-week (same weekly window).
+    assert!(ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 15.0, RESET),
+        t0 + 60
+    ));
+    assert!(!s.exact);
+    assert_eq!(s.fable_pct, 6.5, "the last exact share is the seed");
+    assert_eq!(
+        s.unknown_pct, 8.5,
+        "the rest of the reported total is unattributed"
+    );
+    assert_eq!(s.samples, 0);
+    assert_eq!(estimate(&s), None, "hidden until fresh confidence exists");
+    // Three fresh Fable deltas later the estimate resumes, well-seeded.
+    ingest(
+        &mut s,
+        &cap(t0 + 120, "claude-fable-5", 16.0, RESET),
+        t0 + 120,
+    );
+    ingest(
+        &mut s,
+        &cap(t0 + 180, "claude-fable-5", 17.0, RESET),
+        t0 + 180,
+    );
+    ingest(
+        &mut s,
+        &cap(t0 + 240, "claude-fable-5", 18.0, RESET),
+        t0 + 240,
+    );
+    assert_eq!(estimate(&s), Some(9.5));
+}

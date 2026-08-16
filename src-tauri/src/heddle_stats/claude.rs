@@ -174,8 +174,15 @@ fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Att
         None => false,
     };
     if changed {
-        if let Ok(v) = serde_json::to_value(&state) {
-            let _ = write_json_atomic(&path, &v);
+        // A lost write means the next process restart re-ingests from the older baseline and
+        // double-counts a delta — rare, but never silent.
+        match serde_json::to_value(&state) {
+            Ok(v) => {
+                if let Err(e) = write_json_atomic(&path, &v) {
+                    eprintln!("[heddle] fable attribution for {id} not persisted: {e}");
+                }
+            }
+            Err(e) => eprintln!("[heddle] fable attribution for {id} not serialized: {e}"),
         }
     }
     state.last_captured_at.is_some().then_some(state)
@@ -320,7 +327,10 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
     let fable_est = attrib.and_then(fable_attrib::estimate);
     let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
-        return row_no_capture(a, label, detail, fable_est, fable_samples);
+        // No current capture: don't surface a historical estimate next to a "no capture yet"
+        // note — the drawer renders on non-null alone. The breakdown (with lastCapturedAt)
+        // stays in `detail.fableWeekly` for the tooltip.
+        return row_no_capture(a, label, detail, None, None);
     };
     let rl = &v["rate_limits"];
     let win = |k: &str| LimitWindow {

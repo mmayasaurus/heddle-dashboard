@@ -194,8 +194,24 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
         reset_state(state, cap, used, now);
         return true;
     };
-    if state.exact || window_changed(state, cap) {
-        // The exact window disappeared, or a new weekly window began: start the books over.
+    if state.exact {
+        // The exact window disappeared mid-flight: keep what we KNOW (the last exact Fable share)
+        // as the seed, book the remainder as unknown, and rebuild confidence from zero — the
+        // estimate hides until fresh samples exist, then resumes well-seeded instead of amnesiac.
+        let seed = state.fable_pct.min(used).max(0.0);
+        *state = Attrib {
+            window_resets_at: cap.seven_day_resets_at.or(state.window_resets_at),
+            last_captured_at: Some(cap.captured_at),
+            last_used_pct: Some(used),
+            fable_pct: seed,
+            unknown_pct: (used - seed).max(0.0),
+            updated_at: Some(now),
+            ..Default::default()
+        };
+        return true;
+    }
+    if window_changed(state, cap) {
+        // A new weekly window began: start the books over.
         reset_state(state, cap, used, now);
         return true;
     }

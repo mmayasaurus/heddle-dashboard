@@ -322,3 +322,40 @@ fn single_file_mode_without_a_registry_still_accumulates_the_fable_estimate() {
     // Still the plain single-file entry otherwise (no rows).
     assert!(l.accounts.is_none());
 }
+
+#[test]
+fn a_row_without_a_current_capture_never_surfaces_a_historical_estimate() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("stale-estimate");
+    let reg = registry();
+    // Build up a confident estimate for acct1…
+    for (i, (model, used)) in [
+        ("claude-fable-5", 10.0),
+        ("claude-fable-5", 12.0),
+        ("claude-haiku-4-5", 13.0),
+        ("claude-fable-5", 15.0),
+    ]
+    .iter()
+    .enumerate()
+    {
+        s.write(
+            "claude-acct1.json",
+            &tap_file(model, 30.0, *used, now - 400 + (i as i64) * 60, "acct1"),
+        );
+        build(&s.0, &reg, None, now - 400 + (i as i64) * 60).unwrap();
+    }
+    // …then the tap file disappears (session gone, file cleaned up).
+    std::fs::remove_file(s.0.join("claude-acct1.json")).unwrap();
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.note_codes, vec![CODE_NO_CAPTURE]);
+    assert_eq!(
+        r.fable_weekly_estimate_pct, None,
+        "no live-looking bar next to 'no capture yet'"
+    );
+    assert_eq!(r.fable_weekly_samples, None);
+    // The history stays inspectable in the detail breakdown.
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["samples"], 3);
+    assert_eq!(fw["fablePct"], 4.0);
+}
