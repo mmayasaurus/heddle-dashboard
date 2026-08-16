@@ -107,6 +107,7 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "probe_remote_fingerprint",
   "url_trust_fingerprint",
   "open_devtools",
+  "ssh_remote_available",
   "ssh_probe_host",
   "ssh_trust_host",
   "ssh_connect",

@@ -14,7 +14,6 @@ import {
   getEffectiveNotifyPermission,
   requestEffectiveNotifyPermission,
 } from "../../notify";
-import { openUpdateModal, useUpdateState } from "../../ipc/updater";
 import { webServerStatus, type WebServerStatus } from "../../ipc/webServer";
 import { env } from "../../platform";
 import { useTermStore } from "../../store/termStore";
@@ -193,63 +192,7 @@ export function StatusBar() {
           <Icons.globe size={11} />:{web.port}
         </span>
       )}
-      <UpdateSeg />
     </div>
-  );
-}
-
-/**
- * New-version indicator. A silent startup check only highlights this section rather than interrupting
- * the user; clicking it opens UpdateModal to review release notes and choose whether to install.
- *
- * The modal may be closed during download because progress remains visible here. Installation changes
- * the label to "restart to finish," while failures turn it red. Skipping the version removes the
- * section. Browser and remote clients do not self-update, so their null prompt keeps it hidden.
- */
-function UpdateSeg() {
-  const t = useT();
-  const { prompt, stage } = useUpdateState();
-  if (!prompt) return null;
-
-  let Icon = Icons.download;
-  let color = "var(--accent)";
-  let label: string;
-  switch (stage.kind) {
-    case "downloading":
-      // Without Content-Length a percentage is unavailable, so fall back to the generic installing text.
-      label =
-        stage.total > 0
-          ? t(
-              "statusbar.updateDownloading",
-              Math.min(100, Math.round((stage.received / stage.total) * 100)),
-            )
-          : t("statusbar.updateInstalling");
-      break;
-    case "installing":
-      label = t("statusbar.updateInstalling");
-      break;
-    case "ready":
-      Icon = Icons.restart;
-      label = t("statusbar.updateReady");
-      break;
-    case "error":
-      color = "var(--status-asking)";
-      label = t("statusbar.updateFailed");
-      break;
-    default:
-      label = t("statusbar.updateAvailable", prompt.version);
-  }
-
-  return (
-    <span
-      className="seg btn"
-      style={{ color }}
-      title={t("statusbar.updateTooltip")}
-      onClick={openUpdateModal}
-    >
-      <Icon size={11} />
-      {label}
-    </span>
   );
 }
 
