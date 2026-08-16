@@ -198,6 +198,30 @@ fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
     ] {
         assert!(!looks_like_auth_attempt(err), "{err}");
     }
+    // Nothing to go on is not evidence of a human being needed.
+    assert!(!looks_like_auth_attempt(""));
+}
+
+/// The detector is deliberately OVER-inclusive, and this pins that boundary so a later "cleanup"
+/// cannot narrow it by accident. Each of these is a plausible non-auth failure that still contains
+/// a marker word, and each is classified as auth-shaped on purpose: the two mistakes have wildly
+/// different costs. A false positive pauses automatic refresh until someone clicks the refresh
+/// button — one stale gauge, one click. A false negative re-runs `agy` every 180s against a CLI
+/// that wants a human, which is HED-114 itself: a browser prompt every three minutes, forever.
+/// Buying the cheap mistake to avoid the expensive one is the whole design; if you tighten these
+/// markers, you are trading in the direction that produced the incident.
+#[test]
+fn ambiguous_wording_is_treated_as_auth_shaped_because_the_two_mistakes_cost_differently() {
+    for err in [
+        "browser cache corrupted",
+        "credential file parse error",
+        "request timed out reading /quota",
+    ] {
+        assert!(
+            looks_like_auth_attempt(err),
+            "deliberately over-inclusive, see doc comment: {err}"
+        );
+    }
 }
 
 #[test]
