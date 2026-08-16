@@ -1,0 +1,10 @@
+---
+# Codacy analysis scope (first config for this repo, added with PR #17).
+#
+# Behavioral test files spawn the REAL scripts under a mkdtempSync temp HOME, so every fs call
+# takes a computed path by design — Codacy's eslint-security patterns (detect-non-literal-fs-filename
+# and friends) flag each one as a "high" injection sink, which is noise in test context (32 false
+# highs on #17). Application and script sources stay fully analyzed; only test files are excluded.
+exclude_paths:
+  - "src/**/*.test.ts"
+  - "src/**/*.test.tsx"

@@ -6,8 +6,9 @@
 //!   - DISPATCH LEDGER (~/.heddle/ledger.db): what heddle itself routed + how it turned out.
 //! Read-only, desktop-only, polls on a timer. Degrades to "waiting…" when a source is absent.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { invoke, isTauri } from "../../ipc/transport";
+import { useT } from "../../i18n";
 import { DisciplinePanel } from "./DisciplinePanel";
 import { RouteMixPanel } from "./RouteMixPanel";
 import { useTermStore } from "../../store/termStore";
@@ -22,13 +23,17 @@ interface LimitWindow {
   unit?: string | null;
 }
 interface ProviderAccount {
-  label?: string;
-  plan?: string;
+  id: string;
+  label: string;
+  plan: string | null;
+  capturedAt: number | null;
+  stale: boolean | null;
+  loggedIn: boolean | null;
   fiveHour?: LimitWindow;
   sevenDay?: LimitWindow;
   windows?: LimitWindow[];
-  limitReached?: boolean;
-  note?: string;
+  limitReached: boolean | null;
+  note: string | null;
 }
 interface ProviderLimit {
   provider: string;
@@ -41,6 +46,7 @@ interface ProviderLimit {
   staleAfterSecs?: number;
   note?: string;
   accounts?: ProviderAccount[];
+  activeAccount?: string | null;
   windows?: LimitWindow[];
 }
 interface Dispatch {
@@ -99,6 +105,33 @@ const OPEN_KEY = "heddle-fleet-open";
 const SCOPE_KEY = "heddle-fleet-roster-scope";
 type RosterScope = "project" | "all";
 
+const nowSubscribers = new Set<() => void>();
+let sharedNow = Math.floor(Date.now() / 1000) * 1000;
+let nowTicker: number | undefined;
+
+function subscribeToSharedNow(onStoreChange: () => void): () => void {
+  nowSubscribers.add(onStoreChange);
+  if (nowSubscribers.size === 1) {
+    nowTicker = window.setInterval(() => {
+      sharedNow = Math.floor(Date.now() / 1000) * 1000;
+      nowSubscribers.forEach((subscriber) => {
+        subscriber();
+      });
+    }, 1_000);
+  }
+  return () => {
+    nowSubscribers.delete(onStoreChange);
+    if (nowSubscribers.size === 0 && nowTicker !== undefined) {
+      window.clearInterval(nowTicker);
+      nowTicker = undefined;
+    }
+  };
+}
+
+function useSharedNow(): number {
+  return useSyncExternalStore(subscribeToSharedNow, () => sharedNow, () => sharedNow);
+}
+
 // Distinct per-provider accent for the usage bars.
 const PROVIDER_COLOR: Record<string, string> = {
   claude: "#b07cf0",
@@ -121,21 +154,22 @@ function fmtDur(ms: number | null | undefined): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
+function LiveClock({ render }: { render: (nowMs: number) => ReactNode }) {
+  const now = useSharedNow();
+  return <>{render(now)}</>;
+}
 
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(id);
-  }, []);
+function ResetCountdown({ resetsAt }: { resetsAt: number | null | undefined }) {
+  const t = useT();
 
-  return now;
+  if (!resetsAt) return null;
+  return <LiveClock render={(now) => <>{fmtReset(resetsAt, now, t("fleet.resetting"))}</>} />;
 }
 /** Countdown to a reset time given as epoch SECONDS: "3h 30m" / "2d 22h" / "5m". */
-function fmtReset(resetsAtSec: number | null | undefined, now: number): string {
+function fmtReset(resetsAtSec: number | null | undefined, now: number, resetting: string): string {
   if (!resetsAtSec) return "";
   let s = resetsAtSec - Math.floor(now / 1000);
-  if (s <= 0) return "resetting…";
+  if (s <= 0) return resetting;
   const d = Math.floor(s / 86400);
   s -= d * 86400;
   const h = Math.floor(s / 3600);
@@ -146,8 +180,16 @@ function fmtReset(resetsAtSec: number | null | undefined, now: number): string {
   return `${m}m`;
 }
 
+function capturedMinutesAgo(capturedAt: number | null, now: number): number | null {
+  return capturedAt == null ? null : Math.max(0, Math.floor((now - capturedAt * 1_000) / 60_000));
+}
+
+function isProviderStale(p: ProviderLimit, now: number): boolean {
+  return typeof p.stale === "boolean" ? p.stale : (capturedMinutesAgo(p.capturedAt, now) ?? 0) > 30;
+}
+
 export function FleetDrawer() {
-  const now = useNow();
+  const t = useT();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
   const [scope, setScope] = useState<RosterScope>(() =>
     localStorage.getItem(SCOPE_KEY) === "all" ? "all" : "project",
@@ -192,11 +234,12 @@ export function FleetDrawer() {
 
   if (!isTauri) return null;
 
-  const toggle = () =>
+  const toggle = () => {
     setOpen((o) => {
       localStorage.setItem(OPEN_KEY, o ? "0" : "1");
       return !o;
     });
+  };
 
   // Scope filter: an agent belongs to the current project when its cwd is the project root or inside it
   // (worktrees like Rebuild-Project-Root.forms count as inside their sibling root's project by prefix on
@@ -230,7 +273,7 @@ export function FleetDrawer() {
         title="heddle Fleet — provider caps & dispatches"
       >
         <span className="fleet-chevron">{open ? "▾" : "▸"}</span>
-        <span className="fleet-title">Fleet</span>
+        <span className="fleet-title">{t("fleet.title")}</span>
         {limits.length > 0 ? (
           <span className="fleet-sum">
             {limits.map((p) => {
@@ -243,18 +286,18 @@ export function FleetDrawer() {
               return (
                 <span
                   key={p.provider}
-                  className={"fleet-chip-sum" + (p.stale ? " stale" : "")}
-                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${win?.resetsAt ? " · resets in " + fmtReset(win.resetsAt, now) : ""}${p.note ? " · " + p.note : ""}`}
+                  className={"fleet-chip-sum" + (isProviderStale(p, Date.now()) ? " stale" : "")}
+                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
                 >
                   <span className="fleet-tag" style={{ color }}>{p.provider}</span>
                   <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻{fmtReset(win.resetsAt, now)}</span> : null}
+                  {win.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                 </span>
               );
             })}
           </span>
         ) : (
-          <span className="fleet-dim">caps: waiting for a statusline render…</span>
+          <span className="fleet-dim">{t("fleet.capsWaiting")}</span>
         )}
         {liveAgents.length > 0 && (
           <span className="fleet-run" title={liveAgents.map((a) => `${a.name}: ${a.status}`).join(" · ")}>
@@ -268,7 +311,8 @@ export function FleetDrawer() {
             e.stopPropagation();
             void refresh();
           }}
-          title="Refresh"
+          title={t("fleet.refresh")}
+          aria-label={t("fleet.refresh")}
         >
           ⟳
         </button>
@@ -286,7 +330,7 @@ export function FleetDrawer() {
           ) : (
             <div className="fleet-provcaps">
               {limits.map((p) => (
-                <ProviderCapBlock key={p.provider} p={p} now={now} onRefresh={refresh} />
+                <ProviderCapBlock key={p.provider} p={p} onRefresh={refresh} />
               ))}
             </div>
           )}
@@ -304,7 +348,7 @@ export function FleetDrawer() {
                     title={currentProjectRoot ? `Agents in ${shortCwd(currentProjectRoot)}` : "No project open — showing all"}
                     type="button"
                   >
-                    Current project
+                    {t("fleet.currentProject")}
                   </button>
                   <button
                     className={"fleet-scope-btn" + (scope === "all" ? " on" : "")}
@@ -312,13 +356,13 @@ export function FleetDrawer() {
                     title="Every fleet-tagged agent on this machine, across projects"
                     type="button"
                   >
-                    All agents{hiddenCount > 0 && scope === "project" ? ` (+${hiddenCount})` : ""}
+                    {t("fleet.allAgents")}{hiddenCount > 0 && scope === "project" ? ` (+${hiddenCount})` : ""}
                   </button>
                 </span>
               </div>
               <div className="fleet-roster">
                 {scopedRoster.map((a) => (
-                  <AgentRow key={`${a.name}:${a.pid}`} a={a} now={now} />
+                  <AgentRow key={`${a.name}:${a.pid}`} a={a} />
                 ))}
                 {scopedRoster.length === 0 && (
                   <div className="fleet-dim fleet-empty">
@@ -391,43 +435,53 @@ function CapLine({
   label,
   win,
   color,
-  now,
   note,
 }: {
   label: string;
   win: LimitWindow;
   color: string;
-  now: number;
-  note?: string;
+  note?: string | null;
 }) {
-  const pct = win?.usedPercentage;
+  const t = useT();
+  const pct = win.usedPercentage;
   return (
     <div className="fleet-capline">
       <span className="fleet-capline-lbl">{label}</span>
       <SegBar pct={pct} color={color} />
       <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
-      <span className="fleet-dim fleet-capline-reset" title={pct == null ? note : undefined}>
-        {pct == null ? "no active window" : win?.resetsAt ? `↻ ${fmtReset(win.resetsAt, now)}` : ""}
-      </span>
+      <LiveClock render={(now) => (
+        <span className="fleet-dim fleet-capline-reset" title={pct == null ? note ?? t("fleet.usageUnavailable") : undefined}>
+          {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
+        </span>
+      )} />
     </div>
   );
 }
 
 function ProviderCapBlock({
   p,
-  now,
   onRefresh,
 }: {
   p: ProviderLimit;
-  now: number;
   onRefresh: () => Promise<void>;
 }) {
+  const t = useT();
   const color = providerColor(p.provider);
+  const isStale = isProviderStale(p, Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const [accountsExpanded, setAccountsExpanded] = useState(false);
-  const capturedMinutes = p.capturedAt == null ? null : Math.max(0, Math.floor((now - p.capturedAt * 1_000) / 60_000));
-  const isStale = p.stale ?? (capturedMinutes != null && capturedMinutes > 30);
   const accounts = p.accounts ?? [];
+  const isClaudeAccounts = p.provider === "claude" && accounts.length >= 1;
+  const defaultAccountId = p.activeAccount && accounts.some((account) => account.id === p.activeAccount)
+    ? p.activeAccount
+    : accounts[0]?.id;
+  const [selectedAccountId, setSelectedAccountId] = useState(defaultAccountId);
+  useEffect(() => {
+    setSelectedAccountId(defaultAccountId);
+  }, [defaultAccountId]);
+  const effectiveSelectedId = selectedAccountId ?? defaultAccountId;
+  const selectedAccountIndex = Math.max(0, accounts.findIndex((account) => account.id === effectiveSelectedId));
+  const selectedAccount = accounts[selectedAccountIndex];
   const extraWindows = (p.windows ?? []).filter(
     (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
   );
@@ -435,6 +489,13 @@ function ProviderCapBlock({
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
+      try {
+        await invoke<string[]>("heddle_refresh_provider_limits", { provider: p.provider });
+      } catch (err) {
+        console.error("heddle: provider refresh failed", err);
+      }
+      await onRefresh();
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
       await onRefresh();
     } finally {
       setRefreshing(false);
@@ -451,26 +512,84 @@ function ProviderCapBlock({
           <button
             className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
             disabled={refreshing}
-            onClick={() => void handleRefresh()}
-            title={`Refresh ${p.provider} caps`}
+            onClick={() => {
+              void handleRefresh();
+            }}
+            title={`${t("fleet.refresh")} ${p.provider} caps`}
+            aria-label={t("fleet.refresh")}
             type="button"
           >
             ⟳
           </button>
         </div>
-        {capturedMinutes != null && (
-          <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
-            captured {capturedMinutes}m ago{isStale ? " · stale" : ""}
-          </span>
-        )}
+        <LiveClock render={(now) => {
+          const capturedMinutes = capturedMinutesAgo(p.capturedAt, now);
+          const isStale = isProviderStale(p, now);
+          return capturedMinutes != null ? (
+            <span className={"fleet-provcap-captured" + (isStale ? " stale" : "")}>
+              {t("fleet.capturedMinutesAgo", capturedMinutes)}{isStale ? ` · ${t("fleet.stale")}` : ""}
+            </span>
+          ) : null;
+        }} />
       </div>
-      <CapLine label="5h" win={p.fiveHour} color={color} now={now} note={p.note} />
-      <CapLine label="7d" win={p.sevenDay} color={color} now={now} />
-      {accounts.length > 1 && (
+      {!isClaudeAccounts && <>
+        <CapLine label="5h" win={p.fiveHour} color={color} note={p.note} />
+        <CapLine label="7d" win={p.sevenDay} color={color} />
+      </>}
+      {isClaudeAccounts && selectedAccount && (
+        <div className="fleet-provcap-account-detail">
+          <div className="fleet-provcap-account-head">
+            <span className="fleet-provcap-account-label">{selectedAccount.id}</span>
+            {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
+              <span className="fleet-provcap-account-plan">· {selectedAccount.label}</span>
+            )}
+            {accounts.length > 1 && <>
+              <span className="fleet-sp" />
+              <span className="fleet-provcap-account-position">{selectedAccountIndex + 1}/{accounts.length}</span>
+              <button
+                className="fleet-provcap-account-rotate"
+                onClick={() => {
+                  setSelectedAccountId(accounts[(selectedAccountIndex + 1) % accounts.length].id);
+                }}
+                aria-label={t("fleet.rotateAccounts")}
+                type="button"
+              >
+                ⟳
+              </button>
+            </>}
+          </div>
+          <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} />
+          <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} />
+          <LiveClock render={(now) => {
+            const capturedMinutes = capturedMinutesAgo(selectedAccount.capturedAt ?? null, now);
+            const stale = selectedAccount.stale === true;
+            const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
+              (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
+            );
+            return (
+              <div className="fleet-provcap-account-state">
+                {capturedMinutes != null && (
+                  <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
+                    {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                  </span>
+                )}
+                {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out">{t("fleet.loggedOut")}</span>}
+                {selectedAccount.loggedIn == null && <span className="fleet-dim">{t("fleet.loginUnknown")}</span>}
+                {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate">{t("fleet.keeperEstimate")}</span>}
+                {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
+              </div>
+            );
+          }} />
+        </div>
+      )}
+      {!isClaudeAccounts && accounts.length > 1 && (
         <div className="fleet-provcap-accounts">
           <button
             className="fleet-provcap-account-toggle"
-            onClick={() => setAccountsExpanded((expanded) => !expanded)}
+            onClick={() => {
+              setAccountsExpanded((expanded) => !expanded);
+            }}
+            aria-label={`${accounts.length} accounts`}
             type="button"
           >
             {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
@@ -489,7 +608,7 @@ function ProviderCapBlock({
                   </>
                 )}
               </span>
-              {account.limitReached && <span className="fleet-provcap-limit-reached">limit reached</span>}
+              {account.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
             </div>
           ))}
         </div>
@@ -498,7 +617,7 @@ function ProviderCapBlock({
         <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
           <span>{win.label ?? win.id ?? "window"}</span>
           <span>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
-          {win.resetsAt && <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now)}</span>}
+          {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
         </div>
       ))}
     </div>
@@ -527,7 +646,7 @@ function shortCwd(cwd: string): string {
  * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
  * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
  */
-function AgentRow({ a, now }: { a: FleetAgent; now: number }) {
+function AgentRow({ a }: { a: FleetAgent }) {
   const [openRow, setOpenRow] = useState(false);
   const liveWorkers = a.workers.filter((w) => !w.stale);
   const staleWorkers = a.workers.filter((w) => w.stale);
@@ -559,9 +678,11 @@ function AgentRow({ a, now }: { a: FleetAgent; now: number }) {
             {staleWorkers.length} stale
           </span>
         )}
-        <span className="fleet-dim fleet-agent-age" title="last activity">
-          {fmtAgo(a.updatedAtMs, now)}
-        </span>
+        <LiveClock render={(now) => (
+          <span className="fleet-dim fleet-agent-age" title="last activity">
+            {fmtAgo(a.updatedAtMs, now)}
+          </span>
+        )} />
       </div>
       {openRow && hasChildren && (
         <div className="fleet-agent-workers">

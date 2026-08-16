@@ -133,6 +133,7 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "heddle_route_mix",
   "heddle_discipline",
   "heddle_provider_limits",
+  "heddle_refresh_provider_limits",
 ]);
 
 /** Invokes a backend command.

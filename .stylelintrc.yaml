@@ -1,0 +1,18 @@
+# Repo-local stylelint config (HED-110).
+#
+# Exists primarily so Codacy's stylelint runs with THIS config instead of Codacy's own
+# pattern selection: Codacy injects the pattern id `scss_function-disallowed-list`, which
+# stylelint rejects ("Unknown rule") — turning every PR that touches a .css file red
+# (first seen on dashboard PR #20, check-run 95214299833). Per Codacy docs, a repo
+# stylelint config supersedes the Code-patterns selection for supported tools; pattern
+# toggles themselves are UI-only.
+#
+# Rules are deliberately minimal and uncontroversial — this repo's CSS is largely
+# inherited from upstream VelaTerm, and styling standards are not this file's job.
+# (no-duplicate-selectors was considered and dropped: upstream vlinx.css has two
+# duplicates we won't touch — HED-14 precedent: don't edit upstream-identical files.)
+rules:
+  block-no-empty: true
+  declaration-block-no-duplicate-properties:
+    - true
+    - ignore: ["consecutive-duplicates-with-different-values"]

@@ -63,6 +63,8 @@ fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     };
     let j = serde_json::to_value(&l).unwrap();
     for k in ["provider", "model", "capturedAt", "fiveHour", "sevenDay"] {
@@ -81,6 +83,8 @@ fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
         "accounts",
         "activeAccount",
         "windows",
+        "fableWeeklyEstimatePct",
+        "fableWeeklySamples",
     ] {
         assert!(j[k].is_null(), "additive key {k} must be null when absent");
     }
@@ -99,7 +103,26 @@ fn golden_limits() -> serde_json::Value {
                          "seven_day": {"used_percentage": 24, "resets_at": 1786892400}},
         "capturedAt": now - 60, "account": "acct1", "configDir": null
     });
-    let claude = tap_limit("claude", &claude_tap, now).unwrap();
+    let claude_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("heddle-stats-golden");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(claude_dir.join("claude-acct1.json"), claude_tap.to_string()).unwrap();
+    std::fs::write(
+        claude_dir.join("claude-acct3.keeper.json"),
+        serde_json::json!({"account": "acct3", "startedAt": now - 30, "resets_at": now + 5 * 3600, "used": null}).to_string(),
+    ).unwrap();
+    std::fs::write(
+        claude_dir.join("claude-acct4.keeper.json"),
+        serde_json::json!({"account": "acct4", "startedAt": now - 20, "resets_at": now + 5 * 3600, "used": null}).to_string(),
+    ).unwrap();
+    let claude_registry = claude::parse_registry(&serde_json::json!({"claude": [
+        {"id": "acct1", "configDir": null, "email": "one@example.com", "loggedIn": true},
+        {"id": "acct2", "configDir": "/tmp/acct2", "email": "two@example.org", "loggedIn": true},
+        {"id": "acct3", "configDir": "/tmp/acct3", "email": "three@example.net", "loggedIn": false},
+        {"id": "acct4", "configDir": "/tmp/acct4", "email": "four@example.net", "loggedIn": true},
+    ]}));
+    let claude = claude::build(&claude_dir, &claude_registry, None, now).unwrap();
     let codex_cache: serde_json::Value = serde_json::from_str(include_str!(
         "../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json"
     ))
@@ -182,6 +205,8 @@ fn drawer_order_is_claude_codex_then_alphabetical() {
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     };
     let mut v = vec![mk("gemini"), mk("codex"), mk("cursor"), mk("claude")];
     sort_limits(&mut v);

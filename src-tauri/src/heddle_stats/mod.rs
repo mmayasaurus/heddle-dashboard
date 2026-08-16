@@ -32,6 +32,7 @@ pub mod route_mix;
 mod codex;
 mod cursor;
 mod cursor_fetch;
+mod fable_attrib;
 mod gemini;
 pub mod roster;
 mod util;
@@ -267,6 +268,8 @@ pub struct AccountLimit {
     pub id: String,
     pub label: String,
     pub plan: Option<String>,
+    /// Registry login state for providers that expose it (Claude); `None` when unavailable.
+    pub logged_in: Option<bool>,
     /// When THIS account's numbers were captured, and whether that is older than the source's
     /// freshness threshold (`None` when unknown / not applicable).
     pub captured_at: Option<i64>,
@@ -284,6 +287,12 @@ pub struct AccountLimit {
     /// `docs/USAGE_TAP.md`; e.g. Cursor's plan/onDemand objects in cents, billing cycle, token
     /// expiry). `None` when the source has nothing extra.
     pub detail: Option<serde_json::Value>,
+    /// Claude only: estimated share of the WEEKLY cap consumed by Fable models on this account
+    /// (percentage points; Fable's soft cap is 50%). `None` until enough samples exist, or N/A.
+    /// An estimate by design — see `fable_attrib.rs`; exact when the payload has a Fable window.
+    pub fable_weekly_estimate_pct: Option<f64>,
+    /// Number of attributed samples behind the estimate (its confidence); `None` when N/A.
+    pub fable_weekly_samples: Option<i64>,
 }
 
 /// A provider's live rate-limit state. These are the TRUE cap numbers — the exact values the
@@ -323,6 +332,10 @@ pub struct ProviderLimit {
     /// Extra named windows beyond 5h/7d, binding (max) across accounts. `None` when the provider
     /// has no such notion; `[]` when it does but none are present right now.
     pub windows: Option<Vec<NamedWindow>>,
+    /// Claude only (the active account's): Fable-attributed weekly usage estimate + its sample
+    /// count — see `AccountLimit`. `None` for other providers.
+    pub fable_weekly_estimate_pct: Option<f64>,
+    pub fable_weekly_samples: Option<i64>,
 }
 
 /// The statusline tap only writes when a Claude session renders its statusline, so an idle fleet
@@ -354,6 +367,8 @@ pub(crate) fn tap_limit(provider: &str, v: &serde_json::Value, now: i64) -> Opti
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     })
 }
 

@@ -49,7 +49,7 @@ const restrictedSyntax = [
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/**", "electron-poc/**"],
+    ignores: ["dist/**", "node_modules/**", "src-tauri/**", "electron-poc/**", ".worktrees/**"],
   },
   {
     files: ["src/**/*.{ts,tsx}"],

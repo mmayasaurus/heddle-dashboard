@@ -30,6 +30,30 @@ interface Discipline {
 
 const POLL_MS = 60_000;
 
+/** Coerce whatever the backend hands back into a renderable shape.
+ *
+ *  Same reasoning as RouteMixPanel's normalizeMix: this panel renders INSIDE FleetDrawer, so a
+ *  throw here unmounts the whole drawer — roster, caps and dispatch list all vanish, not just
+ *  this row. An unexpected payload must degrade to "nothing recorded", never to an exception.
+ *  A row missing its counters is DROPPED rather than defaulted to zero, because a fabricated
+ *  zero here would render as a red "live, 0 calls" accusation against an agent. */
+function normalizeDiscipline(d: unknown): Discipline {
+  const o = (d ?? {}) as Partial<Discipline>;
+  const rows = Array.isArray(o.rows) ? o.rows : [];
+  return {
+    windowHours: typeof o.windowHours === "number" ? o.windowHours : 0,
+    rows: rows.filter(
+      (r): r is DisciplineRow =>
+        !!r &&
+        typeof r.agent === "string" &&
+        typeof r.memtraceCalls === "number" &&
+        typeof r.serenaCalls === "number",
+    ),
+    legacyUnattributedMemtrace:
+      typeof o.legacyUnattributedMemtrace === "number" ? o.legacyUnattributedMemtrace : 0,
+  };
+}
+
 /**
  * Live agents with zero memory-layer rows in the window — the red-flag set. Exported for tests:
  * this decision is the panel's whole reason to exist, so it stays pure and directly testable.
@@ -50,10 +74,10 @@ export function DisciplinePanel({ liveAgents }: { liveAgents: string[] }) {
     if (!isTauri) return;
     let alive = true;
     const load = () =>
-      invoke<Discipline>("heddle_discipline", { hours: 24 })
+      invoke<unknown>("heddle_discipline", { hours: 24 })
         .then((d) => {
           if (!alive) return;
-          setData(d);
+          setData(normalizeDiscipline(d));
           setErr(null);
         })
         .catch((e: unknown) => {

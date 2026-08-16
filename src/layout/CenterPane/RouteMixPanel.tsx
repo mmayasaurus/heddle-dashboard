@@ -45,6 +45,28 @@ interface RouteMix {
 
 const POLL_MS = 60_000;
 
+/** Coerce whatever the backend hands back into a renderable shape.
+ *
+ *  This panel renders INSIDE FleetDrawer, so a throw here does not degrade one panel — it
+ *  unmounts the whole drawer and the operator loses the roster, the caps and the dispatch list
+ *  at once. An unexpected payload (older backend, a command that resolves to something else)
+ *  must therefore degrade to "empty", never to an exception. Caught for real: FleetDrawer's
+ *  browser test resolves unknown commands to `[]`, and `[].hours.map` took the drawer down. */
+function normalizeMix(m: unknown): RouteMix {
+  const o = (m ?? {}) as Partial<RouteMix>;
+  const hours = Array.isArray(o.hours) ? o.hours : [];
+  return {
+    windowHours: typeof o.windowHours === "number" ? o.windowHours : 0,
+    hours: hours.filter(
+      (h): h is HourBucket =>
+        !!h && typeof h.hour === "string" && Array.isArray(h.providers),
+    ),
+    orchestrators: Array.isArray(o.orchestrators)
+      ? o.orchestrators.filter((x): x is OrchestratorCount => !!x && typeof x.orchestrator === "string")
+      : [],
+  };
+}
+
 // Same accents as the drawer's provider bars, so the scoreboard reads as one system.
 const PROVIDER_COLOR = new Map<string, string>([
   ["claude", "#b07cf0"],
@@ -145,10 +167,10 @@ export function RouteMixPanel({ claudeFiveHourPct }: { claudeFiveHourPct: number
     if (!isTauri) return;
     let alive = true;
     const load = () =>
-      invoke<RouteMix>("heddle_route_mix", { hours: 6 })
+      invoke<unknown>("heddle_route_mix", { hours: 6 })
         .then((m) => {
           if (!alive) return;
-          setMix(m);
+          setMix(normalizeMix(m));
           setLoaded(true);
           setErr(null);
         })

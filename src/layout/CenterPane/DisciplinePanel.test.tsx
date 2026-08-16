@@ -77,3 +77,45 @@ describe("zeroCallAgents — the red-flag decision", () => {
     expect(zeroCallAgents([], [])).toEqual([]);
   });
 });
+
+describe("DisciplinePanel — malformed payloads must not take the drawer down", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+  afterEach(cleanup);
+
+  // This panel renders inside FleetDrawer: a throw here unmounts the WHOLE drawer, losing the
+  // roster, caps and dispatch list. Caught for real — FleetDrawer's browser test resolves
+  // unknown invoke commands to [], and `[].rows.map` crashed the drawer.
+  it.each([
+    ["an array (a catch-all mock or an older backend)", [] as unknown],
+    ["null", null as unknown],
+    ["an object with no rows key", { windowHours: 24 } as unknown],
+  ])("renders the honest empty state instead of throwing for %s", async (_label, payload) => {
+    invoke.mockResolvedValue(payload);
+    render(<DisciplinePanel liveAgents={[]} />);
+    expect(await screen.findByText("fleet.discipline.empty")).toBeTruthy();
+  });
+
+  it("drops rows missing their counters instead of rendering invented numbers", async () => {
+    invoke.mockResolvedValue({
+      windowHours: 24,
+      rows: [
+        null,
+        { agent: "S" }, // no counters — coercing these to 0 would render a row of invented data
+        { agent: "W", repoId: "heddle", memtraceCalls: 4, serenaCalls: 0, deniedCalls: 0, gate: true, lastTs: "2026-08-16T00:54:30Z" },
+      ],
+      legacyUnattributedMemtrace: 0,
+    });
+    render(<DisciplinePanel liveAgents={["W"]} />);
+    // The well-formed row survives with its real counters...
+    await waitFor(() => expect(screen.getByText("memtrace ×4")).toBeTruthy());
+    expect(screen.getByText("W")).toBeTruthy();
+    // ...and the malformed one produces NO usage row at all, rather than one reading "S ×0 ×0"
+    // built from numbers the backend never sent.
+    expect(screen.queryByText("S")).toBeNull();
+    expect(screen.queryByText("memtrace ×0")).toBeNull();
+    // Note: S having no row still feeds the live-agent red flag, which is HED-85's whole point
+    // and is the same path as an agent that genuinely made no calls — see zeroCallAgents.
+  });
+});

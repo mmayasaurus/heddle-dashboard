@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.memdb/
+.serena/
+.claude/
+src-tauri/target/
+src-tauri/gen/
+.vlx-worktrees/
+.dev-data/
+.pnpm-store/
+.agentr-hed-77-worktree/
+coverage/
+.worktrees/

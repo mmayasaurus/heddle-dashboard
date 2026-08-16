@@ -372,7 +372,7 @@ svg { display: block; }
 .fleet-agent-age { width: 52px; text-align: right; flex: none; }
 .fleet-agent-workers { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 4px 34px; padding-left: 8px; border-left: 1px solid var(--border); }
 .fleet-worker { display: flex; align-items: center; gap: 7px; padding: 1px 0; font-size: 11px; }
-.fleet-worker.stale { opacity: 0.55; }
+.fleet-worker.stale { opacity: 0.55; text-decoration: line-through; }
 .fleet-worker-cwd { font-size: 10.5px; }
 /* per-provider rate-limit caps (ccusage-style segmented bars) */
 .fleet-provcaps { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px 22px; }
@@ -385,7 +385,9 @@ svg { display: block; }
 .fleet-provcap-refresh { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
 .fleet-provcap-refresh:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-refresh:disabled { opacity: 0.5; }
-.fleet-provcap-refresh.refreshing { animation: fleet-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .fleet-provcap-refresh.refreshing { animation: fleet-spin 0.7s linear infinite; }
+}
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
 .fleet-capline { display: flex; align-items: center; gap: 8px; }
@@ -403,6 +405,14 @@ svg { display: block; }
 .fleet-provcap-account-caps { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
 .fleet-provcap-account-separator { color: var(--text-faint); margin-left: 2px; }
 .fleet-provcap-limit-reached { color: var(--red); margin-left: 2px; }
+.fleet-provcap-account-detail { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.fleet-provcap-account-head { display: flex; align-items: baseline; gap: 3px; color: var(--text-dim); font-size: 10px; }
+.fleet-provcap-account-position { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.fleet-provcap-account-rotate { color: var(--text-dim); font-size: 11px; padding: 0 2px; border-radius: 3px; }
+.fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
+.fleet-provcap-account-state { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; font-size: 9.5px; }
+.fleet-provcap-logged-out { color: var(--yellow); }
+.fleet-provcap-keeper-estimate { color: var(--text-faint); }
 .fleet-provcap-window { display: flex; align-items: baseline; gap: 6px; color: var(--text-dim); font-size: 10px; }
 @keyframes fleet-spin { to { transform: rotate(360deg); } }
 .splitnode { display: flex; min-width: 0; min-height: 0; flex: 1; }

@@ -3,6 +3,8 @@
 //! `kill(pid, 0)`) with the in-flight heddle workers each one owns, plus an "(orphaned)" bucket
 //! for workers whose orchestrator is gone.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use super::{home, ledger};
@@ -38,10 +40,103 @@ pub struct FleetAgent {
 
 fn process_alive(pid: i32) -> bool {
     // `kill(pid, 0)` does not send a signal; EPERM means the process exists but belongs to another
-    // user, which is still live for roster purposes.
+    // user, which is still live for roster purposes. Only positive pids are probed: 0 / negative
+    // values address process groups (or every process), which is never what a session file means.
+    if pid <= 0 {
+        return false;
+    }
+    // Audited: signal 0 is a pure existence probe (POSIX kill(2)); the only argument is a
+    // range-checked i32, no memory is touched, and no pointer crosses the FFI boundary.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         libc::kill(pid, 0) == 0
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+/// Parse `ps -o pid=,comm=` output into a liveness verdict per listed PID. A session PID may be
+/// reused after Claude exits, so existence alone is not enough: its executable must still be Claude.
+fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim_start().splitn(2, char::is_whitespace);
+            let pid = fields.next()?.trim().parse().ok()?;
+            let comm = fields.next()?.trim();
+            let basename = std::path::Path::new(comm)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(comm);
+            // Linux caveat: `comm` truncates to 15 characters and node-wrapper launches report
+            // `node`; this macOS-only app does not handle either case.
+            let basename = basename.to_ascii_lowercase();
+            let expect = expect.to_ascii_lowercase();
+            Some((
+                pid,
+                basename == expect || basename == format!("{expect}.exe"),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_ps_output_means_all_dead_not_ps_failure() {
+        // macOS `ps -p` exits non-zero with EMPTY stdout when none of the pids exist — that is a
+        // legitimate all-dead verdict, not a ps failure, and must map every pid to dead rather
+        // than falling back to the pid-reuse-prone kill(2) probe (gitar, PR #23 round 3).
+        let live = parse_ps_liveness("", "claude");
+        assert!(live.is_empty());
+        assert!(!live.get(&101).copied().unwrap_or(false));
+    }
+
+    #[test]
+    fn ps_liveness_requires_a_claude_executable_for_each_candidate_pid() {
+        let live = parse_ps_liveness(
+            "  101 Google Chrome H\n  102 claude\n  103 /Users/x/.local/bin/claude\n  104 claude-helper\n  105 not-claude\n  106 CLAUDE.EXE\n",
+            "claude",
+        );
+
+        assert_eq!(live.get(&101), Some(&false));
+        assert_eq!(live.get(&102), Some(&true));
+        assert_eq!(live.get(&103), Some(&true));
+        assert_eq!(live.get(&104), Some(&false));
+        assert_eq!(live.get(&105), Some(&false));
+        assert_eq!(live.get(&106), Some(&true));
+        assert!(!live.get(&104).copied().unwrap_or(false));
+    }
+
+    #[test]
+    fn worker_matching_prefers_the_live_duplicate_agent_name() {
+        let agents = vec![
+            FleetAgent {
+                name: "r".to_string(),
+                pid: 1,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "r".to_string(),
+                pid: 2,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+        ];
+
+        assert_eq!(matching_agent_index(&agents, Some("r")), Some(1));
     }
 }
 
@@ -75,7 +170,7 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         let Ok(pid_for_kill) = i32::try_from(pid) else {
             continue;
         };
-        if pid_for_kill <= 0 || !process_alive(pid_for_kill) {
+        if pid_for_kill <= 0 {
             continue;
         }
         agents.push(FleetAgent {
@@ -89,11 +184,67 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
             status: session["status"].as_str().unwrap_or_default().to_string(),
             kind: session["kind"].as_str().unwrap_or_default().to_string(),
             updated_at_ms: session["updatedAt"].as_i64().unwrap_or_default(),
-            alive: true,
+            alive: false,
             workers: vec![],
         });
     }
+    if agents.is_empty() {
+        return agents;
+    }
+
+    verify_and_retain(agents)
+}
+
+fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
+    let pids = agents
+        .iter()
+        .map(|agent| agent.pid.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let ps_liveness = std::process::Command::new("ps")
+        .args(["-p", &pids, "-o", "pid=,comm="])
+        .output()
+        .ok()
+        .and_then(|output| {
+            // ps -p exit status is USELESS here: it is non-zero whenever ANY listed pid is missing,
+            // including the legitimate all-dead case (empty stdout, empty stderr). Trust the parsed
+            // output whenever ps ran without complaining; fall back to kill(2) only on a spawn
+            // error or a diagnostic — non-empty stderr with nothing parsed (gitar, #23 round 3).
+            (!output.stdout.is_empty() || output.stderr.is_empty())
+                .then(|| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"))
+        });
+    const SESSION_STALE_AFTER_MS: i64 = 48 * 60 * 60 * 1000;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default();
+    let mut kept = Vec::with_capacity(agents.len());
+    for mut agent in agents {
+        let stale = now_ms.saturating_sub(agent.updated_at_ms) > SESSION_STALE_AFTER_MS;
+        let process_live = match &ps_liveness {
+            Some(liveness) => liveness.get(&(agent.pid as i32)).copied().unwrap_or(false),
+            None => process_alive(agent.pid as i32),
+        };
+        // Dead process + stale session file = a session that ended long ago — drop the row.
+        // Recently died (fresh file) or alive-but-parked (live process, silent 48h) stays, struck.
+        if !process_live && stale {
+            continue;
+        }
+        agent.alive = process_live && !stale;
+        kept.push(agent);
+    }
+    kept
+}
+
+fn matching_agent_index(agents: &[FleetAgent], orchestrator: Option<&str>) -> Option<usize> {
     agents
+        .iter()
+        .position(|agent| agent.alive && Some(agent.name.as_str()) == orchestrator)
+        .or_else(|| {
+            agents
+                .iter()
+                .position(|agent| Some(agent.name.as_str()) == orchestrator)
+        })
 }
 
 fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
@@ -131,10 +282,8 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 
     let mut orphaned = Vec::new();
     for (orchestrator, worker) in rows.flatten() {
-        if let Some(agent) = agents
-            .iter_mut()
-            .find(|agent| Some(agent.name.as_str()) == orchestrator.as_deref())
-        {
+        if let Some(index) = matching_agent_index(agents, orchestrator.as_deref()) {
+            let agent = &mut agents[index];
             agent.workers.push(worker);
         } else {
             orphaned.push(worker);
@@ -147,35 +296,30 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 /// inaccessible sessions or ledger data simply produce a partial roster rather than failing the drawer.
 #[tauri::command]
 pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
-    Ok(
-        match tauri::async_runtime::spawn_blocking(|| {
-            let mut agents = live_fleet_agents();
-            let orphaned = attach_in_flight_workers(&mut agents);
-            agents.sort_by(|a, b| {
-                b.alive
-                    .cmp(&a.alive)
-                    .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
-                    .then(a.name.cmp(&b.name))
+    Ok(tauri::async_runtime::spawn_blocking(|| {
+        let mut agents = live_fleet_agents();
+        let orphaned = attach_in_flight_workers(&mut agents);
+        agents.sort_by(|a, b| {
+            b.alive
+                .cmp(&a.alive)
+                .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
+                .then(a.name.cmp(&b.name))
+        });
+        if !orphaned.is_empty() {
+            agents.push(FleetAgent {
+                name: "(orphaned)".to_string(),
+                pid: 0,
+                session_id: String::new(),
+                cwd: String::new(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: orphaned,
             });
-            if !orphaned.is_empty() {
-                agents.push(FleetAgent {
-                    name: "(orphaned)".to_string(),
-                    pid: 0,
-                    session_id: String::new(),
-                    cwd: String::new(),
-                    status: String::new(),
-                    kind: String::new(),
-                    updated_at_ms: 0,
-                    alive: false,
-                    workers: orphaned,
-                });
-            }
-            agents
-        })
-        .await
-        {
-            Ok(agents) => agents,
-            Err(_) => vec![],
-        },
-    )
+        }
+        agents
+    })
+    .await
+    .unwrap_or_default())
 }
