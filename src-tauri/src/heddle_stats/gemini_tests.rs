@@ -252,3 +252,55 @@ fn a_successful_refresh_clears_the_block_and_a_failed_one_re_arms_it() {
     let (code, _) = refresh_blocked_reason(Some(&armed), true, false).unwrap();
     assert_eq!(code, CODE_AUTH_BLOCKED);
 }
+
+#[test]
+fn a_blocked_refresh_with_no_snapshot_still_shows_the_row_and_the_way_out() {
+    // The first-run incident itself: no profile in this HOME, and no gemini.json was ever written
+    // (we refuse to spawn, so not even an error snapshot exists). The provider must NOT vanish —
+    // a missing row tells the operator nothing, and the whole point is the instruction.
+    let entry = empty_entry();
+    assert_eq!(entry.provider, "gemini");
+    assert_eq!(entry.five_hour, LimitWindow::default());
+    assert_eq!(entry.captured_at, None);
+    assert_eq!(entry.source.as_deref(), Some(SOURCE));
+    // …and the blocked reason is what gets attached to it (same shape limit() builds).
+    let (code, why) = refresh_blocked_reason(None, false, false).unwrap();
+    assert_eq!(code, CODE_NO_PROFILE);
+    assert!(why.contains("run `agy` once in a terminal"), "{why}");
+}
+
+#[test]
+fn an_ordinary_failure_after_signing_in_lifts_a_stale_block() {
+    // Reported by review: sign in for real, click refresh, hit a transient network error — the old
+    // authBlocked must not survive and disable the timer forever.
+    assert!(!looks_like_auth_attempt(
+        "agy JSON parse failed: expected value"
+    ));
+    // The failure path writes authBlocked = looks_like_auth_attempt(err), so a non-auth failure
+    // clears a previously-set flag rather than leaving it latched.
+    let mut snap = snapshot_from_agy(&data(), 1_786_830_000);
+    snap["authBlocked"] = serde_json::json!(true);
+    assert!(refresh_blocked_reason(Some(&snap), true, false).is_some());
+    snap["authBlocked"] = serde_json::json!(looks_like_auth_attempt("agy JSON parse failed"));
+    assert!(
+        refresh_blocked_reason(Some(&snap), true, false).is_none(),
+        "an ordinary failure must hand the timer back"
+    );
+}
+
+#[test]
+fn the_detector_boundary_is_pinned_including_awkward_cases() {
+    // Empty/no-message failures are NOT auth — they retry on the normal backoff.
+    assert!(!looks_like_auth_attempt(""));
+    assert!(!looks_like_auth_attempt("   "));
+    // Deliberately accepted over-blocking: these mention auth words without being login flows, and
+    // we still pause. A stale gauge until someone clicks refresh is the cheap failure; a browser
+    // prompt every 180s is the expensive one, so the detector leans this way ON PURPOSE.
+    assert!(looks_like_auth_attempt("browser cache corrupted"));
+    assert!(looks_like_auth_attempt("credential file parse error"));
+    // Case and surrounding text do not matter.
+    assert!(looks_like_auth_attempt("FATAL: Please SIGN IN again"));
+    assert!(looks_like_auth_attempt(
+        "agy exited non-zero: OAuth token refresh failed"
+    ));
+}

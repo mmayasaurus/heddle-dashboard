@@ -76,20 +76,25 @@ fn agy_profile_exists() -> bool {
 /// treated the same. False positives cost a stale gauge until someone clicks refresh; false
 /// negatives cost a browser prompt every 180s.
 pub(super) fn looks_like_auth_attempt(err: &str) -> bool {
+    /// Any of these in a failure means "a human may be needed" — see the doc above for why the
+    /// list errs toward blocking.
+    const MARKERS: &[&str] = &[
+        "timed out",
+        "sign in",
+        "sign-in",
+        "signin",
+        "log in",
+        "login",
+        "logged in",
+        "oauth",
+        "authenticate",
+        "authentication",
+        "credential",
+        "browser",
+        "paste",
+    ];
     let e = err.to_ascii_lowercase();
-    e.contains("timed out")
-        || e.contains("sign in")
-        || e.contains("sign-in")
-        || e.contains("signin")
-        || e.contains("log in")
-        || e.contains("login")
-        || e.contains("logged in")
-        || e.contains("oauth")
-        || e.contains("authenticate")
-        || e.contains("authentication")
-        || e.contains("credential")
-        || e.contains("browser")
-        || e.contains("paste")
+    MARKERS.iter().any(|m| e.contains(m))
 }
 
 /// Why a refresh must not run, or `None` when it may. `forced` is an explicit human action (the
@@ -149,7 +154,16 @@ pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
     if due && blocked.is_none() {
         maybe_spawn_refresh(now, false, agy_bin);
     }
-    let mut l = parse_snapshot(&snap?, now)?;
+    // The blocked-and-no-snapshot case is the FIRST-RUN incident itself: nothing was ever written
+    // because we refuse to spawn. Returning None there would delete the whole Gemini row from the
+    // drawer — the operator would see a provider silently missing instead of the sentence telling
+    // them how to fix it. Synthesize an empty entry so the guidance always has somewhere to land.
+    let parsed = snap.as_ref().and_then(|v| parse_snapshot(v, now));
+    let mut l = match (parsed, &blocked) {
+        (Some(l), _) => l,
+        (None, Some(_)) => empty_entry(),
+        (None, None) => return None,
+    };
     if let Some((code, why)) = blocked {
         l.note = Some(match l.note {
             Some(existing) => format!("{existing}; {why}"),
@@ -160,6 +174,28 @@ pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
         l.note_codes = Some(codes);
     }
     Some(l)
+}
+
+/// A Gemini row with no numbers — used only to carry a blocked-refresh explanation when no snapshot
+/// exists yet, so the provider never silently disappears from the drawer.
+fn empty_entry() -> ProviderLimit {
+    ProviderLimit {
+        provider: "gemini".to_string(),
+        model: Some("antigravity".to_string()),
+        captured_at: None,
+        five_hour: LimitWindow::default(),
+        seven_day: LimitWindow::default(),
+        source: Some(SOURCE.to_string()),
+        stale: None,
+        stale_after_secs: Some(STALE_AFTER_SECS),
+        note: None,
+        note_codes: Some(Vec::new()),
+        accounts: None,
+        active_account: None,
+        windows: Some(Vec::new()),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
+    }
 }
 
 /// Force a refresh regardless of snapshot age (respects the in-flight guard, ignores the failure
@@ -207,10 +243,11 @@ fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
             snap["lastError"] = Value::String(e.clone());
             snap["lastAttemptAt"] = json!(now);
             // Sticky: an attempt that looked like it needed a human stops the 180s timer from
-            // asking again (HED-114). Only a successful run or an explicit refresh clears it.
-            if looks_like_auth_attempt(&e) {
-                snap["authBlocked"] = json!(true);
-            }
+            // asking again (HED-114). A failure that did NOT look like auth clears any older block:
+            // reaching agy far enough to fail for an ordinary reason (network, parse) proves the
+            // sign-in question is settled, so a transient error after a successful login must not
+            // leave automatic refreshes disabled forever.
+            snap["authBlocked"] = json!(looks_like_auth_attempt(&e));
             // A failed snapshot write is a second, distinct failure — say so instead of hiding it
             // behind the agy error.
             match write_json_atomic(&path, &snap) {
