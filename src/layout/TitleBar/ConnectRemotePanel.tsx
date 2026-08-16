@@ -61,7 +61,25 @@ export function ConnectRemotePanel({
   showSharedDb?: boolean;
 }) {
   const t = useT();
-  const [mode, setMode] = useState<Mode>("ssh");
+  // SSH remote development is disabled in heddle builds (HED-42): the backend reports availability and
+  // the panel offers only URL mode until it comes back. Default to URL so the initial view is usable
+  // either way; SSH is selectable only when the backend says it exists.
+  const [sshAvailable, setSshAvailable] = useState(false);
+  const [mode, setMode] = useState<Mode>("url");
+  useEffect(() => {
+    let alive = true;
+    void invoke<boolean>("ssh_remote_available")
+      .then((ok) => {
+        if (alive) setSshAvailable(ok);
+      })
+      .catch(() => {
+        if (alive) setSshAvailable(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const modes: Mode[] = sshAvailable ? ["ssh", "url"] : ["url"];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -440,9 +458,10 @@ export function ConnectRemotePanel({
         >
           <div style={sectionLabelStyle}>{t("connect.title")}</div>
 
-          {/* Mode switch: SSH or URL. */}
+          {/* Mode switch: SSH or URL. Only URL while SSH remote is disabled (HED-42). */}
+          {modes.length > 1 && (
           <div style={{ display: "flex", gap: 6, margin: "2px 0 10px" }}>
-            {(["ssh", "url"] as Mode[]).map((m) => (
+            {modes.map((m) => (
               <button
                 key={m}
                 onClick={() => {
@@ -465,6 +484,7 @@ export function ConnectRemotePanel({
               </button>
             ))}
           </div>
+          )}
 
           {mode === "url" ? (
             <input

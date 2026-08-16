@@ -8,7 +8,6 @@ import { MergeModal } from "./components/MergeModal";
 import { ChangesModal } from "./components/diff/ChangesModal";
 import { NotifyGuideModal } from "./components/NotifyGuideModal";
 import { SpawnConfirmModal } from "./components/SpawnConfirmModal";
-import { UpdateModal } from "./components/UpdateModal";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useNotifications } from "./hooks/useNotifications";
 import { CenterPane } from "./layout/CenterPane/CenterPane";
@@ -27,7 +26,6 @@ import {
 import { reconcileSettings } from "./ipc/settingsSync";
 import { isTauri } from "./ipc/transport";
 import { wsClient } from "./ipc/wsClient";
-import { checkForUpdates } from "./ipc/updater";
 import { env, platform } from "./platform";
 import { ConnectionBanner } from "./remote/ConnectionBanner";
 import { CloneProjectModal } from "./remote/CloneProjectModal";
@@ -146,8 +144,6 @@ function App() {
     const unlistenMenu = onMenuAction((action) => {
       if (action === "settings") {
         useTermStore.getState().setSettingsOpen(true);
-      } else if (action === "check-update") {
-        void checkForUpdates({ manual: true });
       } else if (action === "share") {
         useTermStore.getState().setShareOpen(true);
       } else if (action === "split-right" || action === "split-down") {
@@ -163,12 +159,7 @@ function App() {
         );
       }
     });
-    // After a short startup delay, silently check for desktop updates. New versions light the status bar;
-    // no-update and error results remain quiet.
-    let updTimer: ReturnType<typeof setTimeout> | undefined;
-    if (isTauri) {
-      updTimer = setTimeout(() => void checkForUpdates({ manual: false }), 5000);
-    }
+    // No startup update check: heddle has no auto-updater (HED-38) and never phones home.
     return () => {
       unwatch();
       offConnState?.();
@@ -178,7 +169,6 @@ function App() {
       clearTimeout(treeTimer);
       void unlistenTree.then((fn) => fn());
       void unlistenMenu.then((fn) => fn());
-      clearTimeout(updTimer);
     };
     // Run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,7 +217,6 @@ function App() {
       <MergeModal />
       <ChangesModal />
       <NotifyGuideModal />
-      <UpdateModal />
       <ConnectionBanner />
       <ErrorLogModal />
       <NotificationsManager />

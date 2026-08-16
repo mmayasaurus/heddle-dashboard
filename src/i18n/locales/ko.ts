@@ -86,12 +86,12 @@ const ko: typeof en = {
     "설정 파일을 통해 모든 권한 확인을 건너뜁니다 (CLI 플래그 없음). 이 세션 시작 시 적용됩니다.",
   "settings.catGeneral": "일반", // General
   "settings.cliLabel": "셸 명령",
-  "settings.cliInstall": "‘vela’ 명령 설치",
-  "settings.cliUninstall": "‘vela’ 명령 제거",
+  "settings.cliInstall": "‘heddle’ 명령 설치",
+  "settings.cliUninstall": "‘heddle’ 명령 제거",
   "settings.cliInstalledAt": (path: string) => `${path}에 설치됨`,
   "settings.cliConflict": (path: string) =>
-    `${path}에 다른 ‘vela’ 명령이 있습니다. heddle은 덮어쓰지 않습니다.`,
-  "settings.cliHint": "VS Code의 `code`처럼 `vela <project-path>`를 PATH에 추가합니다.",
+    `${path}에 다른 ‘heddle’ 명령이 있습니다. heddle은 덮어쓰지 않습니다.`,
+  "settings.cliHint": "VS Code의 `code`처럼 `heddle <project-path>`를 PATH에 추가합니다.",
   "settings.agentArgsHint":
     "각 에이전트 유형의 새 세션에 적용되는 기본 실행 인자. 세션 생성·편집 시 설정한 개별 인자가 우선합니다. 비워두면 없음.", // Agent default launch args hint
   "settings.agentPathLabel": "실행 파일 경로(선택)", // Executable path (optional)

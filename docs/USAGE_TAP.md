@@ -18,7 +18,10 @@ back to stdout unchanged** (claude-hud renders byte-identically), and on the sid
   endpoint the native Codex CLI uses for `/status`). heddle reads it and **self-refreshes** it
   (`claudex-usage --refresh lb`) when it's >90s stale, so it stays current even when no claudex session
   is rendering. Details in "Codex source" below.
-- **Gemini / Cursor** → TODO (each needs its own source: `agy` usage, Cursor's API).
+- **Gemini** → NOT from the tap. Sourced from the Antigravity CLI: `agy -p "/quota" --output-format json`
+  (read-only print mode, agy ≥ 1.1.11), cached to `~/.heddle/usage/gemini.json` in the tap format
+  and refreshed out-of-band when stale. Details in "Gemini source" below.
+- **Cursor** → TODO (Cursor's usage-summary API — HED-9).
 
 The dashboard's `heddle_provider_limits` Tauri command (`src-tauri/src/heddle_stats/`) reads all of
 the above and returns them to the `FleetDrawer`, which renders one column per provider (5h over 7d,
@@ -51,10 +54,10 @@ the blocking pool — never on the main thread (README "Contributing").
 ### `heddle_refresh_provider_limits(provider?)` → `string[]`
 
 Forces an out-of-band refresh of a provider's source (or all refreshable ones when `provider` is
-omitted), ignoring the staleness thresholds; returns the providers a refresh was kicked for. It is
-non-blocking — re-poll `heddle_provider_limits` a few seconds later. Claude is tap-driven (a session
-must render its statusline) so it is never in the list. This is the backend for per-provider refresh
-buttons.
+omitted), ignoring the staleness thresholds; returns the providers a refresh was kicked for
+(`codex`, `gemini`). It is non-blocking — re-poll `heddle_provider_limits` a few seconds later.
+Claude is tap-driven (a session must render its statusline) so it is never in the list. This is the
+backend for per-provider refresh buttons.
 
 ## Codex source (`heddle_stats/codex.rs`)
 
@@ -95,6 +98,34 @@ the statusline command at startup. New/cycled agents populate `claude.json` auto
 `cp ~/.claude/settings.json.bak-heddle-<timestamp> ~/.claude/settings.json` — or just delete the
 `"$BUN" .../usage-tap.mjs | ` prefix from the `statusLine.command`. The tap is a pure passthrough, so
 removing it changes nothing about how the statusline renders.
+
+## Gemini source (`heddle_stats/gemini.rs`)
+
+- **What agy exposes**: since 1.1.11 the read-only slash commands answer non-interactively in print
+  mode — `agy -p "/quota" --output-format json` (also `/usage`, `/credits`) — "without starting an
+  agent turn, spending quota, or leaving a conversation behind" (agy changelog; live-verified 1.1.13
+  on 2026-08-15). It forces a quota reload against Google's Code Assist endpoint using agy's own login
+  and returns `command.data.groups[]`, each with `buckets[]`:
+  `{id, window: "5h" | "weekly", remaining_fraction, reset_time (RFC3339)}`. Two groups today:
+  **Gemini Models** (`gemini-5h`, `gemini-weekly` — what heddle routes to → the entry's 5h/7d) and
+  **Claude and GPT models** (`3p-5h`, `3p-weekly` — Antigravity's third-party bucket → extra
+  `windows[]` with ids `3p-5h` / `3p-weekly`). `usedPercentage` = `(1 − remaining_fraction) × 100`;
+  `resetsAt` = `reset_time` as epoch seconds. A bucket without `remaining_fraction` (agy shows those
+  as "Disabled") is an empty window.
+- **Cost / cadence**: ~3s wall clock and a few Google round trips per run, so it never runs inline.
+  `heddle_provider_limits` reads the snapshot and, when it is older than 180s, kicks ONE detached
+  refresh thread (`agy … --log-file /dev/null`, so no log file per run under `~/.gemini/…/log/`; 45s
+  budget) that rewrites `~/.heddle/usage/gemini.json` atomically. `stale: true` after 600s without a
+  successful refresh; a failed run records `lastError`/`lastAttemptAt` in the snapshot (surfaced as
+  `note` + `noteCodes` `gemini.refreshFailed` / `gemini.noDataYet`) and backs off 120s. The
+  refresh button (`heddle_refresh_provider_limits("gemini")`) forces one immediately.
+- **Snapshot format**: tap-compatible (`model: "antigravity"`, `rate_limits.five_hour/seven_day`,
+  `capturedAt`) so anything reading `~/.heddle/usage/*.json` sees Gemini like Claude, plus `source`,
+  normalized `groups[]`, and the raw agy `data`. The tap reader skips `gemini.json`; `gemini.rs`
+  reads it back with the extras.
+- **Fixtures/tests**: `src-tauri/tests/fixtures/heddle_stats/agy-quota.json` (a real answer, no
+  PII) + `cargo test --lib heddle_stats::gemini`; live: `cargo test --lib heddle_stats::gemini --
+  --ignored --nocapture` (runs the real agy; the refresh test writes the real snapshot).
 
 ## Multi-account (added 2026-08-15)
 

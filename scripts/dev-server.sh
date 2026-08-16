@@ -19,7 +19,7 @@
 #
 # If a service of the **same version** already runs remotely, reconnect reuses that process instead of replacing
 # its binary. To replace it, choose "Stop server" in the exit dialog first, or run manually:
-# ssh <host> 'kill $(sed -n "s/.*\"pid\":\([0-9]*\).*/\1/p" ~/.velaterm/run.json); rm -f ~/.velaterm/run.json'
+# ssh <host> 'kill $(sed -n "s/.*\"pid\":\([0-9]*\).*/\1/p" ~/.heddle/remote/run.json); rm -f ~/.heddle/remote/run.json'
 #
 set -euo pipefail
 
@@ -72,7 +72,7 @@ step "Cross-compiling for Linux (cargo zigbuild --target ${LINUX_TARGET}.${LINUX
 ( cd src-tauri && VLX_GIT_COMMIT="$GIT_COMMIT" VLX_BUILD_TIME="$BUILD_TIME" \
     cargo zigbuild --release --no-default-features --target "${LINUX_TARGET}.${LINUX_GLIBC}" ) \
   || die "Linux cross-compilation failed"
-LINUX_BIN="$ROOT/src-tauri/target/${LINUX_TARGET}/release/velaterm"
+LINUX_BIN="$ROOT/src-tauri/target/${LINUX_TARGET}/release/heddle"
 [ -f "$LINUX_BIN" ] || die "Build output is missing: $LINUX_BIN"
 ok "Linux binary: $LINUX_BIN"
 
@@ -81,7 +81,7 @@ if [ "$BUILD_MAC" = 1 ]; then
   step "Building the native macOS binary (cargo build --release --no-default-features)"
   ( cd src-tauri && VLX_GIT_COMMIT="$GIT_COMMIT" VLX_BUILD_TIME="$BUILD_TIME" \
       cargo build --release --no-default-features ) || die "macOS build failed"
-  ok "macOS binary: $ROOT/src-tauri/target/release/velaterm"
+  ok "macOS binary: $ROOT/src-tauri/target/release/heddle"
 fi
 
 # ---- Finish: usage guidance / end-to-end launch ----
