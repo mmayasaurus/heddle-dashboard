@@ -25,7 +25,21 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # NO base-branch filter, and `edited` included — both halves of HED-91,
+    # found live on heddle#9:
+    #   * `branches: [main]` meant a STACKED PR (base = another agent's branch)
+    #     never ran this workflow at all. The required check `gate` was then
+    #     permanently absent, so the PR could not satisfy the ruleset — an
+    #     unrunnable gate, not a failing one.
+    #   * RETARGETING a PR's base (the normal move once the parent merges) fires
+    #     ONLY `pull_request: edited` — no synchronize, no new commit. Without
+    #     `edited` the retargeted PR silently kept the verdict it earned against
+    #     the OLD base, which is a different merge result.
+    # `edited` also fires on title/body edits (reviewer bots edit bodies often).
+    # Those are filtered twice below: the concurrency group sends them to a
+    # separate `noop` slot so they cannot cancel an in-flight real run, and every
+    # job guard skips them so no runner time is spent (the rust jobs are slow).
+    types: [opened, synchronize, reopened, edited]
   # Break-glass manual run, e.g. to re-check main after a runner-side outage.
   workflow_dispatch: {}
 
@@ -35,12 +49,16 @@ permissions: {}
 # report. The gate is a per-commit required check, so a cancelled stale run
 # never reds the PR verdict — only the latest commit's run counts.
 concurrency:
-  group: gate-${{ github.event.pull_request.number || github.ref }}
+  group: gate-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'run' || 'noop' }}
   cancel-in-progress: true
 
 jobs:
   web:
     name: web (pnpm build + vitest)
+    # Skip title/body edits (no new commit, no base change) — HED-91; a base
+    # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
+    # action, so they always run.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -72,6 +90,10 @@ jobs:
 
   rust:
     name: rust (cargo check)
+    # Skip title/body edits (no new commit, no base change) — HED-91; a base
+    # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
+    # action, so they always run.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from != ''
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
@@ -97,6 +119,10 @@ jobs:
 
   rust-test:
     name: rust (cargo test)
+    # Skip title/body edits (no new commit, no base change) — HED-91; a base
+    # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
+    # action, so they always run.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from != ''
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
@@ -120,6 +146,10 @@ jobs:
 
   lint:
     name: lint (eslint) — NON-required, red until HED-14
+    # Skip title/body edits (no new commit, no base change) — HED-91; a base
+    # RETARGET sets changes.base.ref.from and runs. Non-PR events have an empty
+    # action, so they always run.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -158,7 +188,12 @@ jobs:
     needs: [web, rust, rust-test]
     # `if: always()` so a failed/cancelled/skipped dependency yields a red gate
     # instead of a skipped (which GitHub would treat as pass for a required check).
-    if: always()
+    # The second clause keeps the aggregator in LOCKSTEP with its needs on a
+    # title/body edit (HED-91): those runs skip every leaf job, and an always()
+    # aggregator would then see `skipped` results and red an otherwise fine PR.
+    # Whole-workflow no-op is correct there — the real run's `gate` check is
+    # attached to the same head SHA and still stands.
+    if: always() && (github.event.action != 'edited' || github.event.changes.base.ref.from != '')
     permissions: {}
     steps:
       - name: Verdict
