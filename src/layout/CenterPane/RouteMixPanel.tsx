@@ -45,6 +45,26 @@ interface RouteMix {
 
 const POLL_MS = 60_000;
 
+function isProvider(p: unknown): p is ProviderHourTokens {
+  const x = p as Partial<ProviderHourTokens> | null;
+  return (
+    !!x &&
+    typeof x.provider === "string" &&
+    Number.isFinite(x.inputTokens) &&
+    Number.isFinite(x.outputTokens)
+  );
+}
+
+function isOrchestrator(o: unknown): o is OrchestratorCount {
+  const x = o as Partial<OrchestratorCount> | null;
+  return (
+    !!x &&
+    typeof x.orchestrator === "string" &&
+    Number.isFinite(x.dispatches) &&
+    Number.isFinite(x.succeeded)
+  );
+}
+
 /** Coerce whatever the backend hands back into a renderable shape.
  *
  *  This panel renders INSIDE FleetDrawer, so a throw here does not degrade one panel — it
@@ -57,13 +77,13 @@ function normalizeMix(m: unknown): RouteMix {
   const hours = Array.isArray(o.hours) ? o.hours : [];
   return {
     windowHours: typeof o.windowHours === "number" ? o.windowHours : 0,
-    hours: hours.filter(
-      (h): h is HourBucket =>
-        !!h && typeof h.hour === "string" && Array.isArray(h.providers),
-    ),
-    orchestrators: Array.isArray(o.orchestrators)
-      ? o.orchestrators.filter((x): x is OrchestratorCount => !!x && typeof x.orchestrator === "string")
-      : [],
+    // Inner numeric fields are validated too, not just the container shape: an entry missing
+    // inputTokens would render "codex NaN" and one missing dispatches "R×undefined" — no crash,
+    // but confusing text presented as telemetry. Drop the entry instead of displaying nonsense.
+    hours: hours
+      .filter((h): h is HourBucket => !!h && typeof h.hour === "string" && Array.isArray(h.providers))
+      .map((h) => ({ ...h, providers: h.providers.filter(isProvider) })),
+    orchestrators: Array.isArray(o.orchestrators) ? o.orchestrators.filter(isOrchestrator) : [],
   };
 }
 
