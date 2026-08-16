@@ -3,9 +3,143 @@
 pub mod repo;
 pub mod schema;
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension};
+
+/// Database file name inside the app data directory. Renamed from upstream's `vlx-term.db` (HED-40).
+pub const DB_FILE: &str = "heddle.db";
+/// Pre-rename database file name; migrated forward once by [`app_db_path`], never modified or removed.
+pub const LEGACY_DB_FILE: &str = "vlx-term.db";
+
+/// Resolve the database path inside `data_dir`, migrating a legacy `vlx-term.db` on first sight.
+///
+/// If `heddle.db` does not exist yet and `vlx-term.db` does, a consistent copy is produced with SQLite's
+/// `VACUUM INTO` through a normal connection (so WAL content is folded in — a raw file copy of a WAL
+/// database could drop the newest writes), written to a per-process temp file and published atomically
+/// (see [`place_snapshot`]). On success the legacy file is not modified by the migration and stays on
+/// disk as a backup; it is not a live sibling — heddle only ever opens `heddle.db` from then on, so
+/// anything a pre-rename build writes to `vlx-term.db` afterwards is not reconciled (downgrades are not
+/// supported). If the copy fails and no other process published `heddle.db` meanwhile, the legacy path
+/// is returned so startup keeps working — that fallback DOES open (and therefore mutate) the legacy
+/// file; the failure is logged, not fatal.
+pub fn app_db_path(data_dir: &Path) -> PathBuf {
+    resolve_db_path(data_dir, copy_legacy_db)
+}
+
+/// [`app_db_path`] with the copy step injectable, so the fallback branches are unit-testable.
+fn resolve_db_path(
+    data_dir: &Path,
+    copy: impl Fn(&Path, &Path) -> Result<(), String>,
+) -> PathBuf {
+    let new = data_dir.join(DB_FILE);
+    let legacy = data_dir.join(LEGACY_DB_FILE);
+    if new.exists() || !legacy.exists() {
+        return new;
+    }
+    sweep_stale_migration_temps(data_dir);
+    match copy(&legacy, &new) {
+        Ok(()) => {
+            eprintln!(
+                "[heddle] migrated {} -> {} (legacy file kept as a backup)",
+                legacy.display(),
+                new.display()
+            );
+            new
+        }
+        // Another instance (GUI + `--serve` on the same data dir) may have published heddle.db while
+        // this copy failed: prefer it, so the two processes never continue on different databases.
+        Err(_) if new.exists() => {
+            eprintln!(
+                "[heddle] legacy database migration raced with another process; using {}",
+                new.display()
+            );
+            new
+        }
+        Err(e) => {
+            eprintln!(
+                "[heddle] legacy database migration failed ({e}); continuing on {}",
+                legacy.display()
+            );
+            legacy
+        }
+    }
+}
+
+/// Remove `heddle.db.migrating.<pid>` leftovers from migrators that died mid-copy (crash, SIGKILL, power
+/// loss). Only files older than [`STALE_MIGRATION_TEMP`] are touched, so a concurrent live migration is
+/// never disturbed; a VACUUM INTO of a local database completes in seconds, not minutes.
+const STALE_MIGRATION_TEMP: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+fn sweep_stale_migration_temps(data_dir: &Path) {
+    let prefix = format!("{DB_FILE}.migrating.");
+    let Ok(entries) = std::fs::read_dir(data_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age > STALE_MIGRATION_TEMP)
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// `VACUUM INTO` a consistent snapshot of `legacy` and place it at `new`. Read-only with respect to
+/// `legacy`: VACUUM INTO never modifies the source database.
+///
+/// Concurrency: a GUI instance and a `--serve` instance can start against the same data dir at the same
+/// moment and both see "no heddle.db yet". Each writes its own per-process temp file and then claims the
+/// final name with [`place_snapshot`], which is atomic and never replaces an existing `heddle.db` — so
+/// whichever process wins, the other simply adopts the winner's file and no open handle is ever swapped
+/// underneath a running instance.
+fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
+    let tmp = new.with_extension(format!("db.migrating.{}", std::process::id()));
+    // Only ever our own incomplete artifact (same pid) from an interrupted earlier attempt.
+    if tmp.exists() {
+        std::fs::remove_file(&tmp).map_err(|e| format!("cannot clear stale {}: {e}", tmp.display()))?;
+    }
+    let src = Connection::open(legacy).map_err(|e| format!("open legacy db: {e}"))?;
+    src.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("busy_timeout: {e}"))?;
+    let tmp_str = tmp
+        .to_str()
+        .ok_or_else(|| "non-UTF-8 data dir path".to_string())?
+        .to_string();
+    if let Err(e) = src.execute("VACUUM INTO ?1", [tmp_str]) {
+        // Never leave a partial snapshot behind on failure (a later start would exit at the
+        // `heddle.db exists` guard before the stale-temp sweep runs).
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("VACUUM INTO: {e}"));
+    }
+    drop(src);
+    place_snapshot(&tmp, new)
+}
+
+/// Atomically publish `tmp` as `new` without ever replacing an existing `new`. `hard_link` fails with
+/// `AlreadyExists` when the target exists (POSIX and Windows), unlike `rename`, which would silently
+/// clobber a concurrent migrator's already-open database. Either way the temp file is removed.
+fn place_snapshot(tmp: &Path, new: &Path) -> Result<(), String> {
+    let linked = std::fs::hard_link(tmp, new);
+    let _ = std::fs::remove_file(tmp);
+    match linked {
+        Ok(()) => Ok(()),
+        // Another process published its snapshot first; ours was an identical copy of the same legacy
+        // file, so adopting theirs is correct.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("place snapshot into {}: {e}", new.display())),
+    }
+}
 
 /// Database handle injected as Tauri managed state.
 pub struct Db {
@@ -202,6 +336,95 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// HED-40: a pre-rename `vlx-term.db` is copied forward to `heddle.db` exactly once, with its
+    /// content intact (including rows that only lived in the WAL), and the legacy file is left as-is.
+    #[test]
+    fn legacy_db_is_migrated_once_and_left_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let legacy = dir.join(super::LEGACY_DB_FILE);
+        let new = dir.join(super::DB_FILE);
+
+        // No database at all: the new path is returned and nothing is created.
+        assert_eq!(super::app_db_path(&dir), new);
+        assert!(!new.exists() && !legacy.exists());
+
+        // A legacy WAL database with a row that has NOT been checkpointed into the main file.
+        {
+            let c = rusqlite::Connection::open(&legacy).unwrap();
+            c.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);")
+                .unwrap();
+            // Keep the connection open (WAL not checkpointed) while migrating, like a live app would.
+            assert_eq!(super::app_db_path(&dir), new);
+            drop(c);
+        }
+        assert!(new.exists(), "heddle.db must be created from the legacy file");
+        assert!(legacy.exists(), "legacy file must never be removed");
+        let n = rusqlite::Connection::open(&new).unwrap();
+        let x: i64 = n.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(x, 42, "WAL-resident row must survive the copy");
+        drop(n);
+
+        // Second call is a no-op: writes to heddle.db are not clobbered by another copy.
+        {
+            let n = rusqlite::Connection::open(&new).unwrap();
+            n.execute("INSERT INTO t VALUES (7)", []).unwrap();
+        }
+        assert_eq!(super::app_db_path(&dir), new);
+        let n = rusqlite::Connection::open(&new).unwrap();
+        let cnt: i64 = n.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(cnt, 2, "an existing heddle.db must be used as-is");
+        // Legacy content unchanged by everything above.
+        let l = rusqlite::Connection::open(&legacy).unwrap();
+        let lcnt: i64 = l.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(lcnt, 1);
+        drop((n, l));
+    }
+
+    /// Failure fallbacks: a failed copy uses the legacy file ONLY when nobody else published `heddle.db`
+    /// meanwhile; if another process did, this process must adopt it (never two live databases).
+    #[test]
+    fn failed_migration_prefers_a_concurrently_published_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let legacy = dir.join(super::LEGACY_DB_FILE);
+        let new = dir.join(super::DB_FILE);
+        std::fs::write(&legacy, b"legacy").unwrap();
+        // Copy fails, nobody else published: keep working on the legacy file (logged, not fatal).
+        let got = super::resolve_db_path(&dir, |_, _| Err("boom".into()));
+        assert_eq!(got, legacy);
+        // Copy fails but a concurrent migrator published heddle.db in the meantime: adopt it.
+        let new_c = new.clone();
+        let got = super::resolve_db_path(&dir, move |_, _| {
+            std::fs::write(&new_c, b"other process").unwrap();
+            Err("boom".into())
+        });
+        assert_eq!(got, new);
+        assert_eq!(std::fs::read(&new).unwrap(), b"other process");
+    }
+
+    /// Two migrators racing: the second snapshot must never replace a `heddle.db` that already exists
+    /// (another instance may have it open), and its temp file must be cleaned up.
+    #[test]
+    fn concurrent_snapshot_never_replaces_an_existing_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let new = dir.join(super::DB_FILE);
+        std::fs::write(&new, b"winner").unwrap();
+        let tmp = dir.join("heddle.db.migrating.999999");
+        std::fs::write(&tmp, b"loser").unwrap();
+        super::place_snapshot(&tmp, &new).unwrap();
+        assert_eq!(std::fs::read(&new).unwrap(), b"winner", "existing heddle.db must be left alone");
+        assert!(!tmp.exists(), "the losing temp file must be removed");
+        // And the normal path still publishes when nothing exists yet.
+        let fresh = dir.join("fresh.db");
+        let tmp2 = dir.join("fresh.db.migrating.1");
+        std::fs::write(&tmp2, b"snapshot").unwrap();
+        super::place_snapshot(&tmp2, &fresh).unwrap();
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"snapshot");
+        assert!(!tmp2.exists());
+    }
+
     use super::*;
     use rusqlite::Connection;
 

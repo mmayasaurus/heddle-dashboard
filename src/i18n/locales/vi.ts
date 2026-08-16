@@ -87,12 +87,12 @@ const vi: typeof en = {
     "Bỏ qua mọi xác nhận quyền bằng cách chèn cấu hình (không dùng cờ CLI). Có hiệu lực khi khởi chạy phiên này.",
   "settings.catGeneral": "Chung",
   "settings.cliLabel": "Lệnh shell",
-  "settings.cliInstall": "Cài đặt lệnh ‘vela’",
-  "settings.cliUninstall": "Gỡ lệnh ‘vela’",
+  "settings.cliInstall": "Cài đặt lệnh ‘heddle’",
+  "settings.cliUninstall": "Gỡ lệnh ‘heddle’",
   "settings.cliInstalledAt": (path: string) => `Đã cài tại ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Đã có một lệnh ‘vela’ khác tại ${path}. heddle sẽ không ghi đè.`,
-  "settings.cliHint": "Thêm `vela <đường-dẫn-dự-án>` vào PATH, giống lệnh `code` của VS Code.",
+    `Đã có một lệnh ‘heddle’ khác tại ${path}. heddle sẽ không ghi đè.`,
+  "settings.cliHint": "Thêm `heddle <đường-dẫn-dự-án>` vào PATH, giống lệnh `code` của VS Code.",
   "settings.agentArgsHint":
     "Đối số khởi chạy mặc định áp dụng cho phiên mới của từng loại tác nhân. Đối số riêng đặt khi tạo hoặc sửa phiên sẽ ghi đè chúng. Để trống nếu không dùng.",
   "settings.agentPathLabel": "Đường dẫn tệp thực thi (tùy chọn)",
