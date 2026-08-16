@@ -109,3 +109,36 @@ describe("Transcript trust rendering", () => {
     expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
   });
 });
+
+describe("Transcript — highlight scrolling (HED-74b round 2)", () => {
+  it("retries until the row mounts, then scrolls exactly once no matter how much traffic arrives", () => {
+    const calls: number[] = [];
+    // jsdom has no layout, so scrollIntoView is undefined by default — install a spy that records
+    // which row was scrolled to.
+    Element.prototype.scrollIntoView = function scrollIntoViewSpy(this: Element) {
+      calls.push(Number(this.id.replace("comms-msg-", "")));
+    } as unknown as typeof Element.prototype.scrollIntoView;
+
+    // Highlight id 7 while its room's transcript has not loaded — nothing to scroll to yet.
+    const { rerender } = render(<Transcript messages={[]} highlightId={7} />);
+    expect(calls).toEqual([]);
+
+    // The row arrives on a later poll: the retry fires and scrolls to it.
+    rerender(<Transcript messages={[mkMsg({ id: 7 })]} highlightId={7} />);
+    expect(calls).toEqual([7]);
+
+    // Two more cursor-poll appends. Without the one-shot guard each of these would yank the
+    // operator back to row 7 while they are reading newer traffic.
+    rerender(<Transcript messages={[mkMsg({ id: 7 }), mkMsg({ id: 8 })]} highlightId={7} />);
+    rerender(
+      <Transcript messages={[mkMsg({ id: 7 }), mkMsg({ id: 8 }), mkMsg({ id: 9 })]} highlightId={7} />,
+    );
+    expect(calls).toEqual([7]);
+
+    // A NEW needs-human click (different id) scrolls again — the guard is per-highlight.
+    rerender(
+      <Transcript messages={[mkMsg({ id: 7 }), mkMsg({ id: 8 }), mkMsg({ id: 9 })]} highlightId={9} />,
+    );
+    expect(calls).toEqual([7, 9]);
+  });
+});

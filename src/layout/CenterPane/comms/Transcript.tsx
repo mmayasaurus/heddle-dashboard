@@ -6,7 +6,7 @@
 //! Message bodies are plain text: they are interpolated as JSX children (React escapes text
 //! content automatically), never through dangerouslySetInnerHTML or a markdown renderer.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { dateLocale, useT } from "../../../i18n";
 import { agentColor, type CommsDeliveries, type CommsMessage } from "./useCommsPoll";
 
@@ -99,15 +99,23 @@ export interface TranscriptProps {
 }
 
 export function Transcript({ messages, highlightId = null }: TranscriptProps) {
+  // The id already scrolled to. `messages` must stay in the deps so a highlight chosen before its
+  // room's transcript loaded still scrolls once the row mounts — but re-scrolling on EVERY
+  // cursor-poll append would yank the operator back to the old row each time newer traffic
+  // arrives. So: retry until the element exists, then scroll exactly once per highlight. The
+  // highlight styling itself persists until the room changes.
+  const scrolledForRef = useRef<number | null>(null);
   useEffect(() => {
-    if (highlightId == null) return;
+    if (highlightId == null) {
+      scrolledForRef.current = null;
+      return;
+    }
+    if (scrolledForRef.current === highlightId) return;
     const el = document.getElementById(`comms-msg-${highlightId}`);
     if (el && typeof el.scrollIntoView === "function") {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
+      scrolledForRef.current = highlightId;
     }
-    // messages is a deliberate dependency: if highlightId's row belongs to a room that hadn't
-    // loaded yet, the element doesn't exist on the first pass — retrying as messages arrive lets
-    // it scroll once the row actually mounts. Scrolling again to the same id is harmless.
   }, [highlightId, messages]);
 
   return (
