@@ -453,13 +453,16 @@ function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: 
   }
 
   const roundedPct = Math.round(pct);
+  const label = detail?.exact ? t("fleet.fableWeeklyExact", roundedPct) : t("fleet.fableWeekly", roundedPct);
   const title = detail
     ? t("fleet.fableWeeklyBreakdown", Math.round(detail.fablePct), Math.round(detail.otherPct), Math.round(detail.unknownPct), detail.samples)
     : undefined;
   return (
-    <div className="fleet-provcap-account-row fleet-provcap-fable-weekly" title={title}>
-      <span>{detail?.exact ? t("fleet.fableWeeklyExact", roundedPct) : t("fleet.fableWeekly", roundedPct)}</span>
+    <div className="fleet-capline fleet-provcap-account-row fleet-provcap-fable-weekly" title={title}>
+      <span className="fleet-capline-lbl fleet-provcap-fable-label" title={label}>Fable</span>
       <SegBar pct={pct} color={color} softCapTick />
+      <span className="fleet-capline-pct fleet-provcap-fable-est" title={label}>{`${roundedPct}%`}</span>
+      <span className="fleet-dim fleet-capline-reset" title={label}>{detail?.exact ? "" : "est."}</span>
     </div>
   );
 }
@@ -479,13 +482,16 @@ function CapLine({
 }) {
   const t = useT();
   const pct = win.usedPercentage;
+  const resetLabel = pct == null
+    ? t("fleet.noActiveWindow")
+    : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, Date.now(), t("fleet.resetting"))}` : "";
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
-      <span className="fleet-capline-lbl">{label}</span>
+      <span className="fleet-capline-lbl" title={label}>{label}</span>
       <SegBar pct={pct} color={color} />
-      <span className="fleet-capline-pct">{pct == null ? "" : `${Math.round(pct)}%`}</span>
+      <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
       <LiveClock render={(now) => (
-        <span className="fleet-dim fleet-capline-reset" title={pct == null ? note ?? t("fleet.usageUnavailable") : undefined}>
+        <span className="fleet-dim fleet-capline-reset" title={pct == null ? [resetLabel, note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
           {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
         </span>
       )} />
@@ -541,9 +547,9 @@ function ProviderCapBlock({
   return (
     <div className={"fleet-provcap" + (isStale ? " stale" : "")}>
       <div className="fleet-provcap-name" style={{ color }}>
-        {p.provider}
+        <span className="fleet-provcap-provider" title={p.provider}>{p.provider}</span>
         {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
-        {isClaudeAccounts ? <span className="fleet-dim fleet-provcap-model">{accounts.length} acct</span> : p.model && <span className="fleet-dim fleet-provcap-model">{p.model}</span>}
+        {isClaudeAccounts ? <span className="fleet-dim fleet-provcap-model" title={`${accounts.length} acct`}>{accounts.length} acct</span> : p.model && <span className="fleet-dim fleet-provcap-model" title={p.model}>{p.model}</span>}
         <button
           className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
           disabled={refreshing}
@@ -561,9 +567,9 @@ function ProviderCapBlock({
         const capturedMinutes = capturedMinutesAgo(p.capturedAt, now);
         const providerIsStale = isProviderStale(p, now);
         return (
-          <div className="fleet-provcap-captured-row">
+          <div className="fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${providerIsStale ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
             {capturedMinutes != null ? (
-              <span className={"fleet-provcap-captured" + (providerIsStale ? " stale" : "")}>
+              <span className={"fleet-provcap-captured" + (providerIsStale ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${providerIsStale ? ` · ${t("fleet.stale")}` : ""}`}>
                 {t("fleet.capturedMinutesAgo", capturedMinutes)}{providerIsStale ? ` · ${t("fleet.stale")}` : ""}
               </span>
             ) : "—"}
@@ -578,19 +584,20 @@ function ProviderCapBlock({
         {isClaudeAccounts && selectedAccount && (
           <div className="fleet-provcap-account-detail">
             <div className="fleet-provcap-account-row fleet-provcap-account-head">
-              <span className="fleet-provcap-account-label">{selectedAccount.id}</span>
+              <span className="fleet-provcap-account-label" title={selectedAccount.id}>{selectedAccount.id}</span>
               {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
-                <span className="fleet-provcap-account-plan">· {selectedAccount.label}</span>
+                <span className="fleet-provcap-account-plan" title={`· ${selectedAccount.label}`}>· {selectedAccount.label}</span>
               )}
               {accounts.length > 1 && <>
                 <span className="fleet-sp" />
-                <span className="fleet-provcap-account-position">{selectedAccountIndex + 1}/{accounts.length}</span>
+                <span className="fleet-provcap-account-position" title={`${selectedAccountIndex + 1}/${accounts.length}`}>{selectedAccountIndex + 1}/{accounts.length}</span>
                 <button
                   className="fleet-provcap-account-rotate"
                   onClick={() => {
                     setSelectedAccountId(accounts[(selectedAccountIndex + 1) % accounts.length].id);
                   }}
                   aria-label={t("fleet.rotateAccounts")}
+                  title={t("fleet.rotateAccounts")}
                   type="button"
                 >
                   ⟳
@@ -615,18 +622,18 @@ function ProviderCapBlock({
               ].filter((message): message is string => message != null);
               return (
                 <>
-                  <div className="fleet-provcap-account-row fleet-provcap-captured-row">
+                  <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
                     {capturedMinutes != null ? (
-                      <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")}>
+                      <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}`}>
                         {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
                       </span>
                     ) : "—"}
                   </div>
                   <div className="fleet-provcap-account-row fleet-provcap-account-state" title={stateMessages.join(" · ") || undefined}>
-                    {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out">{t("fleet.loggedOut")}</span>}
-                    {selectedAccount.loggedIn == null && <span className="fleet-dim">{t("fleet.loginUnknown")}</span>}
-                    {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate">{t("fleet.keeperEstimate")}</span>}
-                    {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
+                    {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out" title={t("fleet.loggedOut")}>{t("fleet.loggedOut")}</span>}
+                    {selectedAccount.loggedIn == null && <span className="fleet-dim" title={t("fleet.loginUnknown")}>{t("fleet.loginUnknown")}</span>}
+                    {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate" title={t("fleet.keeperEstimate")}>{t("fleet.keeperEstimate")}</span>}
+                    {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
                     {selectedAccount.loggedIn === true && !keeperEstimate && !selectedAccount.limitReached && <span className="fleet-provcap-spacer">&nbsp;</span>}
                   </div>
                 </>
@@ -642,15 +649,16 @@ function ProviderCapBlock({
               setAccountsExpanded((expanded) => !expanded);
             }}
             aria-label={`${accounts.length} accounts`}
+            title={`${accounts.length} accounts`}
             type="button"
           >
             {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
           </button>
           {accountsExpanded && accounts.map((account, index) => (
             <div className="fleet-provcap-account" key={`${account.label ?? "account"}-${index}`}>
-              <span className="fleet-provcap-account-label">{account.label ?? "account"}</span>
-              {account.plan && <span className="fleet-provcap-account-plan">· {account.plan}</span>}
-              <span className="fleet-provcap-account-caps">
+              <span className="fleet-provcap-account-label" title={account.label ?? "account"}>{account.label ?? "account"}</span>
+              {account.plan && <span className="fleet-provcap-account-plan" title={`· ${account.plan}`}>· {account.plan}</span>}
+              <span className="fleet-provcap-account-caps" title={`${account.sevenDay?.usedPercentage == null ? "" : `${Math.round(account.sevenDay.usedPercentage)}%`}${account.fiveHour?.usedPercentage != null ? ` · ${Math.round(account.fiveHour.usedPercentage)}%` : ""}`}>
                 <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
                 {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
                 {account.fiveHour?.usedPercentage != null && (
@@ -660,16 +668,16 @@ function ProviderCapBlock({
                   </>
                 )}
               </span>
-              {account.limitReached && <span className="fleet-provcap-limit-reached">{t("fleet.limitReached")}</span>}
+              {account.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
             </div>
           ))}
         </div>
       )}
       {extraWindows.map((win, index) => (
         <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
-          <span>{win.label ?? win.id ?? "window"}</span>
-          <span>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
-          {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim">↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
+          <span title={win.label ?? win.id ?? "window"}>{win.label ?? win.id ?? "window"}</span>
+          <span title={win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
+          {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim" title={`↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}`}>↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
         </div>
       ))}
       </div>}

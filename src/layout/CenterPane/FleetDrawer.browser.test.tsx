@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -28,6 +29,7 @@ vi.mock("../../store/termStore", () => ({
 import { FleetDrawer } from "./FleetDrawer";
 
 const now = Math.floor(Date.now() / 1000);
+const vlinxCss = readFileSync("src/styles/vlinx.css", "utf8");
 const claude = {
   provider: "claude",
   model: "claude · 3 acct",
@@ -143,10 +145,30 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("Fable ≈37% of weekly (est.)")).toBeTruthy());
+    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("Fable ≈37% of weekly (est.)"));
     const row = document.querySelector(".fleet-provcap-fable-weekly");
     expect(row?.getAttribute("title")).toBe("breakdown: 37/8/2 (4)");
     expect(row?.querySelector(".fleet-seg-soft-cap")).toBeTruthy();
+  });
+
+  it("keeps provider cap bars free of inline widths under one fixed CSS rule", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{
+          ...claude.accounts[2],
+          fableWeeklyEstimatePct: 37,
+        }],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelectorAll(".fleet-capline .fleet-seg").length).toBe(3));
+    document.querySelectorAll(".fleet-capline .fleet-seg").forEach((bar) => {
+      expect(bar.getAttribute("style")).not.toMatch(/(?:^|;)\s*width\s*:/);
+    });
+    expect(vlinxCss.match(/\.fleet-capline > \.fleet-seg\s*\{[^}]*\bwidth:\s*140px;/g)).toHaveLength(1);
   });
 
   it("drops the estimate suffix for an exact Fable weekly value", async () => {
@@ -163,8 +185,8 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("Fable 50% of weekly")).toBeTruthy());
-    expect(screen.queryByText("Fable ≈50% of weekly (est.)")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("Fable 50% of weekly"));
+    expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).not.toBe("Fable ≈50% of weekly (est.)");
   });
 
   it("uses the legacy fallback timestamp for the matching Claude account", async () => {
