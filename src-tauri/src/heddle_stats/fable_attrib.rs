@@ -70,10 +70,15 @@ pub(super) struct Capture {
 pub(super) fn capture_from_tap(v: &Value) -> Option<Capture> {
     let captured_at = v["capturedAt"].as_i64()?;
     let rl = &v["rate_limits"];
+    // Only a WEEKLY Fable window is the exact value for this estimate — a hypothetical
+    // fable-scoped 5h window must never be published as the weekly number.
     let exact = rl.as_object().and_then(|m| {
         m.iter()
             .find(|(k, w)| {
-                k.to_ascii_lowercase().contains("fable") && w["used_percentage"].is_number()
+                let k = k.to_ascii_lowercase();
+                k.contains("fable")
+                    && (k.contains("seven_day") || k.contains("7d") || k.contains("week"))
+                    && w["used_percentage"].is_number()
             })
             .and_then(|(_, w)| w["used_percentage"].as_f64())
     });
@@ -86,55 +91,40 @@ pub(super) fn capture_from_tap(v: &Value) -> Option<Capture> {
     })
 }
 
+/// Token match ("claude-fable-5", "Fable"), not substring — a model named e.g. "affable" must not
+/// be attributed to Fable.
 pub(super) fn is_fable_model(model: &str) -> bool {
-    model.to_ascii_lowercase().contains("fable")
+    model
+        .to_ascii_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| t == "fable")
 }
 
-/// Fold one capture into the state. Returns whether the state changed (→ persist).
-pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
-    // Exact model-scoped window: use it verbatim, no heuristics.
-    if let Some(exact) = cap.exact_fable_pct {
-        let changed = !state.exact
-            || state.fable_pct != exact
-            || state.last_captured_at != Some(cap.captured_at);
-        state.exact = true;
-        state.fable_pct = exact;
-        state.window_resets_at = cap.seven_day_resets_at;
-        state.last_captured_at = Some(cap.captured_at);
-        state.last_used_pct = cap.seven_day_used;
-        state.updated_at = Some(now);
-        return changed;
-    }
-    let Some(used) = cap.seven_day_used else {
-        return false;
+/// Start the books over for a (possibly new) weekly window: whatever is already used at this
+/// capture is `unknown`, nothing is attributed, confidence resets.
+fn reset_state(state: &mut Attrib, cap: &Capture, used: f64, now: i64) {
+    *state = Attrib {
+        window_resets_at: cap.seven_day_resets_at,
+        last_captured_at: Some(cap.captured_at),
+        last_used_pct: Some(used),
+        unknown_pct: used,
+        updated_at: Some(now),
+        ..Default::default()
     };
-    if state.last_captured_at == Some(cap.captured_at) {
-        return false; // already ingested this capture
-    }
-    let (Some(prev_used), Some(prev_at)) = (state.last_used_pct, state.last_captured_at) else {
-        // First capture ever: whatever is used so far is unattributable.
-        *state = Attrib {
-            window_resets_at: cap.seven_day_resets_at,
-            last_captured_at: Some(cap.captured_at),
-            last_used_pct: Some(used),
-            unknown_pct: used,
-            updated_at: Some(now),
-            ..Default::default()
-        };
-        return true;
-    };
-    if state.exact || state.window_resets_at != cap.seven_day_resets_at {
-        // New weekly window (or the exact window disappeared): start the books over.
-        *state = Attrib {
-            window_resets_at: cap.seven_day_resets_at,
-            last_captured_at: Some(cap.captured_at),
-            last_used_pct: Some(used),
-            unknown_pct: used,
-            updated_at: Some(now),
-            ..Default::default()
-        };
-        return true;
-    }
+}
+
+/// Whether `cap` starts a new weekly window relative to `state`. Only two comparable (non-null)
+/// reset timestamps that differ prove a new window — a capture temporarily omitting `resets_at`
+/// (or the first one to carry it) must not wipe the books.
+fn window_changed(state: &Attrib, cap: &Capture) -> bool {
+    matches!(
+        (state.window_resets_at, cap.seven_day_resets_at),
+        (Some(a), Some(b)) if a != b
+    )
+}
+
+/// Attribute one positive delta (or fold a provider correction) into the buckets.
+fn apply_delta(state: &mut Attrib, cap: &Capture, used: f64, prev_used: f64, prev_at: i64) {
     let delta = used - prev_used;
     let gap = cap.captured_at - prev_at;
     if delta > 0.0 {
@@ -149,14 +139,69 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
         }
     } else if delta < 0.0 {
         // Used% went DOWN inside the same window (provider correction): shrink the buckets
-        // proportionally so they keep summing to what the provider now reports.
+        // proportionally so they keep summing to what the provider now reports; with nothing to
+        // shrink, the reported total is simply unattributable.
         let total = state.fable_pct + state.other_pct + state.unknown_pct;
         if total > 0.0 {
             let f = (used / total).clamp(0.0, 1.0);
             state.fable_pct *= f;
             state.other_pct *= f;
             state.unknown_pct *= f;
+        } else {
+            state.unknown_pct = used;
         }
+    }
+}
+
+/// Fold one capture into the state. Returns whether the state changed (→ persist).
+///
+/// Ordering: a capture at the SAME timestamp is re-processed only if its reading differs (two
+/// renders inside one second — gap 0, normal attribution); a capture OLDER than the last ingested
+/// one is dropped outright, so out-of-order writers can never rewind the baseline.
+pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
+    if let Some(prev_at) = state.last_captured_at {
+        if cap.captured_at < prev_at {
+            return false;
+        }
+        if cap.captured_at == prev_at && state.last_used_pct == cap.seven_day_used {
+            return false; // already ingested this exact capture
+        }
+    }
+    // Exact model-scoped weekly window: use it verbatim. Entering exact mode (or crossing into a
+    // new window while exact) drops the heuristic buckets — mixed-mode breakdowns would present
+    // stale "confidence" next to an exact value.
+    if let Some(exact) = cap.exact_fable_pct {
+        if !state.exact || window_changed(state, cap) {
+            *state = Attrib {
+                exact: true,
+                ..Default::default()
+            };
+        }
+        let changed = state.fable_pct != exact || state.last_captured_at != Some(cap.captured_at);
+        state.fable_pct = exact;
+        if cap.seven_day_resets_at.is_some() {
+            state.window_resets_at = cap.seven_day_resets_at;
+        }
+        state.last_captured_at = Some(cap.captured_at);
+        state.last_used_pct = cap.seven_day_used;
+        state.updated_at = Some(now);
+        return changed;
+    }
+    let Some(used) = cap.seven_day_used else {
+        return false;
+    };
+    let (Some(prev_used), Some(prev_at)) = (state.last_used_pct, state.last_captured_at) else {
+        reset_state(state, cap, used, now);
+        return true;
+    };
+    if state.exact || window_changed(state, cap) {
+        // The exact window disappeared, or a new weekly window began: start the books over.
+        reset_state(state, cap, used, now);
+        return true;
+    }
+    apply_delta(state, cap, used, prev_used, prev_at);
+    if cap.seven_day_resets_at.is_some() {
+        state.window_resets_at = cap.seven_day_resets_at;
     }
     state.last_captured_at = Some(cap.captured_at);
     state.last_used_pct = Some(used);

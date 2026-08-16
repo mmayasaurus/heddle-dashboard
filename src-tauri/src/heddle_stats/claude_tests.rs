@@ -289,3 +289,36 @@ fn polls_accumulate_a_persisted_fable_estimate_per_account_and_surface_it_on_the
     assert_eq!(persisted.samples, 3);
     assert_eq!(persisted.fable_pct, 4.0);
 }
+
+#[test]
+fn single_file_mode_without_a_registry_still_accumulates_the_fable_estimate() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("legacy-fable");
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now - 300, "acct1"),
+    );
+    let l = build(&s.0, &[], None, now - 300).unwrap();
+    assert_eq!(l.fable_weekly_samples, Some(0));
+    assert_eq!(l.fable_weekly_estimate_pct, None);
+    assert!(s.0.join("claude-default.attrib.json").exists());
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 12.0, now - 240, "acct1"),
+    );
+    build(&s.0, &[], None, now - 240).unwrap();
+    s.write(
+        "claude.json",
+        &tap_file("claude-haiku-4-5", 30.0, 13.0, now - 180, "acct1"),
+    );
+    build(&s.0, &[], None, now - 180).unwrap();
+    s.write(
+        "claude.json",
+        &tap_file("claude-fable-5", 30.0, 15.0, now - 120, "acct1"),
+    );
+    let l = build(&s.0, &[], None, now - 120).unwrap();
+    assert_eq!(l.fable_weekly_samples, Some(3));
+    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
+    // Still the plain single-file entry otherwise (no rows).
+    assert!(l.accounts.is_none());
+}

@@ -119,6 +119,11 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
+            // Attribution state (`claude-<id>.attrib.json`) is never an account file —
+            // excluded by name, not by accident of its schema.
+            if name.ends_with(".attrib.json") {
+                return None;
+            }
             let id = name
                 .strip_prefix("claude-")?
                 .strip_suffix(".json")?
@@ -153,7 +158,12 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
 /// Load this account's attribution state, fold in the current capture (if any), persist when it
 /// changed, and return the state. Best-effort: an unreadable/unwritable attrib file just yields
 /// whatever we could compute in memory.
+/// Serializes every attribution read-modify-write: two overlapping `heddle_provider_limits` calls
+/// must not both fold from the same persisted baseline and then overwrite each other's sample.
+static ATTRIB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Attrib> {
+    let _serialized = ATTRIB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let path = dir.join(format!("claude-{id}.attrib.json"));
     let mut state: Attrib = read_json(&path)
         .and_then(|v| serde_json::from_value(v).ok())
@@ -198,9 +208,17 @@ pub(super) fn build(
     env_dir: Option<&Path>,
     now: i64,
 ) -> Option<ProviderLimit> {
-    let legacy = read_json(&dir.join("claude.json")).and_then(|v| tap_limit("claude", &v, now));
+    let legacy_file = read_json(&dir.join("claude.json"));
+    let legacy = legacy_file
+        .as_ref()
+        .and_then(|v| tap_limit("claude", v, now));
     if registry.is_empty() {
-        return legacy;
+        // Single-file mode (no registry): the Fable estimate still accumulates, keyed "default".
+        let attrib = attribute(dir, "default", legacy_file.as_ref(), now);
+        let mut l = legacy?;
+        l.fable_weekly_estimate_pct = attrib.as_ref().and_then(fable_attrib::estimate);
+        l.fable_weekly_samples = attrib.map(|s| s.samples);
+        return Some(l);
     }
     let active = active_account(registry, env_dir);
     let rows = account_rows(dir, registry, now);

@@ -214,3 +214,193 @@ fn state_round_trips_through_json_with_defaults_for_missing_fields() {
     assert_eq!(partial.fable_pct, 3.0);
     assert_eq!(partial.samples, 0);
 }
+
+#[test]
+fn a_capture_without_a_weekly_reading_is_a_no_op() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    ingest(&mut s, &cap(t0, "claude-fable-5", 10.0, RESET), t0);
+    ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 12.0, RESET),
+        t0 + 60,
+    );
+    let before = s.clone();
+    let malformed = Capture {
+        captured_at: t0 + 120,
+        model: "claude-fable-5".to_string(),
+        seven_day_used: None,
+        seven_day_resets_at: Some(RESET),
+        exact_fable_pct: None,
+    };
+    assert!(!ingest(&mut s, &malformed, t0 + 120));
+    assert_eq!(s, before, "state and confidence must be untouched");
+    assert_eq!(estimate(&s), estimate(&before));
+}
+
+#[test]
+fn captures_older_than_the_baseline_are_dropped() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    ingest(&mut s, &cap(t0, "claude-fable-5", 10.0, RESET), t0);
+    ingest(
+        &mut s,
+        &cap(t0 + 120, "claude-fable-5", 12.0, RESET),
+        t0 + 120,
+    );
+    let before = s.clone();
+    // A stale snapshot from an out-of-order writer: higher reading, older timestamp.
+    assert!(!ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-haiku-4-5", 15.0, RESET),
+        t0 + 130
+    ));
+    assert_eq!(s, before, "the baseline must never rewind");
+    // The next current capture still attributes against the newest baseline.
+    ingest(
+        &mut s,
+        &cap(t0 + 180, "claude-fable-5", 13.0, RESET),
+        t0 + 180,
+    );
+    assert_eq!(s.fable_pct, 3.0);
+}
+
+#[test]
+fn two_distinct_readings_in_the_same_second_both_count() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    ingest(&mut s, &cap(t0, "claude-fable-5", 10.0, RESET), t0);
+    ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 11.0, RESET),
+        t0 + 60,
+    );
+    // Same second, same reading → duplicate, dropped.
+    assert!(!ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 11.0, RESET),
+        t0 + 61
+    ));
+    assert_eq!(s.samples, 1);
+    // Same second, DIFFERENT reading (bursty renders) → attributed, gap 0.
+    assert!(ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 11.5, RESET),
+        t0 + 62
+    ));
+    assert_eq!(s.fable_pct, 1.5);
+    assert_eq!(s.samples, 2);
+}
+
+#[test]
+fn entering_exact_mode_drops_the_heuristic_books_and_repeats_are_no_ops() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    ingest(&mut s, &cap(t0, "claude-fable-5", 10.0, RESET), t0);
+    ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 12.0, RESET),
+        t0 + 60,
+    );
+    ingest(
+        &mut s,
+        &cap(t0 + 120, "claude-haiku-4-5", 13.0, RESET),
+        t0 + 120,
+    );
+    assert_eq!(s.samples, 2);
+    // The payload grows a weekly Fable window → exact takes over, heuristic books drop.
+    let mut exact_cap = cap(t0 + 180, "claude-fable-5", 14.0, RESET);
+    exact_cap.exact_fable_pct = Some(6.5);
+    assert!(ingest(&mut s, &exact_cap, t0 + 180));
+    assert!(s.exact);
+    assert_eq!(estimate(&s), Some(6.5));
+    assert_eq!(
+        (s.other_pct, s.unknown_pct, s.samples),
+        (0.0, 0.0, 0),
+        "no stale confidence next to an exact value"
+    );
+    // The identical exact capture again: no state change reported.
+    let before = s.clone();
+    assert!(!ingest(&mut s, &exact_cap, t0 + 240));
+    assert_eq!(s.fable_pct, before.fable_pct);
+    assert_eq!(
+        s.updated_at, before.updated_at,
+        "no silent divergence from the persisted file"
+    );
+}
+
+#[test]
+fn only_a_weekly_fable_window_is_exact_never_a_five_hour_one() {
+    let five_only: Value = serde_json::json!({
+        "model": "claude-fable-5",
+        "rate_limits": {
+            "five_hour_fable": {"used_percentage": 90, "resets_at": 1},
+            "seven_day": {"used_percentage": 40, "resets_at": RESET}
+        },
+        "capturedAt": 1_786_830_000
+    });
+    assert_eq!(capture_from_tap(&five_only).unwrap().exact_fable_pct, None);
+    let weekly: Value = serde_json::json!({
+        "model": "claude-fable-5",
+        "rate_limits": {
+            "five_hour_fable": {"used_percentage": 90, "resets_at": 1},
+            "fable_weekly": {"used_percentage": 21.0, "resets_at": RESET},
+            "seven_day": {"used_percentage": 40, "resets_at": RESET}
+        },
+        "capturedAt": 1_786_830_000
+    });
+    assert_eq!(
+        capture_from_tap(&weekly).unwrap().exact_fable_pct,
+        Some(21.0)
+    );
+}
+
+#[test]
+fn a_temporarily_missing_reset_timestamp_does_not_wipe_the_books() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    ingest(&mut s, &cap(t0, "claude-fable-5", 10.0, RESET), t0);
+    ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 12.0, RESET),
+        t0 + 60,
+    );
+    // A capture that omits resets_at (Some → None transition): books survive, delta attributed.
+    let mut no_reset = cap(t0 + 120, "claude-fable-5", 13.0, RESET);
+    no_reset.seven_day_resets_at = None;
+    assert!(ingest(&mut s, &no_reset, t0 + 120));
+    assert_eq!(s.fable_pct, 3.0);
+    assert_eq!(s.window_resets_at, Some(RESET), "the known window is kept");
+    // resets_at returns with the SAME window (None → Some): still no wipe.
+    ingest(
+        &mut s,
+        &cap(t0 + 180, "claude-fable-5", 14.0, RESET),
+        t0 + 180,
+    );
+    assert_eq!(s.fable_pct, 4.0);
+    assert_eq!(s.samples, 3);
+}
+
+#[test]
+fn a_downward_correction_with_empty_books_reports_the_total_as_unknown() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    // First capture at 0% → all buckets zero.
+    ingest(&mut s, &cap(t0, "claude-fable-5", 0.0, RESET), t0);
+    // Force the pathological shape: baseline says 5% but the books are empty.
+    s.last_used_pct = Some(5.0);
+    ingest(&mut s, &cap(t0 + 60, "claude-fable-5", 2.0, RESET), t0 + 60);
+    assert_eq!(
+        (s.fable_pct, s.other_pct, s.unknown_pct),
+        (0.0, 0.0, 2.0),
+        "the reported total is carried as unknown instead of vanishing"
+    );
+}
+
+#[test]
+fn fable_is_matched_as_a_token_not_a_substring() {
+    assert!(is_fable_model("claude-fable-5"));
+    assert!(is_fable_model("FABLE"));
+    assert!(!is_fable_model("claude-affable-2"));
+    assert!(!is_fable_model("fabled-model"));
+}
