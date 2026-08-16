@@ -338,7 +338,7 @@ export function FleetDrawer() {
 
           <RouteMixPanel
             claudeFiveHourPct={
-              limits.find((l) => l.provider === "claude")?.fiveHour?.usedPercentage ?? null
+              limits.find((l) => l.provider === "claude")?.fiveHour.usedPercentage ?? null
             }
           />
           <DisciplinePanel liveAgents={roster.filter((a) => a.alive).map((a) => a.name)} />
