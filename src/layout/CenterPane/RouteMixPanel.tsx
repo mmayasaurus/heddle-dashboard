@@ -73,18 +73,27 @@ function isOrchestrator(o: unknown): o is OrchestratorCount {
  *  must therefore degrade to "empty", never to an exception. Caught for real: FleetDrawer's
  *  browser test resolves unknown commands to `[]`, and `[].hours.map` took the drawer down. */
 function normalizeMix(m: unknown): RouteMix {
-  const o = (m ?? {}) as Partial<RouteMix>;
-  const hours = Array.isArray(o.hours) ? o.hours : [];
+  // The payload is typed `unknown` all the way down on purpose. Casting it to Partial<RouteMix>
+  // would let TypeScript claim each element is a well-formed bucket — which is exactly the
+  // guarantee we do NOT have here, and it makes the runtime guards below look like dead code.
+  const o = (m ?? {}) as Record<string, unknown>;
+  const hours: unknown[] = Array.isArray(o.hours) ? o.hours : [];
+  const orchestrators: unknown[] = Array.isArray(o.orchestrators) ? o.orchestrators : [];
   return {
     windowHours: typeof o.windowHours === "number" ? o.windowHours : 0,
     // Inner numeric fields are validated too, not just the container shape: an entry missing
     // inputTokens would render "codex NaN" and one missing dispatches "R×undefined" — no crash,
     // but confusing text presented as telemetry. Drop the entry instead of displaying nonsense.
     hours: hours
-      .filter((h): h is HourBucket => !!h && typeof h.hour === "string" && Array.isArray(h.providers))
+      .filter(isHourBucket)
       .map((h) => ({ ...h, providers: h.providers.filter(isProvider) })),
-    orchestrators: Array.isArray(o.orchestrators) ? o.orchestrators.filter(isOrchestrator) : [],
+    orchestrators: orchestrators.filter(isOrchestrator),
   };
+}
+
+function isHourBucket(h: unknown): h is HourBucket {
+  const x = h as Partial<HourBucket> | null;
+  return !!x && typeof x.hour === "string" && Array.isArray(x.providers);
 }
 
 // Same accents as the drawer's provider bars, so the scoreboard reads as one system.
