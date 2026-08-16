@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { invoke, isTauri } from "../../ipc/transport";
 import { useT } from "../../i18n";
+import { RouteMixPanel } from "./RouteMixPanel";
 import { useTermStore } from "../../store/termStore";
 
 interface LimitWindow {
@@ -395,6 +396,12 @@ export function FleetDrawer() {
           ) : (
             shownRecent.map((d) => <DispatchRow key={d.id} d={d} />)
           )}
+
+          <RouteMixPanel
+            claudeFiveHourPct={
+              limits.find((l) => l.provider === "claude")?.fiveHour.usedPercentage ?? null
+            }
+          />
 
           {usage.length > 0 && (
             <>
