@@ -445,3 +445,40 @@ fn losing_the_exact_window_seeds_the_books_instead_of_forgetting() {
     );
     assert_eq!(estimate(&s), Some(9.5));
 }
+
+#[test]
+fn losing_the_exact_window_across_a_week_boundary_resets_instead_of_seeding() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    let mut exact_cap = cap(t0, "claude-fable-5", 40.0, RESET);
+    exact_cap.exact_fable_pct = Some(35.0);
+    ingest(&mut s, &exact_cap, t0);
+    // The window rolls AND the exact key disappears in the same capture: last week's 35% must not
+    // become this week's seed against a 3% total.
+    ingest(
+        &mut s,
+        &cap(t0 + 60, "claude-fable-5", 3.0, RESET + 7 * 86_400),
+        t0 + 60,
+    );
+    assert!(!s.exact);
+    assert_eq!((s.fable_pct, s.unknown_pct, s.samples), (0.0, 3.0, 0));
+    assert_eq!(s.window_resets_at, Some(RESET + 7 * 86_400));
+}
+
+#[test]
+fn a_changed_exact_value_in_the_same_second_is_not_a_duplicate() {
+    let mut s = Attrib::default();
+    let t0 = 1_786_830_000;
+    let mut first = cap(t0, "claude-fable-5", 40.0, RESET);
+    first.seven_day_used = None;
+    first.exact_fable_pct = Some(30.0);
+    ingest(&mut s, &first, t0);
+    assert_eq!(estimate(&s), Some(30.0));
+    // Same second, still no seven_day reading, but the exact value moved.
+    let mut second = first.clone();
+    second.exact_fable_pct = Some(31.0);
+    assert!(ingest(&mut s, &second, t0 + 1));
+    assert_eq!(estimate(&s), Some(31.0));
+    // And the truly identical capture is still a no-op.
+    assert!(!ingest(&mut s, &second, t0 + 2));
+}

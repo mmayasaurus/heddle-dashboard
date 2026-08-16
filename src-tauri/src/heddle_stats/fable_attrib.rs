@@ -163,7 +163,10 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
         if cap.captured_at < prev_at {
             return false;
         }
-        if cap.captured_at == prev_at && state.last_used_pct == cap.seven_day_used {
+        if cap.captured_at == prev_at
+            && state.last_used_pct == cap.seven_day_used
+            && (cap.exact_fable_pct.is_none() || cap.exact_fable_pct == Some(state.fable_pct))
+        {
             return false; // already ingested this exact capture
         }
     }
@@ -195,9 +198,16 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
         return true;
     };
     if state.exact {
-        // The exact window disappeared mid-flight: keep what we KNOW (the last exact Fable share)
-        // as the seed, book the remainder as unknown, and rebuild confidence from zero — the
-        // estimate hides until fresh samples exist, then resumes well-seeded instead of amnesiac.
+        if window_changed(state, cap) {
+            // A new weekly window began while exact: the old share belongs to last week — full
+            // reset, never seed across windows.
+            reset_state(state, cap, used, now);
+            return true;
+        }
+        // The exact window disappeared mid-flight (same window): keep what we KNOW (the last
+        // exact Fable share) as the seed, book the remainder as unknown, and rebuild confidence
+        // from zero — the estimate hides until fresh samples exist, then resumes well-seeded
+        // instead of amnesiac.
         let seed = state.fable_pct.min(used).max(0.0);
         *state = Attrib {
             window_resets_at: cap.seven_day_resets_at.or(state.window_resets_at),
