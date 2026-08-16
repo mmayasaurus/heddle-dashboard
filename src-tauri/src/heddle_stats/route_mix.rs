@@ -151,16 +151,18 @@ fn orchestrator_counts(conn: &Connection, cutoff: &str) -> Result<Vec<Orchestrat
              ORDER BY dispatches DESC, orchestrator ASC",
         )
         .map_err(|e| e.to_string())?;
-    stmt.query_map([cutoff], |r| {
-        Ok(OrchestratorCount {
-            orchestrator: r.get("orchestrator")?,
-            dispatches: r.get("dispatches")?,
-            succeeded: r.get::<_, Option<i64>>("succeeded")?.unwrap_or(0),
+    let counts = stmt
+        .query_map([cutoff], |r| {
+            Ok(OrchestratorCount {
+                orchestrator: r.get("orchestrator")?,
+                dispatches: r.get("dispatches")?,
+                succeeded: r.get::<_, Option<i64>>("succeeded")?.unwrap_or(0),
+            })
         })
-    })
-    .map_err(|e| e.to_string())?
-    .collect::<rusqlite::Result<Vec<_>>>()
-    .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(counts)
 }
 
 #[cfg(test)]
