@@ -37,23 +37,30 @@ const POLL_MS = 60_000;
  *  this row. An unexpected payload must degrade to "nothing recorded", never to an exception.
  *  A row missing its counters is DROPPED rather than defaulted to zero, because a fabricated
  *  zero here would render as a red "live, 0 calls" accusation against an agent. */
+/** gate MUST be validated, not merely read: an undefined gate renders the red "gate OFF" state,
+ *  which is precisely the false accusation this coercion exists to prevent. A row that cannot say
+ *  whether the gate was on has no business claiming it was off. */
+function isDisciplineRow(r: unknown): r is DisciplineRow {
+  const x = r as Partial<DisciplineRow> | null;
+  return (
+    !!x &&
+    typeof x.agent === "string" &&
+    Number.isFinite(x.memtraceCalls) &&
+    Number.isFinite(x.serenaCalls) &&
+    typeof x.gate === "boolean" &&
+    Number.isFinite(x.deniedCalls)
+  );
+}
+
 function normalizeDiscipline(d: unknown): Discipline {
-  const o = (d ?? {}) as Partial<Discipline>;
-  const rows = Array.isArray(o.rows) ? o.rows : [];
+  // Typed `unknown` all the way down on purpose — casting to Partial<Discipline> would let
+  // TypeScript claim each element is a well-formed row, the exact guarantee we lack for backend
+  // input, and would make the runtime guards below read as dead code.
+  const o = (d ?? {}) as Record<string, unknown>;
+  const rows: unknown[] = Array.isArray(o.rows) ? o.rows : [];
   return {
     windowHours: typeof o.windowHours === "number" ? o.windowHours : 0,
-    rows: rows.filter(
-      (r): r is DisciplineRow =>
-        !!r &&
-        typeof r.agent === "string" &&
-        Number.isFinite(r.memtraceCalls) &&
-        Number.isFinite(r.serenaCalls) &&
-        // gate MUST be validated, not merely read: an undefined gate renders the red "gate OFF"
-        // state, which is precisely the false accusation this coercion exists to prevent. A row
-        // that cannot say whether the gate was on has no business claiming it was off.
-        typeof r.gate === "boolean" &&
-        Number.isFinite(r.deniedCalls),
-    ),
+    rows: rows.filter(isDisciplineRow),
     legacyUnattributedMemtrace:
       typeof o.legacyUnattributedMemtrace === "number" ? o.legacyUnattributedMemtrace : 0,
   };
