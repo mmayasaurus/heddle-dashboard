@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::fable_attrib::{self, Attrib};
 use super::{
-    home, is_stale, mask_email, tap_limit, usage_dir, AccountLimit, LimitWindow, ProviderLimit,
-    TAP_STALE_AFTER_SECS,
+    home, is_stale, mask_email, tap_limit, usage_dir, write_json_atomic, AccountLimit, LimitWindow,
+    ProviderLimit, TAP_STALE_AFTER_SECS,
 };
 
 /// `~/.heddle/accounts.json`, relative to `$HOME`.
@@ -108,7 +109,8 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
         let file = read_json(&dir.join(format!("claude-{}.json", a.id)));
-        rows.push(row(a, file.as_ref(), now));
+        let attrib = attribute(dir, &a.id, file.as_ref(), now);
+        rows.push(row(a, file.as_ref(), now, attrib.as_ref()));
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return rows;
@@ -117,6 +119,11 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
+            // Attribution state (`claude-<id>.attrib.json`) is never an account file —
+            // excluded by name, not by accident of its schema.
+            if name.ends_with(".attrib.json") {
+                return None;
+            }
             let id = name
                 .strip_prefix("claude-")?
                 .strip_suffix(".json")?
@@ -142,9 +149,43 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
                 .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
             email: None,
         };
-        rows.push(row(&acct, file.as_ref(), now));
+        let attrib = attribute(dir, &id, file.as_ref(), now);
+        rows.push(row(&acct, file.as_ref(), now, attrib.as_ref()));
     }
     rows
+}
+
+/// Load this account's attribution state, fold in the current capture (if any), persist when it
+/// changed, and return the state. Best-effort: an unreadable/unwritable attrib file just yields
+/// whatever we could compute in memory.
+/// Serializes every attribution read-modify-write: two overlapping `heddle_provider_limits` calls
+/// must not both fold from the same persisted baseline and then overwrite each other's sample.
+static ATTRIB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Attrib> {
+    let _serialized = ATTRIB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = dir.join(format!("claude-{id}.attrib.json"));
+    let mut state: Attrib = read_json(&path)
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let cap = file.and_then(fable_attrib::capture_from_tap);
+    let changed = match &cap {
+        Some(c) => fable_attrib::ingest(&mut state, c, now),
+        None => false,
+    };
+    if changed {
+        // A lost write means the next process restart re-ingests from the older baseline and
+        // double-counts a delta — rare, but never silent.
+        match serde_json::to_value(&state) {
+            Ok(v) => {
+                if let Err(e) = write_json_atomic(&path, &v) {
+                    eprintln!("[heddle] fable attribution for {id} not persisted: {e}");
+                }
+            }
+            Err(e) => eprintln!("[heddle] fable attribution for {id} not serialized: {e}"),
+        }
+    }
+    state.last_captured_at.is_some().then_some(state)
 }
 
 /// The tap-shaped empty entry, for when neither the active account nor the legacy file has data.
@@ -163,7 +204,24 @@ fn empty_top() -> ProviderLimit {
         accounts: None,
         active_account: None,
         windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
     }
+}
+
+/// No registry: the plain single-file tap entry, with the Fable estimate still accumulating
+/// (attribution keyed "default").
+fn single_file_mode(
+    dir: &Path,
+    legacy_file: Option<&Value>,
+    legacy: Option<ProviderLimit>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let attrib = attribute(dir, "default", legacy_file, now);
+    let mut l = legacy?;
+    l.fable_weekly_estimate_pct = attrib.as_ref().and_then(fable_attrib::estimate);
+    l.fable_weekly_samples = attrib.map(|s| s.samples);
+    Some(l)
 }
 
 pub(super) fn build(
@@ -172,9 +230,12 @@ pub(super) fn build(
     env_dir: Option<&Path>,
     now: i64,
 ) -> Option<ProviderLimit> {
-    let legacy = read_json(&dir.join("claude.json")).and_then(|v| tap_limit("claude", &v, now));
+    let legacy_file = read_json(&dir.join("claude.json"));
+    let legacy = legacy_file
+        .as_ref()
+        .and_then(|v| tap_limit("claude", v, now));
     if registry.is_empty() {
-        return legacy;
+        return single_file_mode(dir, legacy_file.as_ref(), legacy, now);
     }
     let active = active_account(registry, env_dir);
     let rows = account_rows(dir, registry, now);
@@ -207,6 +268,13 @@ pub(super) fn build(
         legacy_account.filter(|id| rows.iter().any(|r| &r.id == id))
     };
     top.note_codes = Some(Vec::new());
+    // The top-level Fable estimate belongs to whichever account the top level shows.
+    if let Some(id) = top.active_account.clone() {
+        if let Some(r) = rows.iter().find(|r| r.id == id) {
+            top.fable_weekly_estimate_pct = r.fable_weekly_estimate_pct;
+            top.fable_weekly_samples = r.fable_weekly_samples;
+        }
+    }
     top.accounts = Some(rows);
     top.windows = Some(Vec::new());
     Some(top)
@@ -214,7 +282,13 @@ pub(super) fn build(
 
 /// One account row from its tap file (or none yet).
 /// The row for an account with no tap file yet: everything unknown, explained by a note.
-fn row_no_capture(a: &Account, label: String, detail: Value) -> AccountLimit {
+fn row_no_capture(
+    a: &Account,
+    label: String,
+    detail: Value,
+    fable_est: Option<f64>,
+    fable_samples: Option<i64>,
+) -> AccountLimit {
     AccountLimit {
         id: a.id.clone(),
         label,
@@ -232,11 +306,13 @@ fn row_no_capture(a: &Account, label: String, detail: Value) -> AccountLimit {
         ),
         note_codes: vec![CODE_NO_CAPTURE.to_string()],
         detail: Some(detail),
+        fable_weekly_estimate_pct: fable_est,
+        fable_weekly_samples: fable_samples,
     }
 }
 
-/// One account row from its tap file (or none yet).
-fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
+/// One account row from its tap file (or none yet) plus its Fable attribution state.
+fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> AccountLimit {
     let label = a
         .email
         .as_deref()
@@ -246,9 +322,15 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
         "account": a.id,
         "configDir": a.config_dir.as_ref().map(|p| p.to_string_lossy().to_string()),
         "model": file.and_then(|v| v["model"].as_str()),
+        "fableWeekly": attrib.map(fable_attrib::detail),
     });
+    let fable_est = attrib.and_then(fable_attrib::estimate);
+    let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
-        return row_no_capture(a, label, detail);
+        // No current capture: don't surface a historical estimate next to a "no capture yet"
+        // note — the drawer renders on non-null alone. The breakdown (with lastCapturedAt)
+        // stays in `detail.fableWeekly` for the tooltip.
+        return row_no_capture(a, label, detail, None, None);
     };
     let rl = &v["rate_limits"];
     let win = |k: &str| LimitWindow {
@@ -278,6 +360,8 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
             Vec::new()
         },
         detail: Some(detail),
+        fable_weekly_estimate_pct: fable_est,
+        fable_weekly_samples: fable_samples,
     }
 }
 
