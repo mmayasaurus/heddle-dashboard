@@ -30,3 +30,15 @@
   margin-right: 8px;
   font-variant-numeric: tabular-nums;
 }
+
+/* DisciplinePanel (HED-85) shares this panel-scoped sheet. */
+.fleet-discipline-red {
+  color: var(--status-asking, #e05555);
+  font-size: 11px;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+.fleet-discipline-flag {
+  font-weight: 600;
+}

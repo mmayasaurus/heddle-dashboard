@@ -67,7 +67,12 @@ fn route_mix_sync(hours: Option<i64>) -> Result<RouteMix, String> {
 }
 
 /// ISO-UTC cutoff `hours` ago, comparable to the ledger's `toISOString` values by plain string
-/// ordering (both are zero-padded UTC ISO-8601).
+/// ordering (both are zero-padded UTC ISO-8601). Shared with the discipline module (same window
+/// semantics against the same clock).
+pub(crate) fn cutoff_iso_pub(hours: i64) -> String {
+    cutoff_iso(hours)
+}
+
 fn cutoff_iso(hours: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

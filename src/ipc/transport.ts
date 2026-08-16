@@ -131,6 +131,7 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "heddle_fleet_roster",
   "heddle_provider_usage",
   "heddle_route_mix",
+  "heddle_discipline",
   "heddle_provider_limits",
 ]);
 

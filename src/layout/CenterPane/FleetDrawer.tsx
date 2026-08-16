@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { invoke, isTauri } from "../../ipc/transport";
+import { DisciplinePanel } from "./DisciplinePanel";
 import { RouteMixPanel } from "./RouteMixPanel";
 import { useTermStore } from "../../store/termStore";
 
@@ -340,6 +341,7 @@ export function FleetDrawer() {
               limits.find((l) => l.provider === "claude")?.fiveHour?.usedPercentage ?? null
             }
           />
+          <DisciplinePanel liveAgents={roster.filter((a) => a.alive).map((a) => a.name)} />
 
           {usage.length > 0 && (
             <>
