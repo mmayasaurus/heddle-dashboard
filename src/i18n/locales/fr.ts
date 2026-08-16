@@ -87,12 +87,12 @@ const fr: typeof en = {
     "Ignore toutes les confirmations de permission via injection de config (pas de flag CLI). S'applique au lancement de cette session.",
   "settings.catGeneral": "Général", // General
   "settings.cliLabel": "Commande shell",
-  "settings.cliInstall": "Installer la commande ‘vela’",
-  "settings.cliUninstall": "Désinstaller la commande ‘vela’",
+  "settings.cliInstall": "Installer la commande ‘heddle’",
+  "settings.cliUninstall": "Désinstaller la commande ‘heddle’",
   "settings.cliInstalledAt": (path: string) => `Installée dans ${path}`,
   "settings.cliConflict": (path: string) =>
-    `Une autre commande ‘vela’ existe déjà dans ${path}. heddle ne la remplacera pas.`,
-  "settings.cliHint": "Ajoute `vela <chemin-du-projet>` au PATH, comme la commande `code` de VS Code.",
+    `Une autre commande ‘heddle’ existe déjà dans ${path}. heddle ne la remplacera pas.`,
+  "settings.cliHint": "Ajoute `heddle <chemin-du-projet>` au PATH, comme la commande `code` de VS Code.",
   "settings.agentArgsHint":
     "Arguments de lancement par défaut appliqués aux nouvelles sessions de chaque type d'agent. Les arguments définis par session lors de la création ou de la modification les remplacent. Laisser vide pour aucun.", // Agent default launch args hint
   "settings.agentPathLabel": "Chemin de l'exécutable (facultatif)", // Executable path (optional)

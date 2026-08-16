@@ -1,6 +1,6 @@
 //! Client-side SSH remote orchestration for GUI builds.
 //!
-//! Connect by SSH, detect the remote system, provision `vela-server`, start `--serve --local-http`,
+//! Connect by SSH, detect the remote system, provision `heddle-server`, start `--serve --local-http`,
 //! establish `ssh -L` forwarding, and open an auto-login client.
 //!
 //! Design: use OpenSSH and its agent/config ecosystem rather than implementing SSH. Windows prefers
@@ -601,17 +601,17 @@ pub fn trust_host(host: &str, was_changed: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Remote binary path: `$HOME/.velaterm/versions/<version>/vela-server`.
+/// Remote binary path: `$HOME/.heddle/remote/versions/<version>/heddle-server`.
 fn remote_bin_path(version: &str) -> String {
-    format!("$HOME/.velaterm/versions/{version}/vela-server")
+    format!("$HOME/.heddle/remote/versions/{version}/heddle-server")
 }
 
-/// Create the remote `~/.velaterm/{versions/<version>,data,bin}` layout.
+/// Create the remote `~/.heddle/remote/{versions/<version>,data,bin}` layout.
 pub fn ensure_remote_layout(t: &dyn SshTransport, version: &str) -> Result<(), String> {
     if !valid_version(version) {
         return Err(format!("Invalid version: {version}"));
     }
-    let cmd = format!("mkdir -p \"$HOME/.velaterm/versions/{version}\" \"$HOME/.velaterm/data\" \"$HOME/.velaterm/bin\"");
+    let cmd = format!("mkdir -p \"$HOME/.heddle/remote/versions/{version}\" \"$HOME/.heddle/remote/data\" \"$HOME/.heddle/remote/bin\"");
     t.exec(&cmd).map(|_| ())
 }
 
@@ -644,7 +644,7 @@ pub fn push_binary(
     ensure_remote_layout(t, version)?;
 
     // Upload paths are home-relative and bypass shell expansion.
-    let tmp_rel = format!(".velaterm/versions/{version}/.vela-server.tmp");
+    let tmp_rel = format!(".heddle/remote/versions/{version}/.heddle-server.tmp");
     let tmp_abs = format!("$HOME/{tmp_rel}");
 
     // The transport owns byte transfer and transfer progress.
@@ -679,7 +679,7 @@ fn wait_remote_executable(t: &dyn SshTransport, version: &str) -> Result<(), Str
         std::thread::sleep(Duration::from_millis(500));
     }
     Err(format!(
-        "remote vela-server never became executable (ETXTBSY?): {last}"
+        "remote heddle-server never became executable (ETXTBSY?): {last}"
     ))
 }
 
@@ -727,9 +727,9 @@ pub(crate) fn pick_local_port(host: &str) -> Result<u16, String> {
     free_local_port()
 }
 
-/// Remote service state path: `$HOME/.velaterm/run.json`.
+/// Remote service state path: `$HOME/.heddle/remote/run.json`.
 fn remote_run_json() -> &'static str {
-    "$HOME/.velaterm/run.json"
+    "$HOME/.heddle/remote/run.json"
 }
 
 /// Remote state persisted in run.json for reconnect reuse/reclamation.
@@ -746,13 +746,13 @@ struct RunState {
 }
 
 /// Return the POSIX-shell data-directory expression by mode/OS. Isolated mode uses
-/// `$HOME/.velaterm/data`; shared mode explicitly targets the remote desktop release directory:
+/// `$HOME/.heddle/remote/data`; shared mode explicitly targets the remote desktop release directory:
 ///   - Linux：`${XDG_DATA_HOME:-$HOME/.local/share}/io.vlinx.vlxterm.release`
 ///   - macOS: `$HOME/Library/Application Support/io.vlinx.vlxterm.release`.
 /// Explicit paths are required because the server's independent identifier would not resolve to desktop data.
 fn serve_data_dir_expr(os: &str, shared_db: bool) -> String {
     if !shared_db {
-        return "$HOME/.velaterm/data".to_string();
+        return "$HOME/.heddle/remote/data".to_string();
     }
     match os {
         "macos" => "$HOME/Library/Application Support/io.vlinx.vlxterm.release".to_string(),
@@ -761,7 +761,7 @@ fn serve_data_dir_expr(os: &str, shared_db: bool) -> String {
     }
 }
 
-/// Start detached remote `vela-server --serve --local-http` and persist pid/port/password/version/shared_db
+/// Start detached remote `heddle-server --serve --local-http` and persist pid/port/password/version/shared_db
 /// in run.json so the service survives client disconnect and can be reused consistently.
 ///
 /// Pass the alphanumeric random password through VELA_SERVE_PASSWORD, never remote process argv.
@@ -785,11 +785,11 @@ fn start_detached_serve(
     // Embed shared_db directly as a JSON true/false literal.
     let shared_json = if shared_db { "true" } else { "false" };
     // nohup, closed stdin, redirected logs, and `&` detach from SSH. Persist `$!` state under
-    // ~/.velaterm regardless of the selected data directory, then echo the PID.
+    // ~/.heddle/remote regardless of the selected data directory, then echo the PID.
     let remote_cmd = format!(
         "mkdir -p \"{data_dir_expr}\"; \
          nohup env VELA_SERVE_PASSWORD='{password}' \"{bin}\" --serve --local-http --port {rport} \
-           --data-dir \"{data_dir_expr}\" </dev/null >\"$HOME/.velaterm/server.log\" 2>&1 & \
+           --data-dir \"{data_dir_expr}\" </dev/null >\"$HOME/.heddle/remote/server.log\" 2>&1 & \
          P=$!; \
          printf '{{\"pid\":%d,\"port\":%d,\"password\":\"%s\",\"version\":\"%s\",\"shared_db\":{shared_json}}}\\n' \"$P\" {rport} '{password}' '{version}' > \"{run}\"; \
          echo \"$P\""
@@ -1020,7 +1020,7 @@ impl SshTransport for OpensshTransport {
         scp.stderr(Stdio::null());
         let mut child = scp
             .spawn()
-            .map_err(|e| format!("scp vela-server failed to run (ssh missing locally?): {e}"))?;
+            .map_err(|e| format!("scp heddle-server failed to run (ssh missing locally?): {e}"))?;
 
         // While SCP runs, poll remote temporary-file size and emit transfer percentage until exit.
         progress("transfer", Some(0));
@@ -1028,7 +1028,7 @@ impl SshTransport for OpensshTransport {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     if !status.success() {
-                        return Err("scp vela-server failed".to_string());
+                        return Err("scp heddle-server failed".to_string());
                     }
                     break;
                 }
@@ -1370,7 +1370,7 @@ fn random_password() -> String {
 /// Requires confirmed known_hosts trust. Auto uses agent/keys and marks rejection for a password prompt;
 /// Password uses the transport's supported implementation.
 ///
-/// shared_db selects isolated ~/.velaterm/data or the remote desktop release database.
+/// shared_db selects isolated ~/.heddle/remote/data or the remote desktop release database.
 pub fn connect(
     app_data_dir: &Path,
     host: &str,
@@ -1446,7 +1446,7 @@ fn connect_inner(
     // development-only end-to-end testing.
     let local_bin = match std::env::var("VLX_DEV_SERVER_BIN") {
         Ok(p) if !p.is_empty() && Path::new(&p).is_file() => {
-            eprintln!("[ssh] using dev-bypass vela-server: {p}");
+            eprintln!("[ssh] using dev-bypass heddle-server: {p}");
             PathBuf::from(p)
         }
         _ => crate::server_supply::ensure_supplied(app_data_dir, version, &platkey, &|pct| {
@@ -1523,15 +1523,15 @@ mod tests {
     fn remote_bin_path_shape() {
         assert_eq!(
             remote_bin_path("0.1.73"),
-            "$HOME/.velaterm/versions/0.1.73/vela-server"
+            "$HOME/.heddle/remote/versions/0.1.73/heddle-server"
         );
     }
 
     #[test]
     fn serve_data_dir_expr_by_os_and_mode() {
-        // Isolated mode is always ~/.velaterm/data regardless of OS.
-        assert_eq!(serve_data_dir_expr("linux", false), "$HOME/.velaterm/data");
-        assert_eq!(serve_data_dir_expr("macos", false), "$HOME/.velaterm/data");
+        // Isolated mode is always ~/.heddle/remote/data regardless of OS.
+        assert_eq!(serve_data_dir_expr("linux", false), "$HOME/.heddle/remote/data");
+        assert_eq!(serve_data_dir_expr("macos", false), "$HOME/.heddle/remote/data");
         // Shared mode uses each OS's desktop release data directory.
         assert_eq!(
             serve_data_dir_expr("linux", true),

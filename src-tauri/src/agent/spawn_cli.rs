@@ -20,10 +20,21 @@ const SHIMS: &[(&str, &str)] = &[
     ("vopen", "--view"),
 ];
 
+/// Name of the user-facing shell command that opens a project in heddle (`heddle <project-path>`).
+/// Renamed from upstream's `vela` (HED-40); the legacy shim is still recognized and cleaned up.
 #[cfg(feature = "gui")]
-const VELA_SHIM_MARKER: &str = "heddle managed vela command";
+pub const USER_CLI_NAME: &str = "heddle";
+/// Pre-rename shell command name. Never installed anymore, only removed when it is heddle-managed.
+#[cfg(feature = "gui")]
+const LEGACY_USER_CLI_NAME: &str = "vela";
+/// Marker line written into every shim heddle installs, so uninstall/overwrite only ever touch our own files.
+#[cfg(feature = "gui")]
+const SHIM_MARKER: &str = "heddle managed shell command";
+/// Marker pre-rename builds wrote into `vela` shims; still recognized so those shims count as managed.
+#[cfg(feature = "gui")]
+const LEGACY_SHIM_MARKER: &str = "heddle managed vela command";
 
-/// Visibility of the `vela` command in the user's shell. `conflict` means an earlier PATH entry contains
+/// Visibility of the `heddle` command in the user's shell. `conflict` means an earlier PATH entry contains
 /// an unmanaged command with the same name, which the installer never overwrites.
 #[cfg(feature = "gui")]
 #[derive(Clone, Debug, serde::Serialize)]
@@ -62,7 +73,7 @@ pub fn install(data_dir: &Path) -> std::io::Result<PathBuf> {
     Ok(bin)
 }
 
-/// Resolve the `vela` command seen by the current login shell in PATH order. Checking only our target
+/// Resolve the `heddle` command seen by the current login shell in PATH order. Checking only our target
 /// would miss an earlier same-name command that shadows a successful installation.
 #[cfg(feature = "gui")]
 pub fn user_cli_status() -> UserCliStatus {
@@ -93,7 +104,7 @@ pub fn user_cli_status() -> UserCliStatus {
     }
 }
 
-/// Install `vela` into the current login shell's PATH. macOS invokes this explicitly from menus/settings;
+/// Install `heddle` into the current login shell's PATH. macOS invokes this explicitly from menus/settings;
 /// Windows and Linux releases may run it at startup for packaged-app convenience. Never modify shell
 /// profiles, elevate privileges, or overwrite a same-name file without the application marker.
 #[cfg(feature = "gui")]
@@ -111,7 +122,7 @@ pub fn install_user_cli() -> std::io::Result<UserCliStatus> {
     if let Some(conflict) = before.conflict.as_deref() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("another 'vela' command already exists at {conflict}"),
+            format!("another '{USER_CLI_NAME}' command already exists at {conflict}"),
         ));
     }
     let exe = std::env::current_exe()?;
@@ -143,12 +154,13 @@ pub fn install_user_cli() -> std::io::Result<UserCliStatus> {
     ))
 }
 
-/// Remove every heddle-managed `vela` shim in PATH without touching user-owned commands.
+/// Remove every heddle-managed `heddle` shim in PATH — and any heddle-managed pre-rename `vela` shim —
+/// without touching user-owned commands.
 #[cfg(feature = "gui")]
 pub fn uninstall_user_cli() -> std::io::Result<UserCliStatus> {
     for dir in user_path_dirs() {
-        let dest = managed_cli_path(&dir);
-        remove_user_cli_at(&dest)?;
+        remove_user_cli_at(&managed_cli_path(&dir))?;
+        remove_user_cli_at(&legacy_cli_path(&dir))?;
     }
     Ok(user_cli_status())
 }
@@ -171,7 +183,13 @@ fn user_path_dirs() -> Vec<PathBuf> {
 
 #[cfg(feature = "gui")]
 fn managed_cli_path(dir: &Path) -> PathBuf {
-    dir.join(if cfg!(windows) { "vela.cmd" } else { "vela" })
+    dir.join(if cfg!(windows) { "heddle.cmd" } else { "heddle" })
+}
+
+/// Where a pre-rename build would have written its shim; only ever read for cleanup.
+#[cfg(feature = "gui")]
+fn legacy_cli_path(dir: &Path) -> PathBuf {
+    dir.join(if cfg!(windows) { "vela.cmd" } else { LEGACY_USER_CLI_NAME })
 }
 
 #[cfg(feature = "gui")]
@@ -179,22 +197,22 @@ fn command_paths(dir: &Path) -> Vec<PathBuf> {
     #[cfg(windows)]
     {
         // Follow common PATHEXT precedence. Treat every user-owned variant as a conflict rather than
-        // writing vela.cmd beside it and incorrectly reporting success.
-        return ["vela.com", "vela.exe", "vela.bat", "vela.cmd"]
+        // writing heddle.cmd beside it and incorrectly reporting success.
+        return ["heddle.com", "heddle.exe", "heddle.bat", "heddle.cmd"]
             .into_iter()
             .map(|name| dir.join(name))
             .collect();
     }
     #[cfg(not(windows))]
     {
-        vec![dir.join("vela")]
+        vec![dir.join(USER_CLI_NAME)]
     }
 }
 
 #[cfg(feature = "gui")]
 fn is_managed_cli(path: &Path) -> bool {
     std::fs::read_to_string(path)
-        .map(|s| s.contains(VELA_SHIM_MARKER))
+        .map(|s| s.contains(SHIM_MARKER) || s.contains(LEGACY_SHIM_MARKER))
         .unwrap_or(false)
 }
 
@@ -204,7 +222,7 @@ fn write_user_cli_at(dest: &Path, exe: &Path) -> std::io::Result<()> {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             format!(
-                "another 'vela' command already exists at {}",
+                "another '{USER_CLI_NAME}' command already exists at {}",
                 dest.display()
             ),
         ));
@@ -256,13 +274,13 @@ fn render_user_cli(exe: &Path) -> String {
     {
         let quoted = exe.to_string_lossy().replace('\'', "'\\''");
         return format!(
-            "#!/bin/sh\n# {VELA_SHIM_MARKER}\ncase \"${{1:-}}\" in -h|--help) exec '{quoted}' --vela-help;; esac\nexec '{quoted}' --open-project \"$@\"\n"
+            "#!/bin/sh\n# {SHIM_MARKER}\ncase \"${{1:-}}\" in -h|--help) exec '{quoted}' --heddle-help;; esac\nexec '{quoted}' --open-project \"$@\"\n"
         );
     }
     #[cfg(windows)]
     {
         format!(
-            "@REM {VELA_SHIM_MARKER}\r\n@IF \"%~1\"==\"-h\" GOTO help\r\n@IF \"%~1\"==\"--help\" GOTO help\r\n@\"{}\" --open-project %*\r\n@EXIT /B %ERRORLEVEL%\r\n:help\r\n@\"{}\" --vela-help\r\n",
+            "@REM {SHIM_MARKER}\r\n@IF \"%~1\"==\"-h\" GOTO help\r\n@IF \"%~1\"==\"--help\" GOTO help\r\n@\"{}\" --open-project %*\r\n@EXIT /B %ERRORLEVEL%\r\n:help\r\n@\"{}\" --heddle-help\r\n",
             exe.display(), exe.display()
         )
     }
@@ -485,8 +503,9 @@ mod tests {
     #[cfg(feature = "gui")]
     #[test]
     fn user_cli_forwards_one_quoted_project_path() {
-        let rendered = render_user_cli(Path::new("/tmp/Vela Term/velaterm"));
-        assert!(rendered.contains(VELA_SHIM_MARKER));
+        let rendered = render_user_cli(Path::new("/tmp/Heddle App/heddle"));
+        assert!(rendered.contains(SHIM_MARKER));
+        assert!(rendered.contains("--heddle-help"));
         assert!(rendered.contains("--open-project"));
         #[cfg(unix)]
         assert!(rendered.contains("\"$@\""));
@@ -509,7 +528,7 @@ mod tests {
         let fake_exe = tmp.join("Vela Term");
         std::fs::write(&fake_exe, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
         std::fs::set_permissions(&fake_exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let dest = tmp.join("vela");
+        let dest = tmp.join(USER_CLI_NAME);
 
         write_user_cli_at(&dest, &fake_exe).unwrap();
         let project = tmp.join("project with space");
