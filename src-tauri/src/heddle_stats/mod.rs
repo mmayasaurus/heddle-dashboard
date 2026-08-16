@@ -266,6 +266,8 @@ pub struct AccountLimit {
     pub id: String,
     pub label: String,
     pub plan: Option<String>,
+    /// Registry login state for providers that expose it (Claude); `None` when unavailable.
+    pub logged_in: Option<bool>,
     /// When THIS account's numbers were captured, and whether that is older than the source's
     /// freshness threshold (`None` when unknown / not applicable).
     pub captured_at: Option<i64>,

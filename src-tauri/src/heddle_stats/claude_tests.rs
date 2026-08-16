@@ -7,7 +7,8 @@ const REGISTRY: &str = r#"{
   "claude": [
     {"id": "acct1", "configDir": null, "email": "one@example.com", "loggedIn": true},
     {"id": "acct2", "configDir": "/tmp/heddle-claude-tests/.claude-acct2", "email": "two@example.org", "loggedIn": true},
-    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": true}
+    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": false},
+    {"id": "acct4", "configDir": "/tmp/heddle-claude-tests/.claude-acct4", "email": "four@example.net", "loggedIn": true}
   ]
 }"#;
 
@@ -47,7 +48,7 @@ fn registry() -> Vec<Account> {
 #[test]
 fn registry_parses_ids_config_dirs_and_emails() {
     let r = registry();
-    assert_eq!(r.len(), 3);
+    assert_eq!(r.len(), 4);
     assert_eq!(r[0].id, "acct1");
     assert_eq!(r[0].config_dir, None);
     assert_eq!(
@@ -55,6 +56,8 @@ fn registry_parses_ids_config_dirs_and_emails() {
         Some(Path::new("/tmp/heddle-claude-tests/.claude-acct2"))
     );
     assert_eq!(r[2].email.as_deref(), Some("three@example.net"));
+    assert_eq!(r[0].logged_in, Some(true));
+    assert_eq!(r[2].logged_in, Some(false));
     assert!(parse_registry(&serde_json::json!({})).is_empty());
 }
 
@@ -114,19 +117,20 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     // acct3: no capture yet.
     let l = build(&s.0, &registry(), None, now).unwrap();
     assert_eq!(l.provider, "claude");
-    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 3 acct"));
+    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 4 acct"));
     assert_eq!(l.active_account.as_deref(), Some("acct1"));
     assert_eq!(l.five_hour.used_percentage, Some(32.0));
     assert_eq!(l.source.as_deref(), Some("statusline-tap"));
     assert_eq!(l.stale, Some(false));
     let rows = l.accounts.unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
     assert_eq!(rows[0].id, "acct1");
     assert_eq!(rows[0].label, "o…@example.com");
     assert_eq!(rows[0].five_hour.used_percentage, Some(32.0));
     assert_eq!(rows[0].captured_at, Some(now - 60));
     assert_eq!(rows[0].stale, Some(false));
     assert_eq!(rows[0].limit_reached, Some(false));
+    assert_eq!(rows[0].logged_in, Some(true));
     assert_eq!(rows[0].detail.as_ref().unwrap()["model"], "claude-fable-5");
     // acct2: at 100% → limitReached + code; captured 700s ago → stale.
     assert_eq!(rows[1].id, "acct2");
@@ -139,12 +143,51 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     assert_eq!(rows[2].five_hour, LimitWindow::default());
     assert_eq!(rows[2].limit_reached, None);
     assert_eq!(rows[2].note_codes, vec![CODE_NO_CAPTURE]);
+    assert_eq!(rows[2].logged_in, Some(false));
+    assert_eq!(rows[3].id, "acct4");
+    assert_eq!(rows[3].note_codes, vec![CODE_NO_CAPTURE]);
     // Full emails never leak.
     let js = serde_json::to_string(&rows).unwrap();
     assert!(
         !js.contains("one@") && !js.contains("two@") && !js.contains("three@"),
         "{js}"
     );
+}
+
+#[test]
+fn keeper_anchors_supply_registered_account_windows_when_fresher_than_the_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("keeper-rows");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write(
+        "claude-acct3.keeper.json",
+        &format!(
+            r#"{{"account":"acct3","startedAt":{},"resets_at":{},"used":null}}"#,
+            now - 30,
+            now + 5 * 3600
+        ),
+    );
+    s.write(
+        "claude-acct4.keeper.json",
+        &format!(
+            r#"{{"account":"acct4","startedAt":{},"resets_at":{},"used":null}}"#,
+            now - 20,
+            now + 5 * 3600
+        ),
+    );
+
+    let rows = account_rows(&s.0, &registry(), now);
+    assert_eq!(rows[2].id, "acct3");
+    assert_eq!(rows[2].captured_at, Some(now - 30));
+    assert_eq!(rows[2].five_hour.used_percentage, None);
+    assert_eq!(rows[2].five_hour.resets_at, Some(now + 5 * 3600));
+    assert_eq!(rows[2].note_codes, Vec::<String>::new());
+    assert_eq!(rows[3].id, "acct4");
+    assert_eq!(rows[3].captured_at, Some(now - 20));
+    assert_eq!(rows[3].five_hour.resets_at, Some(now + 5 * 3600));
 }
 
 #[test]
@@ -219,10 +262,10 @@ fn unregistered_per_account_files_are_appended_as_extra_rows() {
     );
     let l = build(&s.0, &registry(), None, now).unwrap();
     let rows = l.accounts.unwrap();
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows[3].id, "unknown-claude-x");
-    assert_eq!(rows[3].label, "unknown-claude-x");
-    assert_eq!(rows[3].five_hour.used_percentage, Some(3.0));
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[4].id, "unknown-claude-x");
+    assert_eq!(rows[4].label, "unknown-claude-x");
+    assert_eq!(rows[4].five_hour.used_percentage, Some(3.0));
 }
 
 #[test]
