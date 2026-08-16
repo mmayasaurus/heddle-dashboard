@@ -75,7 +75,7 @@ describe("RouteMixPanel — route-mix scoreboard (HED-69)", () => {
   });
 
   it("never flashes the empty state before the first load, then shows it honestly", async () => {
-    invoke.mockReturnValue(new Promise(() => {})); // a load that never settles
+    invoke.mockReturnValue(new Promise(() => undefined)); // a load that never settles
     const pending = render(<RouteMixPanel claudeFiveHourPct={null} />);
     // Pending load: no empty-state claim about a ledger nobody has read yet.
     expect(screen.queryByText("fleet.routeMix.empty")).toBeNull();
