@@ -53,7 +53,7 @@ macOS (Apple Silicon and Intel), Windows (x64 and arm64), and Linux (x86_64 and 
 
 | Layer | Choice |
 |-------|--------|
-| Desktop shell | Tauri 2.x (Rust backend + system WebView); an Electron shell also lives in `electron/` |
+| Desktop shell | Tauri 2.x (Rust backend + system WebView) |
 | PTY | `portable-pty` (wezterm) |
 | Frontend | React 19 + TypeScript + Vite |
 | Terminal | xterm.js with the fit, web-links, search, image, and unicode11 addons |
@@ -77,7 +77,6 @@ Other development modes:
 ```bash
 pnpm dev:web          # headless backend + Vite, driven from a normal browser
 pnpm dev:mobile       # same, with the mobile layout
-pnpm dev:electron     # the Electron shell instead of Tauri
 pnpm dev:ls           # list running dev instances
 pnpm dev:stop <label> # stop one instance by label
 ```
@@ -113,7 +112,6 @@ src-tauri/src/    Rust backend
   agent/          agent detection, status, transcripts, spawning
   web/            embedded web server and command dispatch
   git.rs          git status probing
-electron/         Electron shell
 skills/           agent skills exposed inside heddle sessions
 docs/manuals/     user manuals
 ```
@@ -146,7 +144,16 @@ run on the main thread and freeze the UI.
 
 ## License
 
-Copyright (c) 2026 VLINX Software. Released under the [MIT License](LICENSE).
+Copyright (c) 2026 Very Good Fiber Goods (VGFG) — the heddle fork.
+Copyright (c) 2026 VLINX Software — the upstream [VelaTerm](https://github.com/vlinx-io/VelaTerm) code
+this fork builds on. Both notices are retained in [LICENSE](LICENSE); heddle's own code — the fork and the
+upstream code it builds on — is released under the [MIT License](LICENSE).
 
 You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of heddle, for
-any purpose, as long as the copyright notice and the licence text travel with it.
+any purpose, as long as both copyright notices and the license text travel with it.
+
+Bundled third-party assets keep their own licenses and are **not** relicensed as MIT: the Noto Sans
+Symbols 2 subset (`src/assets/fonts/vlx-symbols.woff2`, SIL OFL 1.1 —
+`src/assets/fonts/LICENSE-noto-sans-symbols-2.txt`), Noto Sans SC (`src/assets/fonts/NotoSansSC-*.ttf`, (c) Adobe with Reserved Font
+Name 'Source', SIL OFL 1.1 — `src/assets/fonts/NotoSansSC-OFL.txt`), and JetBrains Mono (`@fontsource/jetbrains-mono`,
+SIL OFL 1.1). Other npm/crate dependencies carry their own licenses per their packages.

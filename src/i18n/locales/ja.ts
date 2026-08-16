@@ -86,12 +86,12 @@ const ja: typeof en = {
     "設定ファイル経由ですべての権限確認をスキップします（CLI フラグなし）。このセッションの起動時に適用されます。",
   "settings.catGeneral": "一般", // General
   "settings.cliLabel": "シェルコマンド",
-  "settings.cliInstall": "‘vela’ コマンドをインストール",
-  "settings.cliUninstall": "‘vela’ コマンドをアンインストール",
+  "settings.cliInstall": "‘heddle’ コマンドをインストール",
+  "settings.cliUninstall": "‘heddle’ コマンドをアンインストール",
   "settings.cliInstalledAt": (path: string) => `${path} にインストール済み`,
   "settings.cliConflict": (path: string) =>
-    `${path} に別の ‘vela’ コマンドがあります。heddle は上書きしません。`,
-  "settings.cliHint": "VS Code の `code` と同様に `vela <project-path>` を PATH に追加します。",
+    `${path} に別の ‘heddle’ コマンドがあります。heddle は上書きしません。`,
+  "settings.cliHint": "VS Code の `code` と同様に `heddle <project-path>` を PATH に追加します。",
   "settings.agentArgsHint":
     "各エージェントタイプの新規セッションに適用される既定の起動引数。セッションの作成・編集時に設定した個別の引数が優先されます。空欄で引数なし。", // Agent default launch args hint
   "settings.agentPathLabel": "実行ファイルパス（任意）", // Executable path (optional)
