@@ -1,7 +1,7 @@
 //! Read-only queries over `~/.heddle/comms.db` for the dashboard's fleet-chatroom panel.
 //!
-//! Schema authority is `/Users/mayatobi/Developer/heddle/src/comms/log.ts` (the broker that
-//! writes this database). Two Tauri commands are exposed: `heddle_comms_rooms` (rooms overview +
+//! Schema authority is the heddle repo's `src/comms/log.ts` (the broker that writes this
+//! database). Two Tauri commands are exposed: `heddle_comms_rooms` (rooms overview +
 //! open needs-human/permission-request queue + a 24h refusal counter) and
 //! `heddle_comms_transcript` (one target's paged message history + its room's floor lease).
 //!
@@ -127,12 +127,10 @@ pub struct FloorInfo {
 
 // ───────────────────────────────── path / connection helpers ──────────────────────────────────
 
-fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_default()
-}
-
-fn comms_db_path() -> PathBuf {
-    home().join(".heddle").join("comms.db")
+/// `None` when no home directory exists — callers treat that as a fresh install rather than
+/// ever touching a cwd-relative path.
+fn comms_db_path() -> Option<PathBuf> {
+    Some(dirs::home_dir()?.join(".heddle").join("comms.db"))
 }
 
 /// Open read-only: `SQLITE_OPEN_READ_ONLY` is the hard guarantee (SQLite refuses any write on
@@ -170,7 +168,11 @@ async fn blocking<T: Send + 'static>(
 /// chatroom panel; a missing or version-mismatched db yields a typed empty state, never an error.
 #[tauri::command]
 pub async fn heddle_comms_rooms() -> Result<RoomsSnapshot, String> {
-    blocking(|| rooms_at(&comms_db_path())).await
+    blocking(|| match comms_db_path() {
+        Some(p) => rooms_at(&p),
+        None => Ok(empty_rooms_snapshot(0, true)),
+    })
+    .await
 }
 
 fn rooms_at(path: &Path) -> Result<RoomsSnapshot, String> {
@@ -227,16 +229,46 @@ fn query_rooms(conn: &Connection) -> Result<Vec<RoomSummary>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The contract-fixed anti-join: unreplied needs-human/permission-request rows, all targets,
-/// newest first, capped 50. ANY reply closes an item, not just the operator's.
+/// The contract-fixed anti-join semantics: unreplied needs-human/permission-request rows, all
+/// targets, newest first, capped 50. ANY reply closes an item, not just the operator's.
+/// Implemented as two bounded queries (candidates, then one IN() over their ids) because
+/// `reply_to` has no index in the broker schema and a read-only connection cannot add one —
+/// the correlated NOT EXISTS form rescans the whole log once per candidate on a long-lived db.
 fn query_needs_human(conn: &Connection) -> Result<Vec<NeedsHumanRow>, String> {
+    let candidates = needs_human_candidates(conn)?;
+    if candidates.is_empty() {
+        return Ok(vec![]);
+    }
+    let ids: Vec<i64> = candidates.iter().map(|c| c.id).collect();
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "SELECT DISTINCT reply_to FROM messages WHERE reply_to IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let replied = stmt
+        .query_map(rusqlite::params_from_iter(ids.iter()), |r| {
+            r.get::<_, i64>(0)
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<std::collections::HashSet<i64>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(candidates
+        .into_iter()
+        .filter(|c| !replied.contains(&c.id))
+        .take(50)
+        .collect())
+}
+
+/// Newest 200 needs-human/permission-request rows — the bounded candidate pool the reply
+/// filter runs over (50 survivors are returned; a backlog beyond 200 open candidates would be
+/// a fleet emergency long before this cap matters).
+fn needs_human_candidates(conn: &Connection) -> Result<Vec<NeedsHumanRow>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT m.id, m.ts, m.sender, m.target, m.kind, m.body \
              FROM messages m \
              WHERE m.kind IN ('needs-human','permission-request') \
-               AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.reply_to = m.id) \
-             ORDER BY m.id DESC LIMIT 50",
+             ORDER BY m.id DESC LIMIT 200",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -280,7 +312,11 @@ pub async fn heddle_comms_transcript(
     since_id: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Transcript, String> {
-    blocking(move || transcript_at(&comms_db_path(), &target, since_id, limit)).await
+    blocking(move || match comms_db_path() {
+        Some(p) => transcript_at(&p, &target, since_id, limit),
+        None => Ok(empty_transcript(0, true)),
+    })
+    .await
 }
 
 fn transcript_at(
@@ -297,11 +333,23 @@ fn transcript_at(
     if version != COMMS_SCHEMA_VERSION {
         return Ok(empty_transcript(version, false));
     }
+    // One deferred read transaction so the page, its delivery aggregates, sender kinds and the
+    // floor row all come from a single SQLite snapshot (the broker appends concurrently).
+    conn.execute_batch("BEGIN DEFERRED").map_err(|e| e.to_string())?;
+    // Clamped on both sides: non-positive/missing -> 200; ceiling 500 keeps page sizes and the
+    // follow-up IN(...) parameter lists bounded no matter what the caller asks for.
     let limit = match limit {
-        Some(n) if n > 0 => n,
+        Some(n) if n > 0 => n.min(500),
         _ => 200,
     };
-    let raws = query_transcript_page(&conn, target, since_id.unwrap_or(0), limit)?;
+    let raws = match since_id {
+        // Cursor poll: strictly-forward page from the cursor.
+        Some(since) => query_transcript_page(&conn, target, since, limit)?,
+        // Initial load: the NEWEST `limit` rows (tail), ascending for display. An oldest-first
+        // page here would show ancient history and the cursor would then re-deliver everything
+        // between it and the present.
+        None => query_transcript_tail(&conn, target, limit)?,
+    };
     let ids: Vec<i64> = raws.iter().map(|m| m.id).collect();
     let senders = dedup(raws.iter().map(|m| m.sender.clone()));
     let deliveries = query_delivery_counts(&conn, &ids)?;
@@ -310,11 +358,13 @@ fn transcript_at(
         .into_iter()
         .map(|m| finalize_message(m, &deliveries, &sender_kinds))
         .collect();
+    let floor = query_floor(&conn, target)?;
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
     Ok(Transcript {
         schema_ok: true,
         schema_version: version,
         messages,
-        floor: query_floor(&conn, target)?,
+        floor,
     })
 }
 
@@ -346,6 +396,28 @@ struct RawMessage {
     meta: Option<String>,
 }
 
+/// Newest `limit` rows for `target`, returned ascending: select the tail DESC, then reverse.
+fn query_transcript_tail(
+    conn: &Connection,
+    target: &str,
+    limit: i64,
+) -> Result<Vec<RawMessage>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, ts, sender, target, kind, tier, verified, body, reply_to, dispatch_id, meta \
+             FROM messages WHERE target = ?1 ORDER BY id DESC LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![target, limit], map_raw_message)
+        .map_err(|e| e.to_string())?;
+    let mut page = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    page.reverse();
+    Ok(page)
+}
+
 fn query_transcript_page(
     conn: &Connection,
     target: &str,
@@ -359,24 +431,26 @@ fn query_transcript_page(
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(rusqlite::params![target, since_id, limit], |r| {
-            Ok(RawMessage {
-                id: r.get("id")?,
-                ts: r.get("ts")?,
-                sender: r.get("sender")?,
-                target: r.get("target")?,
-                kind: r.get("kind")?,
-                tier: r.get("tier")?,
-                verified: r.get::<_, i64>("verified")? != 0,
-                body: r.get("body")?,
-                reply_to: r.get("reply_to")?,
-                dispatch_id: r.get("dispatch_id")?,
-                meta: r.get("meta")?,
-            })
-        })
+        .query_map(rusqlite::params![target, since_id, limit], map_raw_message)
         .map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.to_string())
+}
+
+fn map_raw_message(r: &rusqlite::Row) -> rusqlite::Result<RawMessage> {
+    Ok(RawMessage {
+        id: r.get("id")?,
+        ts: r.get("ts")?,
+        sender: r.get("sender")?,
+        target: r.get("target")?,
+        kind: r.get("kind")?,
+        tier: r.get("tier")?,
+        verified: r.get::<_, i64>("verified")? != 0,
+        body: r.get("body")?,
+        reply_to: r.get("reply_to")?,
+        dispatch_id: r.get("dispatch_id")?,
+        meta: r.get("meta")?,
+    })
 }
 
 /// `meta`'s `fromName`, or `None` on anything short of a perfect parse (missing/NULL meta,

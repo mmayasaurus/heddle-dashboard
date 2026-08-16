@@ -426,3 +426,39 @@ fn read_only_file_permissions_do_not_block_either_command() {
     let ts = transcript_at(&path, "@all", None, None);
     assert!(ts.is_ok(), "heddle_comms_transcript must succeed against a 0o444 file: {:?}", ts.err());
 }
+
+#[test]
+fn initial_load_returns_newest_tail_and_limit_is_capped_at_500() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA_SQL).unwrap();
+    conn.execute_batch(
+        "INSERT INTO participants (address, kind, first_seen, last_seen) \
+         VALUES ('R', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
+    )
+    .unwrap();
+    conn.execute_batch(
+        "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 510) \
+         INSERT INTO messages (ts, sender, target, kind, tier, verified, body) \
+         SELECT '2026-01-01T00:00:00.000Z', 'R', '#bulk', 'chat', 'agent-message', 0, 'm' || n FROM c;",
+    )
+    .unwrap();
+    drop(conn);
+
+    // sinceId:None is the INITIAL load — it must page from the newest end, ascending. An
+    // oldest-first page here would show ancient history and re-deliver everything via the cursor.
+    let tail = transcript_at(&path, "#bulk", None, Some(3)).unwrap();
+    let ids: Vec<i64> = tail.messages.iter().map(|m| m.id).collect();
+    assert_eq!(ids, vec![508, 509, 510], "newest 3, ascending for display");
+
+    // An absurd requested limit is clamped to 500 (bounds the page and the IN() param lists).
+    let capped = transcript_at(&path, "#bulk", None, Some(9_999)).unwrap();
+    assert_eq!(capped.messages.len(), 500, "ceiling must clamp the page size");
+    assert_eq!(capped.messages.last().unwrap().id, 510, "still anchored at the newest row");
+
+    // Cursor paging is unchanged: strictly-forward from the cursor, oldest-first.
+    let forward = transcript_at(&path, "#bulk", Some(505), Some(2)).unwrap();
+    let fids: Vec<i64> = forward.messages.iter().map(|m| m.id).collect();
+    assert_eq!(fids, vec![506, 507]);
+}
