@@ -132,6 +132,9 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "heddle_provider_usage",
   "heddle_provider_limits",
   "heddle_refresh_provider_limits",
+  // Fleet chatroom panel: read-only comms.db views (rooms/needs-human/transcript).
+  "heddle_comms_rooms",
+  "heddle_comms_transcript",
 ]);
 
 /** Invokes a backend command.
