@@ -183,21 +183,13 @@ fn user_path_dirs() -> Vec<PathBuf> {
 
 #[cfg(feature = "gui")]
 fn managed_cli_path(dir: &Path) -> PathBuf {
-    dir.join(if cfg!(windows) {
-        "heddle.cmd"
-    } else {
-        "heddle"
-    })
+    dir.join(if cfg!(windows) { "heddle.cmd" } else { "heddle" })
 }
 
 /// Where a pre-rename build would have written its shim; only ever read for cleanup.
 #[cfg(feature = "gui")]
 fn legacy_cli_path(dir: &Path) -> PathBuf {
-    dir.join(if cfg!(windows) {
-        "vela.cmd"
-    } else {
-        LEGACY_USER_CLI_NAME
-    })
+    dir.join(if cfg!(windows) { "vela.cmd" } else { LEGACY_USER_CLI_NAME })
 }
 
 #[cfg(feature = "gui")]
@@ -453,31 +445,20 @@ mod tests {
         // Every shim invokes its matching `$VLX_EXE` subcommand and is executable on Unix.
         for (name, subcmd) in SHIMS {
             let path = shim_path(&bin, name);
-            let written =
-                std::fs::read_to_string(&path).expect("the shim should be readable again");
-            assert!(
-                written.contains("VLX_EXE"),
-                "the {name} shim should delegate to VLX_EXE"
-            );
-            assert!(
-                written.contains(subcmd),
-                "the {name} shim should carry the {subcmd} subcommand"
-            );
+            let written = std::fs::read_to_string(&path).expect("the shim should be readable again");
+            assert!(written.contains("VLX_EXE"), "the {name} shim should delegate to VLX_EXE");
+            assert!(written.contains(subcmd), "the {name} shim should carry the {subcmd} subcommand");
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-                assert_eq!(
-                    mode & 0o111,
-                    0o111,
-                    "{name} should be executable for user, group and other"
-                );
+                assert_eq!(mode & 0o111, 0o111, "{name} should be executable for user, group and other");
             }
             // Windows also installs an extensionless shell wrapper for bare-name Git Bash invocation.
             #[cfg(windows)]
             {
-                let bash_shim = std::fs::read_to_string(bin.join(name))
-                    .expect("Windows should also have an extensionless shim");
+                let bash_shim =
+                    std::fs::read_to_string(bin.join(name)).expect("Windows should also have an extensionless shim");
                 assert!(
                     bash_shim.starts_with("#!/bin/sh"),
                     "the extensionless {name} shim should be an sh wrapper"
@@ -491,14 +472,8 @@ mod tests {
 
         // vspawn omits --worktree by default; vspawn-tree always includes it.
         let main = std::fs::read_to_string(shim_path(&bin, "vspawn")).unwrap();
-        assert!(
-            main.contains("--spawn"),
-            "vspawn should delegate to --spawn"
-        );
-        assert!(
-            !main.contains("--worktree"),
-            "vspawn should not carry --worktree by default"
-        );
+        assert!(main.contains("--spawn"), "vspawn should delegate to --spawn");
+        assert!(!main.contains("--worktree"), "vspawn should not carry --worktree by default");
         let tree = std::fs::read_to_string(shim_path(&bin, "vspawn-tree")).unwrap();
         assert!(
             tree.contains("--spawn --worktree"),

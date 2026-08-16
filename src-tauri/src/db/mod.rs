@@ -29,7 +29,10 @@ pub fn app_db_path(data_dir: &Path) -> PathBuf {
 }
 
 /// [`app_db_path`] with the copy step injectable, so the fallback branches are unit-testable.
-fn resolve_db_path(data_dir: &Path, copy: impl Fn(&Path, &Path) -> Result<(), String>) -> PathBuf {
+fn resolve_db_path(
+    data_dir: &Path,
+    copy: impl Fn(&Path, &Path) -> Result<(), String>,
+) -> PathBuf {
     let new = data_dir.join(DB_FILE);
     let legacy = data_dir.join(LEGACY_DB_FILE);
     if new.exists() || !legacy.exists() {
@@ -104,8 +107,7 @@ fn copy_legacy_db(legacy: &Path, new: &Path) -> Result<(), String> {
     let tmp = new.with_extension(format!("db.migrating.{}", std::process::id()));
     // Only ever our own incomplete artifact (same pid) from an interrupted earlier attempt.
     if tmp.exists() {
-        std::fs::remove_file(&tmp)
-            .map_err(|e| format!("cannot clear stale {}: {e}", tmp.display()))?;
+        std::fs::remove_file(&tmp).map_err(|e| format!("cannot clear stale {}: {e}", tmp.display()))?;
     }
     let src = Connection::open(legacy).map_err(|e| format!("open legacy db: {e}"))?;
     src.busy_timeout(std::time::Duration::from_secs(5))
@@ -350,18 +352,13 @@ mod tests {
         // A legacy WAL database with a row that has NOT been checkpointed into the main file.
         {
             let c = rusqlite::Connection::open(&legacy).unwrap();
-            c.execute_batch(
-                "PRAGMA journal_mode = WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);",
-            )
-            .unwrap();
+            c.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);")
+                .unwrap();
             // Keep the connection open (WAL not checkpointed) while migrating, like a live app would.
             assert_eq!(super::app_db_path(&dir), new);
             drop(c);
         }
-        assert!(
-            new.exists(),
-            "heddle.db must be created from the legacy file"
-        );
+        assert!(new.exists(), "heddle.db must be created from the legacy file");
         assert!(legacy.exists(), "legacy file must never be removed");
         let n = rusqlite::Connection::open(&new).unwrap();
         let x: i64 = n.query_row("SELECT x FROM t", [], |r| r.get(0)).unwrap();
@@ -375,15 +372,11 @@ mod tests {
         }
         assert_eq!(super::app_db_path(&dir), new);
         let n = rusqlite::Connection::open(&new).unwrap();
-        let cnt: i64 = n
-            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
-            .unwrap();
+        let cnt: i64 = n.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(cnt, 2, "an existing heddle.db must be used as-is");
         // Legacy content unchanged by everything above.
         let l = rusqlite::Connection::open(&legacy).unwrap();
-        let lcnt: i64 = l
-            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
-            .unwrap();
+        let lcnt: i64 = l.query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0)).unwrap();
         assert_eq!(lcnt, 1);
         drop((n, l));
     }
@@ -421,11 +414,7 @@ mod tests {
         let tmp = dir.join("heddle.db.migrating.999999");
         std::fs::write(&tmp, b"loser").unwrap();
         super::place_snapshot(&tmp, &new).unwrap();
-        assert_eq!(
-            std::fs::read(&new).unwrap(),
-            b"winner",
-            "existing heddle.db must be left alone"
-        );
+        assert_eq!(std::fs::read(&new).unwrap(), b"winner", "existing heddle.db must be left alone");
         assert!(!tmp.exists(), "the losing temp file must be removed");
         // And the normal path still publishes when nothing exists yet.
         let fresh = dir.join("fresh.db");
@@ -468,10 +457,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(
-            idx, 1,
-            "the idx_sessions_parent index should have been created"
-        );
+        assert_eq!(idx, 1, "the idx_sessions_parent index should have been created");
 
         // A repeated migration remains error-free.
         migrate(&conn).unwrap();

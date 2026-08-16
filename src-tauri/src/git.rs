@@ -1782,15 +1782,12 @@ mod merge_tests {
         use std::net::TcpListener;
         use std::sync::mpsc;
 
-        let listener =
-            TcpListener::bind("127.0.0.1:0").expect("binding a loopback port should work");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binding a loopback port should work");
         let addr = listener.local_addr().unwrap();
         let (accepted_tx, accepted_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let server = std::thread::spawn(move || {
-            let (_socket, _) = listener
-                .accept()
-                .expect("git should connect to the test HTTP endpoint");
+            let (_socket, _) = listener.accept().expect("git should connect to the test HTTP endpoint");
             accepted_tx.send(()).ok();
             let _ = release_rx.recv_timeout(Duration::from_secs(10));
         });
@@ -1848,8 +1845,7 @@ mod merge_tests {
         let parent_str = parent.to_string_lossy().to_string();
 
         // Clone the default branch under a custom directory name.
-        let cloned = clone_to(&src_str, &parent_str, Some("myrepo"), None)
-            .expect("the clone should succeed");
+        let cloned = clone_to(&src_str, &parent_str, Some("myrepo"), None).expect("the clone should succeed");
         assert!(std::path::Path::new(&cloned).join("a.txt").is_file());
         assert!(std::path::Path::new(&cloned).join(".git").exists());
 
@@ -1890,24 +1886,17 @@ mod merge_tests {
         assert!(list.is_repo);
         assert_eq!(list.current.as_deref(), Some("main"));
         let main = list.branches.iter().find(|b| b.name == "main").unwrap();
-        assert!(
-            main.checkout_dir.is_some(),
-            "main should have a checkout directory"
-        );
+        assert!(main.checkout_dir.is_some(), "main should have a checkout directory");
         let feat = list.branches.iter().find(|b| b.name == short).unwrap();
         // Compare canonical paths to account for macOS /var -> /private/var.
         let want = std::fs::canonicalize(&wt.path).unwrap();
         let got = std::fs::canonicalize(feat.checkout_dir.as_deref().unwrap()).unwrap();
-        assert_eq!(
-            got, want,
-            "a worktree branch's checkout directory is the worktree path"
-        );
+        assert_eq!(got, want, "a worktree branch's checkout directory is the worktree path");
 
         // A non-repository returns is_repo=false and an empty list without error.
         let plain = std::env::temp_dir().join(format!("vlx-plain-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&plain).unwrap();
-        let none = branch_list(&plain.to_string_lossy())
-            .expect("a non-repository should still return normally");
+        let none = branch_list(&plain.to_string_lossy()).expect("a non-repository should still return normally");
         assert!(!none.is_repo && none.branches.is_empty());
 
         let _ = worktree_remove(&wt.path, true);
@@ -1923,8 +1912,7 @@ mod merge_tests {
         let repo = init_repo();
         let repo_str = repo.to_string_lossy().to_string();
 
-        let wt =
-            worktree_add(&repo_str, "feature x").expect("creating the worktree should succeed");
+        let wt = worktree_add(&repo_str, "feature x").expect("creating the worktree should succeed");
         // worktree_add still records the creation baseline even though unified merge does not read it.
         assert_eq!(
             wt.base_ref, "refs/heads/main",
@@ -1933,54 +1921,25 @@ mod merge_tests {
 
         // Preflight must mark an uncommitted b.txt dirty and include it through the temporary index.
         std::fs::write(PathBuf::from(&wt.path).join("b.txt"), "world\n").unwrap();
-        let pre = merge_branches_preview(&repo_str, &wt.branch, "main")
-            .expect("the preview should succeed");
-        assert!(
-            pre.available,
-            "main is checked out in the main repository, so merging is possible"
-        );
-        assert!(
-            pre.source_dirty,
-            "uncommitted changes in the source working tree should be detected"
-        );
-        assert!(
-            !pre.up_to_date,
-            "uncommitted changes mean it is not up to date"
-        );
-        assert!(
-            pre.diff_stat.contains("b.txt"),
-            "the diff summary should mention b.txt"
-        );
+        let pre = merge_branches_preview(&repo_str, &wt.branch, "main").expect("the preview should succeed");
+        assert!(pre.available, "main is checked out in the main repository, so merging is possible");
+        assert!(pre.source_dirty, "uncommitted changes in the source working tree should be detected");
+        assert!(!pre.up_to_date, "uncommitted changes mean it is not up to date");
+        assert!(pre.diff_stat.contains("b.txt"), "the diff summary should mention b.txt");
         let want_dir = std::fs::canonicalize(&repo).unwrap();
         let got_dir = std::fs::canonicalize(pre.target_dir.as_deref().unwrap()).unwrap();
-        assert_eq!(
-            got_dir, want_dir,
-            "the merge runs in the main repository where main lives"
-        );
+        assert_eq!(got_dir, want_dir, "the merge runs in the main repository where main lives");
 
         // Apply commits then merges; main receives b.txt while the worktree/branch remain.
-        let outcome = merge_branches_apply(&repo_str, &wt.branch, "main", Some("add b"))
-            .expect("the merge should succeed");
-        assert!(
-            outcome.merged && !outcome.conflict,
-            "the merge should have succeeded"
-        );
-        assert!(
-            repo.join("b.txt").exists(),
-            "after the merge the main repository should contain b.txt"
-        );
-        assert!(
-            PathBuf::from(&wt.path).exists(),
-            "the new flow does not clean up the worktree"
-        );
+        let outcome =
+            merge_branches_apply(&repo_str, &wt.branch, "main", Some("add b")).expect("the merge should succeed");
+        assert!(outcome.merged && !outcome.conflict, "the merge should have succeeded");
+        assert!(repo.join("b.txt").exists(), "after the merge the main repository should contain b.txt");
+        assert!(PathBuf::from(&wt.path).exists(), "the new flow does not clean up the worktree");
 
         // A subsequent preflight reports up to date.
-        let pre2 = merge_branches_preview(&repo_str, &wt.branch, "main")
-            .expect("the second preview should succeed");
-        assert!(
-            pre2.up_to_date,
-            "after merging it should be reported as up to date"
-        );
+        let pre2 = merge_branches_preview(&repo_str, &wt.branch, "main").expect("the second preview should succeed");
+        assert!(pre2.up_to_date, "after merging it should be reported as up to date");
 
         worktree_remove(&wt.path, true).expect("removing the worktree should succeed");
         branch_delete(&repo_str, &wt.branch).expect("deleting the branch should succeed");
@@ -1994,50 +1953,28 @@ mod merge_tests {
         let repo = init_repo();
         let repo_str = repo.to_string_lossy().to_string();
 
-        let wt =
-            worktree_add(&repo_str, "feature y").expect("creating the worktree should succeed");
+        let wt = worktree_add(&repo_str, "feature y").expect("creating the worktree should succeed");
 
         // Add c.txt on main so the worktree falls behind.
         std::fs::write(repo.join("c.txt"), "parent-new\n").unwrap();
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-q", "-m", "main adds c"]);
 
-        let pre = merge_branches_preview(&repo_str, "main", &wt.branch)
-            .expect("the preview should succeed");
-        assert!(
-            pre.available,
-            "the worktree branch is checked out, so merging is possible"
-        );
-        assert!(
-            !pre.up_to_date,
-            "the worktree is behind, so it is not up to date"
-        );
-        assert!(
-            !pre.source_dirty && !pre.target_dirty,
-            "both sides should be clean"
-        );
-        assert!(
-            pre.diff_stat.contains("c.txt"),
-            "the diff summary should mention c.txt"
-        );
+        let pre = merge_branches_preview(&repo_str, "main", &wt.branch).expect("the preview should succeed");
+        assert!(pre.available, "the worktree branch is checked out, so merging is possible");
+        assert!(!pre.up_to_date, "the worktree is behind, so it is not up to date");
+        assert!(!pre.source_dirty && !pre.target_dirty, "both sides should be clean");
+        assert!(pre.diff_stat.contains("c.txt"), "the diff summary should mention c.txt");
 
-        let out = merge_branches_apply(&repo_str, "main", &wt.branch, None)
-            .expect("the merge should succeed");
-        assert!(
-            out.merged && !out.conflict,
-            "the merge should have succeeded"
-        );
+        let out = merge_branches_apply(&repo_str, "main", &wt.branch, None).expect("the merge should succeed");
+        assert!(out.merged && !out.conflict, "the merge should have succeeded");
         assert!(
             PathBuf::from(&wt.path).join("c.txt").exists(),
             "after the merge the worktree should contain c.txt"
         );
 
-        let pre2 = merge_branches_preview(&repo_str, "main", &wt.branch)
-            .expect("the second preview should succeed");
-        assert!(
-            pre2.up_to_date,
-            "after merging it should be reported as up to date"
-        );
+        let pre2 = merge_branches_preview(&repo_str, "main", &wt.branch).expect("the second preview should succeed");
+        assert!(pre2.up_to_date, "after merging it should be reported as up to date");
 
         worktree_remove(&wt.path, true).expect("removing the worktree should succeed");
         branch_delete(&repo_str, &wt.branch).expect("deleting the branch should succeed");
@@ -2058,12 +1995,9 @@ mod merge_tests {
         std::fs::write(repo.join("a.txt"), "from-parent\n").unwrap();
         git(&repo, &["commit", "-q", "-am", "parent edit"]);
 
-        let outcome = merge_branches_apply(&repo_str, &wt.branch, "main", None)
-            .expect("the command itself should return");
-        assert!(
-            outcome.conflict && !outcome.merged,
-            "a conflict should be detected"
-        );
+        let outcome =
+            merge_branches_apply(&repo_str, &wt.branch, "main", None).expect("the command itself should return");
+        assert!(outcome.conflict && !outcome.merged, "a conflict should be detected");
         assert!(
             outcome.conflicts.iter().any(|f| f.contains("a.txt")),
             "the conflicting files should include a.txt"
@@ -2086,37 +2020,27 @@ mod merge_tests {
         let repo = init_repo();
         let repo_str = repo.to_string_lossy().to_string();
 
-        let wt =
-            worktree_add(&repo_str, "no target").expect("creating the worktree should succeed");
+        let wt = worktree_add(&repo_str, "no target").expect("creating the worktree should succeed");
         // Switch the main repository away so main is no longer checked out anywhere.
         git(&repo, &["checkout", "-q", "-b", "other"]);
 
-        let pre = merge_branches_preview(&repo_str, &wt.branch, "main")
-            .expect("the preview should return");
-        assert!(
-            !pre.available,
-            "the target is not checked out, so merging is impossible"
-        );
+        let pre = merge_branches_preview(&repo_str, &wt.branch, "main").expect("the preview should return");
+        assert!(!pre.available, "the target is not checked out, so merging is impossible");
         assert_eq!(pre.reason, "target_not_checked_out");
         assert!(pre.target_dir.is_none());
 
         let err = merge_branches_apply(&repo_str, &wt.branch, "main", None)
             .expect_err("an unchecked-out target should be refused");
-        assert!(
-            err.contains("main"),
-            "the message should name the target branch"
-        );
+        assert!(err.contains("main"), "the message should name the target branch");
 
         // Identical branch.
-        let same =
-            merge_branches_preview(&repo_str, "main", "main").expect("the preview should return");
+        let same = merge_branches_preview(&repo_str, "main", "main").expect("the preview should return");
         assert!(!same.available);
         assert_eq!(same.reason, "same_branch");
         assert!(merge_branches_apply(&repo_str, "main", "main", None).is_err());
 
         // Missing branch.
-        let gone = merge_branches_preview(&repo_str, "no-such", "main")
-            .expect("the preview should return");
+        let gone = merge_branches_preview(&repo_str, "no-such", "main").expect("the preview should return");
         assert!(!gone.available);
         assert_eq!(gone.reason, "branch_not_found");
 
@@ -2133,23 +2057,13 @@ mod merge_tests {
         let wt = worktree_add(&repo_str, "land x").expect("creating the worktree should succeed");
         std::fs::write(PathBuf::from(&wt.path).join("b.txt"), "world\n").unwrap();
 
-        let targets =
-            land_targets(Some(&wt.base_ref), &wt.path).expect("the landing preview should succeed");
+        let targets = land_targets(Some(&wt.base_ref), &wt.path).expect("the landing preview should succeed");
         assert_eq!(targets.base_branch, "main");
         assert_eq!(targets.branch, wt.branch);
-        assert!(
-            targets.has_uncommitted,
-            "uncommitted changes should be detected"
-        );
-        assert!(
-            targets.diff_stat.contains("b.txt"),
-            "the diff summary should mention b.txt"
-        );
+        assert!(targets.has_uncommitted, "uncommitted changes should be detected");
+        assert!(targets.diff_stat.contains("b.txt"), "the diff summary should mention b.txt");
         let local = targets.providers.iter().find(|p| p.id == "local").unwrap();
-        assert!(
-            local.available,
-            "main is checked out in the main repository, so it is available"
-        );
+        assert!(local.available, "main is checked out in the main repository, so it is available");
 
         let _ = worktree_remove(&wt.path, true);
         let _ = branch_delete(&repo_str, &wt.branch);

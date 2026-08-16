@@ -854,10 +854,7 @@ mod tests {
         );
 
         assert_eq!(waits, 30);
-        assert!(
-            got,
-            "a candidate that appears and is claimed successfully should return true"
-        );
+        assert!(got, "a candidate that appears and is claimed successfully should return true");
         assert_eq!(claimed_id.as_deref(), Some("late-id"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -875,10 +872,7 @@ mod tests {
             |_| false,
         );
 
-        assert!(
-            !got,
-            "once the PTY has ended with nothing claimed it should return false"
-        );
+        assert!(!got, "once the PTY has ended with nothing claimed it should return false");
         assert!(!slept, "polling should stop once the PTY has ended");
     }
 

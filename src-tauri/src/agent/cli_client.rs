@@ -252,8 +252,7 @@ mod tests {
 
     #[test]
     fn parse_spawn_flags() {
-        let SpawnParse::Ok(p) =
-            parse_spawn_args(&args(&["--worktree", "--codex", "do", "something"]))
+        let SpawnParse::Ok(p) = parse_spawn_args(&args(&["--worktree", "--codex", "do", "something"]))
         else {
             panic!("parsing should succeed");
         };
@@ -299,10 +298,7 @@ mod tests {
         assert_eq!(v["parentSessionId"], "p1");
         assert_eq!(v["prompt"], "fix a bug");
         assert_eq!(v["worktree"], false);
-        assert!(
-            v.get("kind").is_none(),
-            "the field should be omitted when kind is empty"
-        );
+        assert!(v.get("kind").is_none(), "the field should be omitted when kind is empty");
     }
 
     #[test]

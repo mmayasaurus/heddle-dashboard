@@ -565,11 +565,7 @@ mod tests {
         s.ingest(b" world");
 
         let chunks = got.lock().unwrap().clone();
-        assert_eq!(
-            chunks.len(),
-            3,
-            "expected a prelude, a snapshot and a live chunk"
-        );
+        assert_eq!(chunks.len(), 3, "expected a prelude, a snapshot and a live chunk");
         // Prelude is sorted by mode number regardless of ingest order.
         assert_eq!(chunks[0], b"\x1b[?1000h\x1b[?1049h");
         assert_eq!(chunks[1], b"\x1b[?1049h\x1b[?1000hhello");

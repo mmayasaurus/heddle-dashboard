@@ -109,8 +109,7 @@ mod tests {
 
     #[test]
     fn hooks_json_is_valid_and_maps_events() {
-        let v: serde_json::Value =
-            serde_json::from_str(&hooks_json()).expect("should be valid JSON");
+        let v: serde_json::Value = serde_json::from_str(&hooks_json()).expect("should be valid JSON");
         assert_eq!(v["version"], 1);
         let hooks = v["hooks"].as_object().unwrap();
         // Every event is present.
@@ -146,10 +145,7 @@ mod tests {
         // Hook commands read VLX variables, no-op when absent, and always exit zero on failure.
         let bash = hooks["agentStop"][0]["bash"].as_str().unwrap();
         assert!(bash.contains("VLX_SPAWN_URL") && bash.contains("VLX_SESSION_ID"));
-        assert!(
-            bash.starts_with("[ -n"),
-            "the variable guard should come first"
-        );
+        assert!(bash.starts_with("[ -n"), "the variable guard should come first");
         assert!(bash.ends_with("exit 0"), "it should fall back to exit 0");
         // Forward stdin unchanged because session-ID capture depends on it.
         assert!(bash.contains("--data-binary @-"));

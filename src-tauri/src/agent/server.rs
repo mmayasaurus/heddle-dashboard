@@ -749,14 +749,8 @@ mod tests {
     #[test]
     fn parse_url_rejects_wrong_path() {
         assert!(parse_url("/other/abc?t=x&e=y").is_none());
-        assert!(
-            parse_url("/hook/?t=x&e=y").is_none(),
-            "an empty sid should be rejected"
-        );
-        assert!(
-            parse_url("/hook/a/b?t=x&e=y").is_none(),
-            "an sid must not contain /"
-        );
+        assert!(parse_url("/hook/?t=x&e=y").is_none(), "an empty sid should be rejected");
+        assert!(parse_url("/hook/a/b?t=x&e=y").is_none(), "an sid must not contain /");
     }
 
     #[test]
@@ -780,10 +774,7 @@ mod tests {
             match sig {
                 Some(StatusSignal::State { state, silent, .. }) => {
                     assert_eq!(state, expect);
-                    assert!(
-                        !silent,
-                        "working, asking and waiting should all notify rather than stay silent"
-                    );
+                    assert!(!silent, "working, asking and waiting should all notify rather than stay silent");
                 }
                 _ => panic!("expected a State signal"),
             }
@@ -792,8 +783,8 @@ mod tests {
 
     #[test]
     fn handle_marks_codex_lifecycle_events_authoritative() {
-        let (_, ready) = handle("/hook/c1?t=tok&e=codex_ready", "tok")
-            .expect("the Codex startup handshake should be valid");
+        let (_, ready) =
+            handle("/hook/c1?t=tok&e=codex_ready", "tok").expect("the Codex startup handshake should be valid");
         assert!(
             matches!(ready, Some(StatusSignal::HookReady)),
             "SessionStart may only produce a health handshake, never a fabricated completion state"
@@ -816,10 +807,7 @@ mod tests {
                 }) => {
                     assert_eq!(state, expected);
                     assert!(!silent);
-                    assert!(
-                        authoritative,
-                        "a complete set of Codex hooks must lock into authoritative mode"
-                    );
+                    assert!(authoritative, "a complete set of Codex hooks must lock into authoritative mode");
                 }
                 _ => panic!("expected a fully authoritative State signal"),
             }
@@ -862,16 +850,12 @@ mod tests {
     #[test]
     fn handle_idle_is_silent_waiting() {
         // Claude idle maps silently to waiting: correct status without notifying.
-        let (sid, sig) =
-            handle("/hook/s1?t=tok&e=idle", "tok").expect("idle should be a valid event");
+        let (sid, sig) = handle("/hook/s1?t=tok&e=idle", "tok").expect("idle should be a valid event");
         assert_eq!(sid, "s1");
         match sig {
             Some(StatusSignal::State { state, silent, .. }) => {
                 assert_eq!(state, AgentState::Waiting);
-                assert!(
-                    silent,
-                    "idle should stay silent and raise no replied notification"
-                );
+                assert!(silent, "idle should stay silent and raise no replied notification");
             }
             _ => panic!("idle should map to a State signal"),
         }
@@ -880,8 +864,7 @@ mod tests {
     #[test]
     fn handle_boot_is_capture_only() {
         // Copilot sessionStart boot is valid but emits no status; it only captures the body ID.
-        let (sid, sig) =
-            handle("/hook/s1?t=tok&e=boot", "tok").expect("boot should be a valid event");
+        let (sid, sig) = handle("/hook/s1?t=tok&e=boot", "tok").expect("boot should be a valid event");
         assert_eq!(sid, "s1");
         assert!(sig.is_none(), "boot should produce no state signal");
         // Still reject an invalid token.
@@ -891,8 +874,7 @@ mod tests {
     #[test]
     fn handle_notfound_is_agent_missing() {
         // notfound maps to AgentMissing so the frontend can show installation guidance.
-        let (sid, sig) =
-            handle("/hook/s1?t=tok&e=notfound", "tok").expect("notfound should be a valid event");
+        let (sid, sig) = handle("/hook/s1?t=tok&e=notfound", "tok").expect("notfound should be a valid event");
         assert_eq!(sid, "s1");
         assert!(
             matches!(sig, Some(StatusSignal::AgentMissing)),
@@ -922,10 +904,7 @@ mod tests {
             "会话12",
             "セッション 2",
         ] {
-            assert!(
-                is_auto_name(name),
-                "{name} should count as an auto-numbered name"
-            );
+            assert!(is_auto_name(name), "{name} should count as an auto-numbered name");
         }
         // User/other names do not match, including words such as `Pilot 3` that merely start with Pi.
         for name in [
@@ -938,10 +917,7 @@ mod tests {
             "Pi",
             "",
         ] {
-            assert!(
-                !is_auto_name(name),
-                "{name} should not count as an auto-numbered name"
-            );
+            assert!(!is_auto_name(name), "{name} should not count as an auto-numbered name");
         }
     }
 
@@ -974,7 +950,8 @@ mod tests {
 
     #[test]
     fn parse_spawn_extracts_and_validates() {
-        let body = r#"{"parentSessionId":"p1","prompt":"fix the login bug","kind":"claude","worktree":true}"#;
+        let body =
+            r#"{"parentSessionId":"p1","prompt":"fix the login bug","kind":"claude","worktree":true}"#;
         let req = parse_spawn("/spawn?t=tok", body, "tok").expect("should parse");
         assert_eq!(req.parent_session_id, "p1");
         assert_eq!(req.prompt, "fix the login bug");
@@ -1030,13 +1007,9 @@ mod tests {
             r#"{{"sessionId":"s1","path":"{name}","cwd":"{}"}}"#,
             dir.display()
         );
-        let req = parse_view("/view?t=tok", &body, "tok")
-            .expect("a relative path should resolve against cwd");
+        let req = parse_view("/view?t=tok", &body, "tok").expect("a relative path should resolve against cwd");
         assert_eq!(req.session_id, "s1");
-        assert_eq!(
-            req.path, abs,
-            "the canonicalized absolute path should be returned"
-        );
+        assert_eq!(req.path, abs, "the canonicalized absolute path should be returned");
 
         // Use absolute paths directly without joining cwd.
         let body_abs = format!(r#"{{"sessionId":"s1","path":"{abs}","cwd":"/elsewhere"}}"#);
@@ -1049,8 +1022,7 @@ mod tests {
     fn parse_view_passes_through_http_urls() {
         // HTTP(S) URLs bypass file checks and set is_url for the built-in browser.
         let body = r#"{"sessionId":"s1","path":"https://github.com/a/b?x=1","cwd":"/tmp"}"#;
-        let req = parse_view("/view?t=tok", body, "tok")
-            .expect("a URL should be passed straight through");
+        let req = parse_view("/view?t=tok", body, "tok").expect("a URL should be passed straight through");
         assert!(req.is_url);
         assert_eq!(req.path, "https://github.com/a/b?x=1");
 
@@ -1262,10 +1234,7 @@ mod tests {
         // Collect authoritative signals, including working on submit and waiting on completion.
         let mut states = Vec::new();
         while let Ok((got_sid, sig)) = rx.recv_timeout(Duration::from_secs(5)) {
-            assert_eq!(
-                got_sid, sid,
-                "the session id in the URL should come back verbatim"
-            );
+            assert_eq!(got_sid, sid, "the session id in the URL should come back verbatim");
             if let StatusSignal::State { state, .. } = sig {
                 states.push(state);
             }
@@ -1286,14 +1255,8 @@ mod tests {
         let (vlx_sid, agent_sid) = rx_sid
             .recv_timeout(Duration::from_secs(5))
             .expect("a claude session_id should be parsed out of the hook body");
-        assert_eq!(
-            vlx_sid, sid,
-            "the vlx session id in the callback should match the URL"
-        );
-        assert!(
-            !agent_sid.is_empty(),
-            "the claude session_id must not be empty"
-        );
+        assert_eq!(vlx_sid, sid, "the vlx session id in the callback should match the URL");
+        assert!(!agent_sid.is_empty(), "the claude session_id must not be empty");
     }
 
     #[test]
@@ -1338,10 +1301,7 @@ mod tests {
     fn parse_first_prompt_from_supported_prompt_events() {
         // Extract and trim prompt from UserPromptSubmit.
         let body = r#"{"session_id":"s","hook_event_name":"UserPromptSubmit","prompt":"  Fix the login page styling  "}"#;
-        assert_eq!(
-            parse_first_prompt(body).as_deref(),
-            Some("Fix the login page styling")
-        );
+        assert_eq!(parse_first_prompt(body).as_deref(), Some("Fix the login page styling"));
         // Kiro spells the event `userPromptSubmit`; payload captured from kiro-cli 2.16.2.
         let kiro = r#"{"hook_event_name":"userPromptSubmit","cwd":"/tmp","prompt":"say OK"}"#;
         assert_eq!(parse_first_prompt(kiro).as_deref(), Some("say OK"));
@@ -1350,22 +1310,13 @@ mod tests {
         assert_eq!(parse_first_prompt(spawn), None);
         // Cursor beforeSubmitPrompt forwards an equivalent payload.
         let cursor = r#"{"conversation_id":"c","session_id":"c","hook_event_name":"beforeSubmitPrompt","prompt":"Fix the login timeout","attachments":[]}"#;
-        assert_eq!(
-            parse_first_prompt(cursor).as_deref(),
-            Some("Fix the login timeout")
-        );
+        assert_eq!(parse_first_prompt(cursor).as_deref(), Some("Fix the login timeout"));
         // Grok uses camelCase field names and a snake-case lifecycle value.
         let grok = r#"{"hookEventName":"user_prompt_submit","sessionId":"g","prompt":"  Fix the Grok clone  "}"#;
-        assert_eq!(
-            parse_first_prompt(grok).as_deref(),
-            Some("Fix the Grok clone")
-        );
+        assert_eq!(parse_first_prompt(grok).as_deref(), Some("Fix the Grok clone"));
         // Cline prompt_submit stores text in nested userPromptSubmit.prompt.
         let cline = r#"{"clineVersion":"3.0.34","hookName":"prompt_submit","taskId":"t1","userPromptSubmit":{"prompt":"  Refactor the login module  "}}"#;
-        assert_eq!(
-            parse_first_prompt(cline).as_deref(),
-            Some("Refactor the login module")
-        );
+        assert_eq!(parse_first_prompt(cline).as_deref(), Some("Refactor the login module"));
         // Codex notify uses the first nonempty input-messages item on turn completion.
         let codex = r#"{"type":"agent-turn-complete","thread-id":"c1","input-messages":["  ","  Name Codex sessions automatically  "],"last-assistant-message":"done"}"#;
         assert_eq!(

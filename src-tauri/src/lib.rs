@@ -13,12 +13,12 @@ mod command_core;
 #[cfg(feature = "gui")]
 mod commands;
 // heddle orchestration stats (Fleet drawer): ccusage caps + dispatch ledger, read-only.
+#[cfg(feature = "gui")]
+mod heddle_stats;
 mod db;
 mod files;
 mod git;
 mod gitea;
-#[cfg(feature = "gui")]
-mod heddle_stats;
 mod host;
 mod models;
 mod procstat;
@@ -1269,8 +1269,7 @@ mod tests {
         assert!(got.local_http);
         assert!(!got.lan_http);
         // Omitting the flag leaves it false.
-        let got =
-            parse_serve_args(&argv(&["--password", "pw"]), None).expect("parsing should succeed");
+        let got = parse_serve_args(&argv(&["--password", "pw"]), None).expect("parsing should succeed");
         assert!(!got.local_http);
         assert!(!got.lan_http);
     }
@@ -1278,8 +1277,8 @@ mod tests {
     #[test]
     fn parse_serve_args_lan_http_flag() {
         // --lan-http independently enables mobile-shell LAN plaintext.
-        let got = parse_serve_args(&argv(&["--lan-http", "--password", "pw"]), None)
-            .expect("parsing should succeed");
+        let got =
+            parse_serve_args(&argv(&["--lan-http", "--password", "pw"]), None).expect("parsing should succeed");
         assert!(got.lan_http);
         assert!(!got.local_http);
     }
@@ -1287,8 +1286,7 @@ mod tests {
     #[test]
     fn parse_serve_args_defaults_and_env_password() {
         // Without --password use the environment; port defaults to 8799 and data_dir to None.
-        let got =
-            parse_serve_args(&argv(&[]), Some("env-pw".into())).expect("parsing should succeed");
+        let got = parse_serve_args(&argv(&[]), Some("env-pw".into())).expect("parsing should succeed");
         assert_eq!(got.port, 8799);
         assert_eq!(got.password, "env-pw");
         assert_eq!(got.data_dir, None);

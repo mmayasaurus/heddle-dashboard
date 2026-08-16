@@ -96,7 +96,11 @@ fn kiro_home() -> Option<PathBuf> {
 
 /// Forwarding script path: `<kiro_home>/vlx-term/hook.ps1` on Windows or `hook.sh` elsewhere.
 fn script_path(home: &Path) -> PathBuf {
-    let name = if cfg!(windows) { "hook.ps1" } else { "hook.sh" };
+    let name = if cfg!(windows) {
+        "hook.ps1"
+    } else {
+        "hook.sh"
+    };
     home.join("vlx-term").join(name)
 }
 
@@ -228,7 +232,11 @@ pub fn install() -> Result<String, String> {
 /// Like [`install`], with an explicit Kiro home so tests can run against a temporary directory.
 fn install_at(home: &Path) -> Result<String, String> {
     let script = script_path(home);
-    let body = if cfg!(windows) { PS1_SCRIPT } else { SH_SCRIPT };
+    let body = if cfg!(windows) {
+        PS1_SCRIPT
+    } else {
+        SH_SCRIPT
+    };
     write_if_changed(&script, body)?;
     #[cfg(unix)]
     {
@@ -372,10 +380,7 @@ mod tests {
 
     #[test]
     fn hook_command_quotes_paths_with_spaces() {
-        let command = hook_command(
-            Path::new("/Users/a b/.kiro/vlx-term/hook.sh"),
-            "kiro_working",
-        );
+        let command = hook_command(Path::new("/Users/a b/.kiro/vlx-term/hook.sh"), "kiro_working");
         if cfg!(windows) {
             assert!(command.contains("\"/Users/a b/.kiro/vlx-term/hook.sh\""));
         } else {

@@ -521,10 +521,7 @@ mod tests {
         assert_eq!(hits.len(), 1);
         let h = &hits[0];
         assert_eq!(h.source, "transcript");
-        assert_eq!(
-            h.match_count, 1,
-            "only a message containing both terms counts as a hit"
-        );
+        assert_eq!(h.match_count, 1, "only a message containing both terms counts as a hit");
         assert_eq!(h.matches[0].message_index, Some(3));
         assert!(h.matches[0].snippet.contains("数据库") || h.matches[0].snippet.contains("配置"));
     }
@@ -610,11 +607,7 @@ mod tests {
 
         let dir = std::path::Path::new("/no/such/dir");
         let live = search_sessions(&db, dir, "deploy", SearchScope::Live).unwrap();
-        assert_eq!(
-            live.len(),
-            1,
-            "Live returns only sessions that are not archived"
-        );
+        assert_eq!(live.len(), 1, "Live returns only sessions that are not archived");
         assert_eq!(live[0].session_id, "live1");
         assert!(!live[0].archived);
 
@@ -630,11 +623,7 @@ mod tests {
         insert_fts(&db, "live1", "recording", None, 1, "查看配置");
         insert_fts(&db, "arch1", "recording", None, 1, "修改配置");
         let live_like = search_sessions(&db, dir, "配置", SearchScope::Live).unwrap();
-        assert_eq!(
-            live_like.len(),
-            1,
-            "the LIKE fallback filters by scope as well"
-        );
+        assert_eq!(live_like.len(), 1, "the LIKE fallback filters by scope as well");
         assert_eq!(live_like[0].session_id, "live1");
     }
 }

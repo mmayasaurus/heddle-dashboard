@@ -295,9 +295,7 @@ impl PtyManager {
             }
             std::thread::sleep(SPAWN_WAIT_POLL);
         };
-        let first_sink = first_sink
-            .take()
-            .expect("the sink has not been consumed since the slot was reserved");
+        let first_sink = first_sink.take().expect("the sink has not been consumed since the slot was reserved");
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -1993,10 +1991,7 @@ mod tests {
 
         // Bell and prompt signals are not snapshot state.
         mgr.cache_status("s1", &json!({"kind": "bell"}));
-        mgr.cache_status(
-            "s1",
-            &json!({"kind": "prompt", "text": "the first message"}),
-        );
+        mgr.cache_status("s1", &json!({"kind": "prompt", "text": "the first message"}));
         assert!(mgr.status_snapshot("s1").is_empty());
 
         // Overwrite state while preserving replay order: agent first, latest state second.
@@ -2034,8 +2029,7 @@ mod tests {
         let data_dir =
             std::env::temp_dir().join(format!("vlx-spawn-race-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&data_dir).expect("failed to create the temporary directory");
-        let db = crate::db::Db::open(&data_dir.join("test.db"))
-            .expect("failed to open the test database");
+        let db = crate::db::Db::open(&data_dir.join("test.db")).expect("failed to open the test database");
         let app = AppCtx::Headless(Arc::new(HeadlessHost::new(data_dir.clone(), db)));
 
         let mgr = Arc::new(super::PtyManager::new());
@@ -2082,14 +2076,8 @@ mod tests {
             .into_iter()
             .map(|r| r.expect("concurrent spawns should not fail"))
             .collect();
-        assert_eq!(
-            oks[0].pid, oks[1].pid,
-            "both clients should share the same process"
-        );
-        assert_ne!(
-            oks[0].sub_id, oks[1].sub_id,
-            "each client should have its own subscription"
-        );
+        assert_eq!(oks[0].pid, oks[1].pid, "both clients should share the same process");
+        assert_ne!(oks[0].sub_id, oks[1].sub_id, "each client should have its own subscription");
 
         // The manager contains one session with both subscribers and no overwritten duplicate process.
         {
@@ -2117,8 +2105,7 @@ mod tests {
         let data_dir =
             std::env::temp_dir().join(format!("vlx-attach-size-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&data_dir).expect("failed to create the temporary directory");
-        let db = crate::db::Db::open(&data_dir.join("test.db"))
-            .expect("failed to open the test database");
+        let db = crate::db::Db::open(&data_dir.join("test.db")).expect("failed to open the test database");
         let app = AppCtx::Headless(Arc::new(HeadlessHost::new(data_dir.clone(), db)));
 
         let mgr = super::PtyManager::new();
@@ -2198,8 +2185,7 @@ mod tests {
         let data_dir =
             std::env::temp_dir().join(format!("vlx-attach-only-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&data_dir).expect("failed to create the temporary directory");
-        let db = crate::db::Db::open(&data_dir.join("test.db"))
-            .expect("failed to open the test database");
+        let db = crate::db::Db::open(&data_dir.join("test.db")).expect("failed to open the test database");
         let app = AppCtx::Headless(Arc::new(HeadlessHost::new(data_dir.clone(), db)));
 
         let mgr = super::PtyManager::new();
@@ -2257,8 +2243,7 @@ mod tests {
         let data_dir =
             std::env::temp_dir().join(format!("vlx-detach-owner-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&data_dir).expect("failed to create the temporary directory");
-        let db = crate::db::Db::open(&data_dir.join("test.db"))
-            .expect("failed to open the test database");
+        let db = crate::db::Db::open(&data_dir.join("test.db")).expect("failed to open the test database");
         let app = AppCtx::Headless(Arc::new(HeadlessHost::new(data_dir.clone(), db)));
 
         let mgr = super::PtyManager::new();
@@ -2341,11 +2326,7 @@ mod tests {
         mgr.detach(&app, "own-1", first.sub_id, "ws-1");
         assert_eq!(owner_of(&mgr), None);
         let got = events.lock().unwrap().clone();
-        assert_eq!(
-            got.len(),
-            1,
-            "the owner leaving should broadcast Resized exactly once"
-        );
+        assert_eq!(got.len(), 1, "the owner leaving should broadcast Resized exactly once");
         assert_eq!(got[0]["cols"], 100);
         assert_eq!(got[0]["rows"], 30);
         assert!(got[0]["owner"].is_null());
@@ -2373,10 +2354,7 @@ mod tests {
         cmd.arg("vlx-pty-ok");
         let mut child = pair.slave.spawn_command(cmd).expect("spawn failed");
 
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .expect("cloning the reader failed");
+        let mut reader = pair.master.try_clone_reader().expect("cloning the reader failed");
 
         // Start reading before dropping the slave or waiting; on macOS, closing the slave can otherwise make
         // the master reach EOF before buffered data is consumed.
@@ -2397,9 +2375,7 @@ mod tests {
         drop(pair.slave);
         child.wait().expect("wait failed");
 
-        let output = reader_handle
-            .join()
-            .expect("joining the reader thread failed");
+        let output = reader_handle.join().expect("joining the reader thread failed");
         assert!(
             output.contains("vlx-pty-ok"),
             "the expected output was not read from the PTY, got: {output:?}"
@@ -2430,10 +2406,7 @@ mod tests {
         cmd.env("TERM", "xterm-256color");
 
         let mut child = pair.slave.spawn_command(cmd).expect("spawn failed");
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .expect("cloning the reader failed");
+        let mut reader = pair.master.try_clone_reader().expect("cloning the reader failed");
         drop(pair.slave);
 
         // Feed real bytes into `OutputScanner` and record detected bells and titles.
@@ -2465,10 +2438,7 @@ mod tests {
         let bell_count = *bells.lock().unwrap();
         let title_list = titles.lock().unwrap().clone();
 
-        assert!(
-            bell_count >= 1,
-            "a bell should be picked up from the real PTY, got {bell_count}"
-        );
+        assert!(bell_count >= 1, "a bell should be picked up from the real PTY, got {bell_count}");
         assert!(
             title_list.iter().any(|t| t == "codex-status"),
             "the OSC title codex-status should be picked up, got {title_list:?}"

@@ -254,11 +254,7 @@ mod tests {
             pct_calls.set(pct_calls.get() + 1)
         });
         assert_eq!(r.unwrap_err(), msg);
-        assert_eq!(
-            pct_calls.get(),
-            0,
-            "no download progress may be reported while disabled"
-        );
+        assert_eq!(pct_calls.get(), 0, "no download progress may be reported while disabled");
     }
 
     #[test]

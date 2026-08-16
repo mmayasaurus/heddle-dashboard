@@ -171,21 +171,11 @@ mod tests {
         ];
         for (event, ev) in expect {
             let p = dir.join(script_name(event));
-            let body = std::fs::read_to_string(&p)
-                .unwrap_or_else(|_| panic!("{event} should have been written out"));
-            assert!(
-                body.contains(&format!("&e={ev}")),
-                "{event} should report e={ev}"
-            );
+            let body = std::fs::read_to_string(&p).unwrap_or_else(|_| panic!("{event} should have been written out"));
+            assert!(body.contains(&format!("&e={ev}")), "{event} should report e={ev}");
             // Verify the variable guard, forwarding logic, and `{}` response to catch empty scripts.
-            assert!(
-                body.contains("VLX_SPAWN_URL"),
-                "{event} should guard on the variable"
-            );
-            assert!(
-                body.contains("VLX_SESSION_ID"),
-                "{event} should carry the session id"
-            );
+            assert!(body.contains("VLX_SPAWN_URL"), "{event} should guard on the variable");
+            assert!(body.contains("VLX_SESSION_ID"), "{event} should carry the session id");
             assert!(
                 body.contains("--data-binary @-") || body.contains("ReadToEnd"),
                 "{event} should forward stdin verbatim"
@@ -194,11 +184,7 @@ mod tests {
             {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = std::fs::metadata(&p).unwrap().permissions().mode();
-                assert_eq!(
-                    mode & 0o111,
-                    0o111,
-                    "the {event} script should be executable"
-                );
+                assert_eq!(mode & 0o111, 0o111, "the {event} script should be executable");
             }
         }
 
@@ -208,17 +194,10 @@ mod tests {
             .flatten()
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        assert_eq!(
-            entries.len(),
-            6,
-            "expected exactly six scripts, got: {entries:?}"
-        );
+        assert_eq!(entries.len(), 6, "expected exactly six scripts, got: {entries:?}");
         let ext = if cfg!(windows) { ".ps1" } else { ".sh" };
         let other = if cfg!(windows) { ".sh" } else { ".ps1" };
-        assert!(
-            entries.iter().all(|n| n.ends_with(ext)),
-            "all of them should be {ext}"
-        );
+        assert!(entries.iter().all(|n| n.ends_with(ext)), "all of them should be {ext}");
         assert!(
             !entries.iter().any(|n| n.ends_with(other)),
             "{other} should not be written out"
@@ -235,10 +214,7 @@ mod tests {
         let mtime1 = std::fs::metadata(&sample).unwrap().modified().unwrap();
         install(&root).unwrap();
         let mtime2 = std::fs::metadata(&sample).unwrap().modified().unwrap();
-        assert_eq!(
-            mtime1, mtime2,
-            "the scripts should not be rewritten when the contents are identical"
-        );
+        assert_eq!(mtime1, mtime2, "the scripts should not be rewritten when the contents are identical");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -251,10 +227,7 @@ mod tests {
         std::fs::write(&sample, "stale").unwrap();
         install(&root).unwrap();
         let body = std::fs::read_to_string(&sample).unwrap();
-        assert_ne!(
-            body, "stale",
-            "the latest script should be written back over it"
-        );
+        assert_ne!(body, "stale", "the latest script should be written back over it");
         assert!(body.contains("&e=waiting"));
         let _ = std::fs::remove_dir_all(&root);
     }

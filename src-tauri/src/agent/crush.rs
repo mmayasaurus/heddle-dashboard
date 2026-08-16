@@ -235,14 +235,8 @@ mod tests {
             script.contains("VLX_SESSION_ID"),
             "the script should read VLX_SESSION_ID to decide whether it is enabled"
         );
-        assert!(
-            script.contains("e=working"),
-            "the script should report working"
-        );
-        assert!(
-            !script.contains("decision"),
-            "the script only observes and never returns an allow/deny decision"
-        );
+        assert!(script.contains("e=working"), "the script should report working");
+        assert!(!script.contains("decision"), "the script only observes and never returns an allow/deny decision");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -343,11 +337,7 @@ mod tests {
         merge_into(&mut root, Path::new("/new/data/crush/hook.sh")).unwrap();
         let arr = root["hooks"]["PreToolUse"].as_array().unwrap();
         let ours: Vec<_> = arr.iter().filter(|e| e["name"] == HOOK_NAME).collect();
-        assert_eq!(
-            ours.len(),
-            1,
-            "entries with this name should be unique, with the old one replaced"
-        );
+        assert_eq!(ours.len(), 1, "entries with this name should be unique, with the old one replaced");
         assert!(
             ours[0]["command"].as_str().unwrap().contains("/new/"),
             "it should point at the new script path"

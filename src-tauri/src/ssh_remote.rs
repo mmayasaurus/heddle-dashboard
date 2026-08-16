@@ -1518,10 +1518,7 @@ mod tests {
         // Use a deterministic small blob to verify the `SHA256:` plus unpadded-base64 shape.
         let fp = sha256_fingerprint("AAAA").unwrap();
         assert!(fp.starts_with("SHA256:"));
-        assert!(
-            !fp.ends_with('='),
-            "the fingerprint should be unpadded base64"
-        );
+        assert!(!fp.ends_with('='), "the fingerprint should be unpadded base64");
     }
 
     #[test]
@@ -1529,15 +1526,9 @@ mod tests {
         assert!(valid_version("0.1.73"));
         assert!(valid_version("10.20.30"));
         assert!(!valid_version(""));
-        assert!(
-            !valid_version("1.0; rm -rf ~"),
-            "a semicolon should be rejected"
-        );
+        assert!(!valid_version("1.0; rm -rf ~"), "a semicolon should be rejected");
         assert!(!valid_version("1.0/../x"), "a slash should be rejected");
-        assert!(
-            !valid_version("$(id)"),
-            "command substitution should be rejected"
-        );
+        assert!(!valid_version("$(id)"), "command substitution should be rejected");
     }
 
     #[test]
@@ -1551,14 +1542,8 @@ mod tests {
     #[test]
     fn serve_data_dir_expr_by_os_and_mode() {
         // Isolated mode is always ~/.heddle/remote/data regardless of OS.
-        assert_eq!(
-            serve_data_dir_expr("linux", false),
-            "$HOME/.heddle/remote/data"
-        );
-        assert_eq!(
-            serve_data_dir_expr("macos", false),
-            "$HOME/.heddle/remote/data"
-        );
+        assert_eq!(serve_data_dir_expr("linux", false), "$HOME/.heddle/remote/data");
+        assert_eq!(serve_data_dir_expr("macos", false), "$HOME/.heddle/remote/data");
         // Shared mode uses each OS's desktop release data directory.
         assert_eq!(
             serve_data_dir_expr("linux", true),
@@ -1609,10 +1594,7 @@ mod tests {
             });
         stop_serve(&r.session);
         close_master(&host, &r.session);
-        assert_eq!(
-            root_status, 200,
-            "the root page on the forwarded port should return 200"
-        );
+        assert_eq!(root_status, 200, "the root page on the forwarded port should return 200");
         assert_eq!(
             login_status, 200,
             "/api/login with the random password should return 200, logging into the backend automatically"
@@ -1650,10 +1632,7 @@ mod tests {
             &|_: &str, _: Option<u8>| {},
         )
         .expect("the first connection should succeed");
-        assert!(
-            !r1.reused,
-            "the first connection should start a new server (reused=false)"
-        );
+        assert!(!r1.reused, "the first connection should start a new server (reused=false)");
         // 2) Preserve-service disconnect stops only forwarding/master.
         stop_serve(&r1.session);
         close_master(&host, &r1.session);
@@ -1667,19 +1646,9 @@ mod tests {
             &|_: &str, _: Option<u8>| {},
         )
         .expect("reconnecting should succeed");
-        assert!(
-            r2.reused,
-            "reconnecting should reuse the resident server (reused=true)"
-        );
-        assert_eq!(
-            r2.password, r1.password,
-            "reuse should keep the same server's password"
-        );
-        assert_eq!(
-            root(r2.local_port),
-            200,
-            "after reuse the root page should return 200"
-        );
+        assert!(r2.reused, "reconnecting should reuse the resident server (reused=true)");
+        assert_eq!(r2.password, r1.password, "reuse should keep the same server's password");
+        assert_eq!(root(r2.local_port), 200, "after reuse the root page should return 200");
 
         // 4) Stop-service disconnect kills the persistent remote service.
         kill_remote_service(&host, &r2.session);
@@ -1695,10 +1664,7 @@ mod tests {
             &|_: &str, _: Option<u8>| {},
         )
         .expect("connecting again after shutdown should succeed");
-        assert!(
-            !r3.reused,
-            "connecting after shutdown should start a new server (reused=false)"
-        );
+        assert!(!r3.reused, "connecting after shutdown should start a new server (reused=false)");
         // Final shutdown and disconnect.
         kill_remote_service(&host, &r3.session);
         stop_serve(&r3.session);
@@ -1728,16 +1694,11 @@ mod tests {
         }
 
         // Establish the master through PTY password auth and verify its control socket.
-        open_master_pty(&host, &session, true, &password)
-            .expect("PTY password authentication should succeed");
+        open_master_pty(&host, &session, true, &password).expect("PTY password authentication should succeed");
 
         // Run a command through the master to verify reuse without reauthentication.
-        let who = run_remote(&host, &session, "whoami")
-            .expect("running whoami over the reused master should succeed");
-        assert!(
-            !who.trim().is_empty(),
-            "whoami should return a non-empty username"
-        );
+        let who = run_remote(&host, &session, "whoami").expect("running whoami over the reused master should succeed");
+        assert!(!who.trim().is_empty(), "whoami should return a non-empty username");
 
         // Close the master and remove its socket.
         close_master(&host, &session);

@@ -441,15 +441,9 @@ mod tests {
             "crush",
         ] {
             let r = install_recipe(a).unwrap_or_else(|| panic!("no install recipe for {a}"));
-            assert!(
-                !r.command.is_empty(),
-                "the install command for {a} must not be empty"
-            );
+            assert!(!r.command.is_empty(), "the install command for {a} must not be empty");
             assert!(!r.bin.is_empty(), "the bin for {a} must not be empty");
-            assert!(
-                r.docs_url.starts_with("https://"),
-                "the documentation link for {a} should be https"
-            );
+            assert!(r.docs_url.starts_with("https://"), "the documentation link for {a} should be https");
         }
     }
 
@@ -458,10 +452,7 @@ mod tests {
         // Pi is scoped global npm only and its binary name matches inject.rs.
         let r = install_recipe("pi").unwrap();
         assert_eq!(r.bin, "pi");
-        assert!(
-            r.needs_node,
-            "pi installs through npm, so Node is required first"
-        );
+        assert!(r.needs_node, "pi installs through npm, so Node is required first");
         assert!(
             r.command.contains("@earendil-works/pi-coding-agent"),
             "the pi install command should point at the scoped npm package"

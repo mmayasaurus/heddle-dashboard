@@ -180,10 +180,7 @@ mod tests {
     fn osc_title_bel_terminated_is_not_a_bell() {
         // In `ESC ] 0 ; my title BEL`, BEL terminates OSC and is not a standalone bell.
         let (bells, titles) = scan(b"\x1b]0;my title\x07rest");
-        assert_eq!(
-            bells, 0,
-            "a BEL that terminates an OSC must not count as a bell"
-        );
+        assert_eq!(bells, 0, "a BEL that terminates an OSC must not count as a bell");
         assert_eq!(titles, vec!["my title".to_string()]);
     }
 
@@ -198,10 +195,7 @@ mod tests {
     #[test]
     fn osc_then_real_bell() {
         let (bells, titles) = scan(b"\x1b]0;t\x07ok\x07");
-        assert_eq!(
-            bells, 1,
-            "a standalone BEL after an OSC does count as a bell"
-        );
+        assert_eq!(bells, 1, "a standalone BEL after an OSC does count as a bell");
         assert_eq!(titles, vec!["t".to_string()]);
     }
 
@@ -241,16 +235,10 @@ mod tests {
     fn osc9_conemu_progress_ignored() {
         // Ignore ConEmu/Windows Terminal progress extension `OSC 9 ; 4 ; <state> ; <progress>`.
         let (_, _, progress) = scan_all(b"\x1b]9;4;1;50\x07");
-        assert!(
-            progress.is_empty(),
-            "the ConEmu progress subcommand must not raise a notification"
-        );
+        assert!(progress.is_empty(), "the ConEmu progress subcommand must not raise a notification");
         // Ignore other numeric subcommands such as cwd hint `9;9;<path>`.
         let (_, _, cwd) = scan_all(b"\x1b]9;9;/home/user\x07");
-        assert!(
-            cwd.is_empty(),
-            "the ConEmu cwd subcommand must not raise a notification"
-        );
+        assert!(cwd.is_empty(), "the ConEmu cwd subcommand must not raise a notification");
         // A body beginning with digits but no following semicolon remains a normal notification.
         let (_, _, real) = scan_all(b"\x1b]9;5 tests passed\x07");
         assert_eq!(real, vec![(None, "5 tests passed".to_string())]);
@@ -323,9 +311,6 @@ mod tests {
         let (_, _, n9) = scan_all(b"\x1b]9;\x07");
         assert!(n9.is_empty());
         let (_, _, n777) = scan_all(b"\x1b]777;notify;OnlyTitle\x07");
-        assert!(
-            n777.is_empty(),
-            "an OSC 777 without a body must not raise a notification"
-        );
+        assert!(n777.is_empty(), "an OSC 777 without a body must not raise a notification");
     }
 }

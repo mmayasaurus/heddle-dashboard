@@ -49,14 +49,10 @@ mod tests {
         let path = install(&tmp).expect("writing out the extension should succeed");
         assert_eq!(path, plugin_path(&tmp));
 
-        let written =
-            std::fs::read_to_string(&path).expect("the extension should be readable again");
+        let written = std::fs::read_to_string(&path).expect("the extension should be readable again");
         assert_eq!(written, PLUGIN, "the contents should be the inlined source");
         // Coarsely verify that the extension exports lifecycle hooks and reports as expected, guarding against an accidentally empty source.
-        assert!(
-            written.contains("agent_end"),
-            "the extension should map agent_end"
-        );
+        assert!(written.contains("agent_end"), "the extension should map agent_end");
         assert!(
             written.contains("VLX_SESSION_ID"),
             "the extension should read VLX_SESSION_ID to decide whether it is enabled"

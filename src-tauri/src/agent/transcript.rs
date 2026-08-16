@@ -1238,13 +1238,8 @@ mod tests {
             r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"premium","limit_name":null,"primary":null,"secondary":null,"plan_type":"free"}}}"#,
         ]
         .join("\n");
-        let usage = last_codex_rate_limits(&text).expect(
-            "the earlier real snapshot should be kept rather than the empty one at the tail",
-        );
-        let primary = usage
-            .primary
-            .as_ref()
-            .expect("primary must not be cleared by an empty snapshot");
+        let usage = last_codex_rate_limits(&text).expect("the earlier real snapshot should be kept rather than the empty one at the tail");
+        let primary = usage.primary.as_ref().expect("primary must not be cleared by an empty snapshot");
         assert_eq!(primary.used_percent, 100.0);
         assert_eq!(primary.window_minutes, 43200);
         assert_eq!(primary.resets_at, Some(1784444950));
@@ -1295,10 +1290,7 @@ mod tests {
             .join(".claude/projects");
         // Select the most recently modified transcript.
         let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
-        for dir in std::fs::read_dir(&projects)
-            .expect("reading projects")
-            .flatten()
-        {
+        for dir in std::fs::read_dir(&projects).expect("reading projects").flatten() {
             let Ok(entries) = std::fs::read_dir(dir.path()) else {
                 continue;
             };
@@ -1312,10 +1304,7 @@ mod tests {
             }
         }
         files.sort_by_key(|f| std::cmp::Reverse(f.0));
-        let path = &files
-            .first()
-            .expect("there should be at least one transcript")
-            .1;
+        let path = &files.first().expect("there should be at least one transcript").1;
         eprintln!("parsing: {}", path.display());
         let msgs = parse_file(path, parse_claude_line).expect("parsing failed");
         eprintln!("{} messages in total", msgs.len());
@@ -1326,10 +1315,7 @@ mod tests {
                 m.role, m.timestamp, m.tools, text
             );
         }
-        assert!(
-            !msgs.is_empty(),
-            "a real transcript should parse into messages"
-        );
+        assert!(!msgs.is_empty(), "a real transcript should parse into messages");
         assert!(msgs.iter().any(|m| m.role == "user"));
         assert!(msgs.iter().any(|m| m.role == "assistant"));
     }
@@ -1441,10 +1427,7 @@ mod tests {
             .expect("HOME")
             .join(".claude/projects");
         let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
-        for dir in std::fs::read_dir(&projects)
-            .expect("reading projects")
-            .flatten()
-        {
+        for dir in std::fs::read_dir(&projects).expect("reading projects").flatten() {
             let Ok(entries) = std::fs::read_dir(dir.path()) else {
                 continue;
             };
@@ -1458,10 +1441,7 @@ mod tests {
             }
         }
         files.sort_by_key(|f| std::cmp::Reverse(f.0));
-        let path = &files
-            .first()
-            .expect("there should be at least one transcript")
-            .1;
+        let path = &files.first().expect("there should be at least one transcript").1;
         eprintln!("parsing: {}", path.display());
         let tail = read_tail(path, CONTEXT_TAIL_BYTES).expect("reading the tail failed");
         let (model, tokens) = last_claude_usage(&tail);
@@ -1471,10 +1451,7 @@ mod tests {
             settings.as_ref().and_then(|s| s.get("model")),
         );
         assert!(model.is_some(), "a real transcript should yield a model");
-        assert!(
-            tokens.is_some(),
-            "a real transcript should yield context tokens"
-        );
+        assert!(tokens.is_some(), "a real transcript should yield context tokens");
     }
 
     /// Deduplicates adjacent repeated tool names while preserving order across different tools.
