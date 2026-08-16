@@ -242,8 +242,63 @@ fn needs_human_anti_join_matches_only_the_truly_unreplied_row() {
 
     let snap = rooms_at(&path).unwrap();
     let ids: Vec<i64> = snap.needs_human.iter().map(|r| r.id).collect();
-    assert_eq!(ids, vec![4], "Msg 4 is unreplied; Msg 5 was closed by Msg 6 (a non-operator reply)");
-    assert_eq!(snap.needs_human[0].kind, "needs-human");
+    // BOTH stay open. Msg 4 was never replied to at all. Msg 5 has a reply (Msg 6) — but that
+    // reply is tier='agent-message' (K telling K.1 "Do NOT force push!"), and an agent
+    // acknowledging a human-decision item must never remove it from Maya's queue. Before the
+    // tier guard this returned just [4], i.e. the permission-request silently vanished.
+    assert_eq!(ids, vec![5, 4], "newest first; an agent-tier reply closes nothing");
+    assert_eq!(snap.needs_human[1].kind, "needs-human");
+    assert_eq!(snap.needs_human[0].kind, "permission-request");
+}
+
+#[test]
+fn only_an_operator_tier_reply_closes_a_needs_human_item() {
+    // The tier semantics in one test: 'needs-human' means a HUMAN decides, and only
+    // tier='operator' is the human at the keyboard (broker-stamped, origin-verified — a sender
+    // cannot request it). An agent acknowledging, or an orchestrator directing, leaves the item
+    // OPEN. Reproduced live on 2026-08-16 before this guard existed: one agent reply emptied the
+    // queue while the decision was still outstanding.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    seeded_db(&path);
+    let conn = Connection::open(&path).unwrap();
+
+    let open_ids = |c: &Connection| -> Vec<i64> {
+        drop(c);
+        rooms_at(&path)
+            .unwrap()
+            .needs_human
+            .iter()
+            .map(|r| r.id)
+            .collect()
+    };
+
+    // An orchestrator-directive reply to Msg 4 — R acknowledging is not Maya deciding.
+    conn.execute_batch(
+        "INSERT INTO messages (ts, sender, target, kind, tier, verified, body, reply_to) \
+         VALUES ('2026-08-16T12:10:00.000Z', 'K', 'K.1', 'chat', 'orchestrator-directive', 1, \
+                 'ack, holding for the operator', 4);",
+    )
+    .unwrap();
+    assert_eq!(
+        open_ids(&Connection::open(&path).unwrap()),
+        vec![5, 4],
+        "an orchestrator-directive reply must not close a human-decision item"
+    );
+
+    // The operator answers Msg 4 — now, and only now, it leaves the queue.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "INSERT INTO messages (ts, sender, target, kind, tier, verified, body, reply_to) \
+         VALUES ('2026-08-16T12:11:00.000Z', 'operator', 'K.1', 'chat', 'operator', 1, \
+                 'go ahead', 4);",
+    )
+    .unwrap();
+    assert_eq!(
+        open_ids(&conn),
+        vec![5],
+        "an operator reply closes it; Msg 5 is untouched and stays open"
+    );
 }
 
 // ─────────────────────────────────────── test 4 ───────────────────────────────────────
@@ -476,7 +531,7 @@ fn an_open_needs_human_item_behind_a_long_run_of_replied_ones_is_still_reported(
     conn.execute_batch(
         "INSERT INTO participants (address, kind, first_seen, last_seen) VALUES \
          ('V', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'), \
-         ('R', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
+         ('operator', 'operator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
     )
     .unwrap();
     // id 1 = the OLD open item. ids 2..=261 = 260 newer needs-human rows, every one replied.
@@ -493,11 +548,12 @@ fn an_open_needs_human_item_behind_a_long_run_of_replied_ones_is_still_reported(
                 'answered ' || n FROM c;",
     )
     .unwrap();
-    // Reply to every one of those 260 (ids 2..=261), leaving only id 1 open.
+    // The OPERATOR answers every one of those 260 (ids 2..=261) — only an operator-tier reply
+    // closes a human-decision item — leaving exactly id 1 open.
     conn.execute_batch(
         "WITH RECURSIVE c(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM c WHERE n < 261) \
          INSERT INTO messages (ts, sender, target, kind, tier, verified, body, reply_to) \
-         SELECT '2026-01-03T00:00:00.000Z', 'R', '#fleet', 'chat', 'agent-message', 0, \
+         SELECT '2026-01-03T00:00:00.000Z', 'operator', '#fleet', 'chat', 'operator', 1, \
                 'answered', n FROM c;",
     )
     .unwrap();

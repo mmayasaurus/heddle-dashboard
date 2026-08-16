@@ -229,8 +229,18 @@ fn query_rooms(conn: &Connection) -> Result<Vec<RoomSummary>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The contract-fixed anti-join: unreplied needs-human/permission-request rows, all targets,
-/// newest first, capped 50. ANY reply closes an item, not just the operator's.
+/// The contract-fixed anti-join: OPEN needs-human/permission-request rows, all targets, newest
+/// first, capped 50. An item is closed ONLY by a reply at tier='operator'.
+///
+/// The tier clause is the whole point and must not be "simplified" away (contract owned by the
+/// comms broker, corrected 2026-08-16 after it was reproduced closing a live item): 'needs-human'
+/// means a HUMAN decides. Only tier='operator' is the human at the keyboard — the broker stamps
+/// that tier, senders cannot request it, and it is origin-verified against the operator token. An
+/// agent-message reply ("noted, waiting on Maya") acknowledging an item must NOT remove it from
+/// the queue, and neither must an orchestrator-directive: an orchestrator acknowledging is not
+/// the human deciding. The bias is deliberate — a human who resolves an item WITHOUT using
+/// reply_to leaves it open, i.e. this fails OPEN. A stale item in front of Maya costs a glance;
+/// a silently-closed one costs a lost decision.
 ///
 /// One statement, ONE pass over `messages`: the uncorrelated subquery is evaluated once (SQLite
 /// builds an ephemeral index over it for the `NOT IN` probe) instead of the correlated
@@ -247,7 +257,8 @@ fn query_needs_human(conn: &Connection) -> Result<Vec<NeedsHumanRow>, String> {
             "SELECT m.id, m.ts, m.sender, m.target, m.kind, m.body \
              FROM messages m \
              WHERE m.kind IN ('needs-human','permission-request') \
-               AND m.id NOT IN (SELECT reply_to FROM messages WHERE reply_to IS NOT NULL) \
+               AND m.id NOT IN (SELECT reply_to FROM messages \
+                                WHERE reply_to IS NOT NULL AND tier = 'operator') \
              ORDER BY m.id DESC LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
