@@ -126,6 +126,19 @@ def main():
         verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
     accts = [a for a in reg if a.get("loggedIn")]
+    # Distinct ids must stay distinct after filename sanitization, or two accounts would share
+    # capture/anchor files and mis-attribute windows. Registry ids are trusted slugs, so a
+    # collision is a registry mistake — skip the later entry loudly rather than cross-write.
+    seen_segments = {}
+    unique_accts = []
+    for a in accts:
+        segment = safe_segment(a["id"])
+        if segment in seen_segments:
+            log(f"registry error: ids {seen_segments[segment]!r} and {a['id']!r} collide after sanitization ('{segment}') — skipping {a['id']!r}")
+            continue
+        seen_segments[segment] = a["id"]
+        unique_accts.append(a)
+    accts = unique_accts
     if not accts:
         log("no logged-in accounts in registry"); return
     state = load(STATE, {"last_ping_ts": 0, "last_ping_acct": None})

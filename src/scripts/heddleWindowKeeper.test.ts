@@ -118,6 +118,25 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.keeper.json"))).toBe(true);
   });
 
+  it("skips a registry id whose sanitized filename collides with an earlier account", () => {
+    const home = mkHome();
+    fs.writeFileSync(
+      path.join(home, ".heddle", "accounts.json"),
+      JSON.stringify({
+        claude: [
+          { id: "team:a", configDir: null, loggedIn: true },
+          { id: "team/a", configDir: "~/.claude-team-a", loggedIn: true },
+        ],
+      }),
+    );
+    const result = runKeeper(["--dry-run"], home);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("collide after sanitization");
+    expect(result.stdout).toContain("skipping 'team/a'");
+    expect(result.stdout).toContain("team:a: UNKNOWN (no capture) → WOULD ping (dry-run)");
+    expect(result.stdout).not.toContain("team/a: UNKNOWN");
+  });
+
   it("does not re-ping a keeper-started live window and observes the stagger", () => {
     const home = mkHome();
     establishAcct1Window(home);
