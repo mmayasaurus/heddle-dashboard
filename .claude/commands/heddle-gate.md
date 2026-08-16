@@ -9,7 +9,10 @@ Execute from the repo root (or the active worktree):
 3. `pnpm test` — vitest (behavioral tests; a toggle-flips test is not a pass, see docs/CI.md standing rules).
 4. `cargo check --manifest-path src-tauri/Cargo.toml --locked` and the same with `--no-default-features`.
 5. `cargo test --manifest-path src-tauri/Cargo.toml --locked`.
-6. `pnpm lint` — expected RED until HED-14 (upstream ConnectionBanner.tsx debt); report it, don't chase it here.
+
+Advisory — NOT part of the gate (mirrors the non-required CI job):
+
+- `pnpm lint` — expected RED until HED-14 (upstream ConnectionBanner.tsx debt); report it, don't chase it here.
 
 Report results as a table (Check | Result | Details). If anything fails, list the
 specific errors and STOP — report, don't fix, unless asked. A green local gate is
