@@ -149,7 +149,6 @@ export function onCloneProgress(
  */
 export type MenuAction =
   | "settings"
-  | "check-update"
   | "share"
   | "split-right"
   | "split-down";
