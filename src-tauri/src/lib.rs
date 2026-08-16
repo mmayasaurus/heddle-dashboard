@@ -53,13 +53,14 @@ use web::WebServer;
 
 use std::path::{Path, PathBuf};
 
-/// Pending `vela <path>` request shared by first/second instances and taken after frontend listeners exist.
+/// Pending `heddle <path>` request shared by first/second instances and taken after frontend listeners exist.
 #[cfg(feature = "gui")]
 pub(crate) struct PendingOpenProject(pub std::sync::Mutex<Option<String>>);
 
-/// Brief `vela` CLI help invoked through a hidden shim argument so normal GUI startup stays quiet.
-pub fn print_vela_help() {
-    println!("usage: vela <project-path>\n\nOpen a project in heddle, or switch to it if it is already open.");
+/// Brief `heddle` CLI help invoked through a hidden shim argument (`--heddle-help`, legacy `--vela-help`)
+/// so normal GUI startup stays quiet.
+pub fn print_user_cli_help() {
+    println!("usage: heddle <project-path>\n\nOpen a project in heddle, or switch to it if it is already open.");
 }
 
 /// Parse `--open-project <path>` or a development-friendly positional project path while ignoring
@@ -69,7 +70,7 @@ pub fn open_project_from_args(args: &[String], cwd: &Path) -> Result<Option<Path
         Some("--open-project") => {
             if args.len() != 3 {
                 return Err(
-                    "expected exactly one project path\nusage: vela <project-path>".to_string(),
+                    "expected exactly one project path\nusage: heddle <project-path>".to_string(),
                 );
             }
             &args[2]
@@ -242,10 +243,11 @@ pub const HEDDLE_RELEASES_URL: &str = "https://github.com/mmayasaurus/heddle-das
 
 /// Print stable version/commit output for --version/-V and exit without windows or services.
 ///
-/// SSH provisioning parses line one as `velaterm <semver>` and line two as `commit: <hash>` to decide
-/// binary reuse. Keep this format stable unless the remote parser changes with it.
+/// Line one is `heddle <semver>` (upstream printed `velaterm <semver>`), line two `commit: <hash>`.
+/// Nothing in this repo parses line one by name (SSH provisioning only checks that `--version` runs);
+/// keep the shape stable anyway for scripts.
 pub fn print_version() {
-    println!("velaterm {VERSION}");
+    println!("heddle {VERSION}");
     println!("commit: {GIT_COMMIT}");
 }
 
@@ -443,7 +445,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 // attribution; explicitly supply package version so metadata cannot suppress it.
                 let about_meta = AboutMetadataBuilder::new()
                     .version(Some(app.package_info().version.to_string()))
-                    .copyright(Some("A product by VLINX"))
+                    .copyright(Some("© 2026 Very Good Fiber Goods (VGFG) · based on VelaTerm © VLINX Software (MIT)"))
                     .build();
                 // No in-app updater (HED-38): point users at the GitHub releases page instead.
                 let releases_item =
@@ -453,13 +455,13 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                     .build(app)?;
                 let install_vela_item = MenuItemBuilder::with_id(
                     "install-vela-command",
-                    "Install 'vela' Command in PATH…",
+                    "Install 'heddle' Command in PATH…",
                 )
                 .enabled(!cfg!(debug_assertions))
                 .build(app)?;
                 let uninstall_vela_item = MenuItemBuilder::with_id(
                     "uninstall-vela-command",
-                    "Uninstall 'vela' Command from PATH…",
+                    "Uninstall 'heddle' Command from PATH…",
                 )
                 .enabled(!cfg!(debug_assertions))
                 .build(app)?;
@@ -540,20 +542,20 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                             let (message, kind) = match result {
                                 Ok(status) if status.installed => (
                                     format!(
-                                        "The 'vela' command is ready at:\n{}\n\nRun: vela <project-path>",
+                                        "The 'heddle' command is ready at:\n{}\n\nRun: heddle <project-path>",
                                         status.path.as_deref().unwrap_or("PATH")
                                     ),
                                     MessageDialogKind::Info,
                                 ),
                                 Ok(status) if status.conflict.is_some() => (
                                     format!(
-                                        "A different 'vela' command remains at:\n{}\n\nheddle did not modify it.",
+                                        "A different 'heddle' command remains at:\n{}\n\nheddle did not modify it.",
                                         status.conflict.as_deref().unwrap_or("PATH")
                                     ),
                                     MessageDialogKind::Warning,
                                 ),
                                 Ok(_) => (
-                                    "The heddle-managed 'vela' command was removed from PATH."
+                                    "Removed the heddle-managed 'heddle' command (and any legacy 'vela' shim) from PATH, if present."
                                         .to_string(),
                                     MessageDialogKind::Info,
                                 ),
@@ -563,9 +565,9 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                                 .dialog()
                                 .message(message)
                                 .title(if installing {
-                                    "Install 'vela' Command"
+                                    "Install 'heddle' Command"
                                 } else {
-                                    "Uninstall 'vela' Command"
+                                    "Uninstall 'heddle' Command"
                                 })
                                 .kind(kind)
                                 .show(|_| {});
@@ -605,7 +607,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 .map_err(|e| format!("failed to create data dir: {e}"))?;
             // Record data_dir so Windows SSH connections prefer bundled tools over a broken/missing PATH install.
             ssh_remote::set_data_dir(data_dir.clone());
-            let db = Db::open(&data_dir.join("vlx-term.db"))?;
+            let db = Db::open(&db::app_db_path(&data_dir))?;
 
             // When cleanup is enabled, remove pasted images older than 24h left by crashes. Normal exit
             // removes this process's files precisely; disabling the setting skips both paths.
@@ -627,10 +629,10 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             #[cfg(all(not(debug_assertions), not(target_os = "macos")))]
             match agent::spawn_cli::install_user_cli() {
                 Ok(status) => println!(
-                    "vela command ready: {}",
+                    "heddle command ready: {}",
                     status.path.as_deref().unwrap_or("PATH")
                 ),
-                Err(e) => eprintln!("failed to install vela command in PATH: {e}"),
+                Err(e) => eprintln!("failed to install heddle command in PATH: {e}"),
             }
             // Refresh bundled skills in both Claude/Codex user directories on every version.
             agent::spawn_cli::refresh_installed_skills();
@@ -857,9 +859,10 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             heddle_stats::heddle_caps,
             heddle_stats::heddle_recent,
             heddle_stats::heddle_in_flight,
-            heddle_stats::heddle_fleet_roster,
+            heddle_stats::roster::heddle_fleet_roster,
             heddle_stats::heddle_provider_usage,
             heddle_stats::heddle_provider_limits,
+            heddle_stats::heddle_refresh_provider_limits,
         ])
         .build(tauri_context())
         .expect("error while building tauri application")
@@ -1041,7 +1044,7 @@ fn serve_data_dir(args: &ServeArgs, identifier: &str) -> Result<std::path::PathB
     )
 }
 
-/// Pure-CLI headless entry point for `vlx-term --serve`.
+/// Pure-CLI headless entry point for `heddle --serve`.
 ///
 /// Build no Tauri app/window/display dependency. Construct GUI-equivalent Db/PtyManager/HookServer
 /// state under AppCtx::Headless and reuse the HTTPS/login/WebSocket/PTY service. Ctrl+C/SIGTERM shuts
@@ -1054,16 +1057,16 @@ pub fn run_serve(args: &[String]) {
     let parsed = match parse_serve_args(args, env_password) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("vlx-term --serve failed to start: {e}");
+            eprintln!("heddle --serve failed to start: {e}");
             eprintln!(
-                "usage: vlx-term --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
+                "usage: heddle --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http]"
             );
             std::process::exit(1);
         }
     };
 
     if let Err(e) = serve_main(&parsed) {
-        eprintln!("vlx-term --serve failed to start: {e}");
+        eprintln!("heddle --serve failed to start: {e}");
         std::process::exit(1);
     }
 }
@@ -1073,7 +1076,7 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     let identifier = serve_identifier();
     let data_dir = serve_data_dir(args, &identifier)?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("failed to create data dir: {e}"))?;
-    let db = Db::open(&data_dir.join("vlx-term.db"))?;
+    let db = Db::open(&db::app_db_path(&data_dir))?;
 
     // Match GUI cleanup of stale pasted images from abnormal exits when enabled.
     if pasted_image_cleanup_enabled(&db) {
@@ -1119,7 +1122,7 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     }
     let status = web.start(ctx.clone(), &args.password, Some(args.port), mode)?;
 
-    println!("vlx-term headless server started");
+    println!("heddle headless server started");
     println!("  data dir: {}", data_dir.display());
 
     // Print a fully usable preferred URL first. LAN TLS requires the complete #pair fragment with

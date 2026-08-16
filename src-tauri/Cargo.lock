@@ -2452,6 +2452,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "tempfile",
  "time",
  "tiny_http",
  "tokio",

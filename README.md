@@ -145,7 +145,16 @@ run on the main thread and freeze the UI.
 
 ## License
 
-Copyright (c) 2026 VLINX Software. Released under the [MIT License](LICENSE).
+Copyright (c) 2026 Very Good Fiber Goods (VGFG) — the heddle fork.
+Copyright (c) 2026 VLINX Software — the upstream [VelaTerm](https://github.com/vlinx-io/VelaTerm) code
+this fork builds on. Both notices are retained in [LICENSE](LICENSE); heddle's own code — the fork and the
+upstream code it builds on — is released under the [MIT License](LICENSE).
 
 You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of heddle, for
-any purpose, as long as the copyright notice and the licence text travel with it.
+any purpose, as long as both copyright notices and the license text travel with it.
+
+Bundled third-party assets keep their own licenses and are **not** relicensed as MIT: the Noto Sans
+Symbols 2 subset (`src/assets/fonts/vlx-symbols.woff2`, SIL OFL 1.1 —
+`src/assets/fonts/LICENSE-noto-sans-symbols-2.txt`), Noto Sans SC (`src/assets/fonts/NotoSansSC-*.ttf`, (c) Adobe with Reserved Font
+Name 'Source', SIL OFL 1.1 — `src/assets/fonts/NotoSansSC-OFL.txt`), and JetBrains Mono (`@fontsource/jetbrains-mono`,
+SIL OFL 1.1). Other npm/crate dependencies carry their own licenses per their packages.
