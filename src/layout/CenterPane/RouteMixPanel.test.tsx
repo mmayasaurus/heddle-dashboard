@@ -75,23 +75,21 @@ describe("RouteMixPanel — route-mix scoreboard (HED-69)", () => {
   });
 
   it("never flashes the empty state before the first load, then shows it honestly", async () => {
-    let resolve!: (value: unknown) => void;
-    invoke.mockReturnValue(new Promise((res) => (resolve = res)));
-    render(<RouteMixPanel claudeFiveHourPct={null} />);
+    invoke.mockReturnValue(new Promise(() => {})); // a load that never settles
+    const pending = render(<RouteMixPanel claudeFiveHourPct={null} />);
     // Pending load: no empty-state claim about a ledger nobody has read yet.
     expect(screen.queryByText("fleet.routeMix.empty")).toBeNull();
-    await act(async () => {
-      resolve({ windowHours: 6, hours: [], orchestrators: [] });
-      await Promise.resolve(); // let the .then chain deliver before asserting
-    });
-    expect(screen.getByText("fleet.routeMix.empty")).toBeTruthy();
+    pending.unmount();
+    invoke.mockResolvedValue({ windowHours: 6, hours: [], orchestrators: [] });
+    render(<RouteMixPanel claudeFiveHourPct={null} />);
+    expect(await screen.findByText("fleet.routeMix.empty")).toBeTruthy();
   });
 
   it("shows the cap chip on its own current-hour row even when the hour has no dispatch bucket", async () => {
     invoke.mockResolvedValue({ windowHours: 6, hours: [], orchestrators: [] });
     const { rerender } = render(<RouteMixPanel claudeFiveHourPct={70} />);
     await screen.findByText("fleet.routeMix.empty");
-    await act(async () => {
+    act(() => {
       rerender(<RouteMixPanel claudeFiveHourPct={73} />);
     });
     // "Cap moved, nothing dispatched" — the failure-to-delegate signal must stay visible.
