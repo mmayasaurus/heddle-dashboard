@@ -37,6 +37,7 @@ pub(super) struct Account {
     /// `None` = the default `~/.claude` (never set `CLAUDE_CONFIG_DIR` for it).
     pub config_dir: Option<PathBuf>,
     pub email: Option<String>,
+    pub logged_in: Option<bool>,
 }
 
 pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
@@ -67,6 +68,7 @@ pub(super) fn parse_registry(v: &Value) -> Vec<Account> {
                         id,
                         config_dir: a["configDir"].as_str().map(PathBuf::from),
                         email: a["email"].as_str().map(str::to_string),
+                        logged_in: a["loggedIn"].as_bool(),
                     })
                 })
                 .collect()
@@ -108,7 +110,10 @@ fn read_json(path: &Path) -> Option<Value> {
 fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit> {
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
-        let file = read_json(&dir.join(format!("claude-{}.json", a.id)));
+        // Freshest of tap capture vs keeper anchor (HED-87), then Fable attribution (HED-75) —
+        // an anchor-shaped file has null used_percentage, which attribute() already treats as
+        // no-capture (it never seeds a historical estimate from nothing).
+        let file = freshest_account_file(dir, &a.id);
         let attrib = attribute(dir, &a.id, file.as_ref(), now);
         rows.push(row(a, file.as_ref(), now, attrib.as_ref()));
     }
@@ -148,11 +153,35 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
                 .as_ref()
                 .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
             email: None,
+            logged_in: None,
         };
         let attrib = attribute(dir, &id, file.as_ref(), now);
         rows.push(row(&acct, file.as_ref(), now, attrib.as_ref()));
     }
     rows
+}
+
+/// The statusline tap has measured usage; the keeper anchor records an otherwise invisible
+/// headless ping. Match the keeper's `window()` rule: whichever was captured most recently wins.
+fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
+    let tap = read_json(&dir.join(format!("claude-{id}.json")));
+    let keeper = read_json(&dir.join(format!("claude-{id}.keeper.json"))).map(|anchor| {
+        serde_json::json!({
+            "capturedAt": anchor["startedAt"],
+            "rate_limits": {
+                "five_hour": {"used_percentage": Value::Null, "resets_at": anchor["resets_at"]},
+                "seven_day": {"used_percentage": Value::Null, "resets_at": Value::Null},
+            },
+        })
+    });
+    match (tap, keeper) {
+        (Some(tap), Some(keeper)) => {
+            let tap_at = tap["capturedAt"].as_i64().unwrap_or_default();
+            let keeper_at = keeper["capturedAt"].as_i64().unwrap_or_default();
+            Some(if tap_at >= keeper_at { tap } else { keeper })
+        }
+        (tap, keeper) => tap.or(keeper),
+    }
 }
 
 /// Load this account's attribution state, fold in the current capture (if any), persist when it
@@ -293,6 +322,7 @@ fn row_no_capture(
         id: a.id.clone(),
         label,
         plan: None,
+        logged_in: a.logged_in,
         captured_at: None,
         stale: None,
         five_hour: LimitWindow::default(),
@@ -347,6 +377,7 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
         id: a.id.clone(),
         label,
         plan: None,
+        logged_in: a.logged_in,
         captured_at,
         stale: is_stale(captured_at, now, TAP_STALE_AFTER_SECS),
         five_hour,

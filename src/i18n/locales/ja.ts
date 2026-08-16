@@ -17,7 +17,7 @@ const ja: typeof en = {
   "common.copied": "コピーしました", // Copied
   "common.retry": "再試行", // Retry
   "common.refresh": "更新", // Refresh
-  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント",
+  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント", "fleet.loggedOut": "ログアウト中 — /login が必要", "fleet.keeperEstimate": "ウィンドウは有効（keeper 推定）— このアカウントの初回描画後に % を表示", "fleet.loginUnknown": "ログイン状態不明", "fleet.rotateAccounts": "Claude アカウントを切り替える",
   "common.loading": "読み込み中…", // Loading…
   "common.prev": "前へ", // Previous
   "common.next": "次へ", // Next
