@@ -148,12 +148,7 @@ fn hydrate_path_from_login_shell() {
         // Probe the shell with the system environment; otherwise the captured `PATH` would carry the
         // AppImage's bundle directories back into this process.
         heddle_lib::appimage::scrub_command(&mut probe);
-        let out = probe
-            .arg("-i")
-            .arg("-l")
-            .arg("-c")
-            .arg(&script)
-            .output();
+        let out = probe.arg("-i").arg("-l").arg("-c").arg(&script).output();
         let _ = tx.send(out);
     });
 

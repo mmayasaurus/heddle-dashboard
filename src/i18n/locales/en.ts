@@ -28,6 +28,8 @@ const en = {
   "fleet.resetting": "resetting…",
   "fleet.currentProject": "Current project",
   "fleet.allAgents": "All agents",
+  "fleet.loggedOut": "logged out — /login needed",
+  "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
   "common.loading": "Loading…",
   "common.prev": "Previous",
   "common.next": "Next",

@@ -1290,8 +1290,14 @@ mod tests {
             s.contains("\"$VLX_NOTFOUND_URL\""),
             "a miss must still be reported through the hook"
         );
-        assert!(s.contains("Settings, Agents tab"), "the hint should point at the settings page");
-        assert!(!s.contains("command -v"), "a full path should no longer search PATH");
+        assert!(
+            s.contains("Settings, Agents tab"),
+            "the hint should point at the settings page"
+        );
+        assert!(
+            !s.contains("command -v"),
+            "a full path should no longer search PATH"
+        );
         // With no arguments, the inner command is only the quoted path.
         let bare = launch_cmd_at(ShellKind::Posix, "/opt/bin/codex", "");
         assert!(bare.contains("then '/opt/bin/codex'; else"));
@@ -1315,7 +1321,10 @@ mod tests {
         assert!(s.contains(
             r"if (Test-Path -LiteralPath 'C:\Users\me\.local\bin\claude.exe' -PathType Leaf) { & 'C:\Users\me\.local\bin\claude.exe' --settings $env:X }"
         ));
-        assert!(s.contains("$env:VLX_NOTFOUND_URL"), "a miss is still reported through the hook");
+        assert!(
+            s.contains("$env:VLX_NOTFOUND_URL"),
+            "a miss is still reported through the hook"
+        );
     }
 
     #[test]
@@ -2609,9 +2618,18 @@ mod tests {
         );
         assert_eq!(valid_resume_id("  abc_DEF-123  "), Some("abc_DEF-123"));
         assert!(valid_resume_id("").is_none());
-        assert!(valid_resume_id("a b").is_none(), "a space should be rejected");
-        assert!(valid_resume_id("a;b").is_none(), "a semicolon should be rejected");
-        assert!(valid_resume_id("$(x)").is_none(), "command substitution should be rejected");
+        assert!(
+            valid_resume_id("a b").is_none(),
+            "a space should be rejected"
+        );
+        assert!(
+            valid_resume_id("a;b").is_none(),
+            "a semicolon should be rejected"
+        );
+        assert!(
+            valid_resume_id("$(x)").is_none(),
+            "command substitution should be rejected"
+        );
     }
 
     #[test]
@@ -2780,7 +2798,10 @@ mod tests {
             launch.contains("--model opus --add-dir /foo"),
             "multi-line arguments should be folded onto one line: {launch}"
         );
-        assert!(!launch.contains('\n'), "the launch command must be one line, with newlines already folded into spaces");
+        assert!(
+            !launch.contains('\n'),
+            "the launch command must be one line, with newlines already folded into spaces"
+        );
     }
 
     #[test]

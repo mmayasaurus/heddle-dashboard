@@ -3,6 +3,8 @@
 //! `kill(pid, 0)`) with the in-flight heddle workers each one owns, plus an "(orphaned)" bucket
 //! for workers whose orchestrator is gone.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use super::{home, ledger};
@@ -52,6 +54,47 @@ fn process_alive(pid: i32) -> bool {
     }
 }
 
+/// Parse `ps -o pid=,comm=` output into a liveness verdict per listed PID. A session PID may be
+/// reused after Claude exits, so existence alone is not enough: its executable must still be Claude.
+fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim_start().splitn(2, char::is_whitespace);
+            let pid = fields.next()?.trim().parse().ok()?;
+            let comm = fields.next()?.trim();
+            let basename = std::path::Path::new(comm)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(comm);
+            Some((
+                pid,
+                basename
+                    .to_ascii_lowercase()
+                    .contains(&expect.to_ascii_lowercase()),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ps_liveness_requires_a_claude_executable_for_each_candidate_pid() {
+        let live = parse_ps_liveness(
+            "  101 Google Chrome H\n  102 claude\n  103 /Users/x/.local/bin/claude\n",
+            "claude",
+        );
+
+        assert_eq!(live.get(&101), Some(&false));
+        assert_eq!(live.get(&102), Some(&true));
+        assert_eq!(live.get(&103), Some(&true));
+        assert!(!live.get(&104).copied().unwrap_or(false));
+    }
+}
+
 fn live_fleet_agents() -> Vec<FleetAgent> {
     let dir = home().join(".claude").join("sessions");
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -82,7 +125,7 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         let Ok(pid_for_kill) = i32::try_from(pid) else {
             continue;
         };
-        if pid_for_kill <= 0 || !process_alive(pid_for_kill) {
+        if pid_for_kill <= 0 {
             continue;
         }
         agents.push(FleetAgent {
@@ -96,11 +139,45 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
             status: session["status"].as_str().unwrap_or_default().to_string(),
             kind: session["kind"].as_str().unwrap_or_default().to_string(),
             updated_at_ms: session["updatedAt"].as_i64().unwrap_or_default(),
-            alive: true,
+            alive: false,
             workers: vec![],
         });
     }
-    agents
+    if agents.is_empty() {
+        return agents;
+    }
+
+    let pids = agents
+        .iter()
+        .map(|agent| agent.pid.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let ps_liveness = std::process::Command::new("ps")
+        .args(["-p", &pids, "-o", "pid=,comm="])
+        .output()
+        .ok()
+        .map(|output| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"));
+    const SESSION_STALE_AFTER_MS: i64 = 48 * 60 * 60 * 1000;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default();
+    let mut kept = Vec::with_capacity(agents.len());
+    for mut agent in agents {
+        let stale = now_ms.saturating_sub(agent.updated_at_ms) > SESSION_STALE_AFTER_MS;
+        let process_live = match &ps_liveness {
+            Some(liveness) => liveness.get(&(agent.pid as i32)).copied().unwrap_or(false),
+            None => process_alive(agent.pid as i32),
+        };
+        // Dead process + stale session file = a session that ended long ago — drop the row.
+        // Recently died (fresh file) or alive-but-parked (live process, silent 48h) stays, struck.
+        if !process_live && stale {
+            continue;
+        }
+        agent.alive = process_live && !stale;
+        kept.push(agent);
+    }
+    kept
 }
 
 fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {

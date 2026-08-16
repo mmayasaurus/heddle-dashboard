@@ -649,7 +649,10 @@ mod tests {
             .expect("HOME")
             .join(".claude/projects");
         let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
-        for dir in std::fs::read_dir(&projects).expect("reading projects").flatten() {
+        for dir in std::fs::read_dir(&projects)
+            .expect("reading projects")
+            .flatten()
+        {
             let Ok(entries) = std::fs::read_dir(dir.path()) else {
                 continue;
             };
@@ -663,7 +666,10 @@ mod tests {
             }
         }
         files.sort_by_key(|f| std::cmp::Reverse(f.0));
-        let path = &files.first().expect("there should be at least one transcript").1;
+        let path = &files
+            .first()
+            .expect("there should be at least one transcript")
+            .1;
         eprintln!("exporting: {}", path.display());
         let content = std::fs::read_to_string(path).expect("reading the transcript");
         let events = claude_events(&content);

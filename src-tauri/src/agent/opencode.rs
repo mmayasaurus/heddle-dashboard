@@ -48,7 +48,10 @@ mod tests {
         let written = std::fs::read_to_string(&path).expect("the plugin should be readable again");
         assert_eq!(written, PLUGIN, "the contents should be the inlined source");
         // Coarsely verify that the plugin exports the event hook and reports as expected, guarding against an accidentally empty source.
-        assert!(written.contains("session.idle"), "the plugin should map session.idle");
+        assert!(
+            written.contains("session.idle"),
+            "the plugin should map session.idle"
+        );
         assert!(
             written.contains("VLX_SESSION_ID"),
             "the plugin should read VLX_SESSION_ID to decide whether it is enabled"

@@ -563,7 +563,8 @@ mod tests {
         symlink(&target_file, base.join("link-file")).unwrap();
         symlink(base.join("missing"), base.join("broken-link")).unwrap();
 
-        let entries = super::list_dir(&base.to_string_lossy()).expect("the test directory should be listable");
+        let entries = super::list_dir(&base.to_string_lossy())
+            .expect("the test directory should be listable");
         let is_dir = |name: &str| {
             entries
                 .iter()
@@ -572,9 +573,18 @@ mod tests {
                 .is_dir
         };
 
-        assert!(is_dir("link-dir"), "a symlink to a directory should be reported as a directory");
-        assert!(!is_dir("link-file"), "a symlink to a file should still be reported as a file");
-        assert!(!is_dir("broken-link"), "a broken symlink should not be reported as a directory");
+        assert!(
+            is_dir("link-dir"),
+            "a symlink to a directory should be reported as a directory"
+        );
+        assert!(
+            !is_dir("link-file"),
+            "a symlink to a file should still be reported as a file"
+        );
+        assert!(
+            !is_dir("broken-link"),
+            "a broken symlink should not be reported as a directory"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -590,7 +600,8 @@ mod tests {
         assert!(read.mtime_ms > 0);
 
         // The correct baseline writes successfully and returns a new mtime.
-        let out = write_text_file(&p, "edited content", Some(read.mtime_ms)).expect("writing should succeed");
+        let out = write_text_file(&p, "edited content", Some(read.mtime_ms))
+            .expect("writing should succeed");
         assert!(!out.conflict);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited content");
         let read2 = read_text_file(&p).unwrap();
@@ -627,7 +638,11 @@ mod tests {
         std::fs::write(&path, &big).unwrap();
         let f = read_text_file(&p).expect("exceeding the limit should truncate rather than error");
         assert!(f.truncated, "it should be marked as truncated");
-        assert_eq!(f.full_size, super::EDIT_MAX + 1024, "the real file size should be returned");
+        assert_eq!(
+            f.full_size,
+            super::EDIT_MAX + 1024,
+            "the real file size should be returned"
+        );
         assert_eq!(
             f.content.len() as u64,
             super::EDIT_MAX,
@@ -653,7 +668,10 @@ mod tests {
             0,
             "it should truncate on a valid UTF-8 boundary, keeping a whole number of characters"
         );
-        assert!(f.content.len() as u64 <= super::EDIT_MAX, "it must not exceed the limit");
+        assert!(
+            f.content.len() as u64 <= super::EDIT_MAX,
+            "it must not exceed the limit"
+        );
         assert!(
             f.content.chars().all(|c| c == '你'),
             "every character in the content should be complete"
@@ -674,7 +692,8 @@ mod tests {
         f.set_modified(earlier).unwrap();
         drop(f);
 
-        let out = write_text_file(&p, "my edit", Some(base)).expect("it should report a conflict rather than error");
+        let out = write_text_file(&p, "my edit", Some(base))
+            .expect("it should report a conflict rather than error");
         assert!(out.conflict, "a mismatched mtime counts as a conflict");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -743,7 +762,10 @@ mod tests {
         loop {
             let c = read_file_base64(&p, offset, chunk_len).expect("reading should succeed");
             assert_eq!(c.size, 5000, "every chunk should carry the total file size");
-            assert_eq!(c.mtime_ms, expect_mtime, "every chunk should carry the current mtime");
+            assert_eq!(
+                c.mtime_ms, expect_mtime,
+                "every chunk should carry the current mtime"
+            );
             let bytes = base64_decode(&c.base64);
             assert!(bytes.len() as u64 <= chunk_len);
             got.extend_from_slice(&bytes);
@@ -752,7 +774,10 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(got, data, "decoding the chunks and joining them should reproduce the original bytes");
+        assert_eq!(
+            got, data,
+            "decoding the chunks and joining them should reproduce the original bytes"
+        );
         // The final 904-byte chunk is returned normally below max_len.
         let last = read_file_base64(&p, 4096, chunk_len).unwrap();
         assert_eq!(base64_decode(&last.base64).len(), 904);
@@ -807,7 +832,11 @@ mod tests {
         std::fs::write(&p, "keep").unwrap();
         let err = create_file(&ps).unwrap_err();
         assert!(err.contains("already exists"), "got: {err}");
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "keep", "an existing name must not be overwritten");
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "keep",
+            "an existing name must not be overwritten"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -874,12 +903,18 @@ mod tests {
         let data = b"\x89PNG\r\n\x1a\n test bytes";
         let path = save_pasted_image(data, "PNG").expect("saving should succeed");
         // Path has no spaces that a shell would split when inserted into the terminal.
-        assert!(!path.contains(' '), "the upload path should contain no spaces: {path}");
+        assert!(
+            !path.contains(' '),
+            "the upload path should contain no spaces: {path}"
+        );
         // File exists on disk with identical content.
         let got = std::fs::read(&path).expect("should be readable again");
         assert_eq!(got, data);
         // Extension is sanitized to lowercase.
-        assert!(path.ends_with(".png"), "the extension should be normalised to lowercase png: {path}");
+        assert!(
+            path.ends_with(".png"),
+            "the extension should be normalised to lowercase png: {path}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -902,7 +937,10 @@ mod tests {
             .unwrap()
             .iter()
             .any(|p| p.to_string_lossy() == path);
-        assert!(registered, "a pasted image written to disk should be registered for cleanup: {path}");
+        assert!(
+            registered,
+            "a pasted image written to disk should be registered for cleanup: {path}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -958,10 +996,17 @@ mod tests {
         std::fs::write(&doc, "# hi").unwrap();
         let data = b"\x89PNG\r\n\x1a\n test bytes";
 
-        let rel = save_doc_image(&doc.to_string_lossy(), data, "PNG").expect("saving should succeed");
+        let rel =
+            save_doc_image(&doc.to_string_lossy(), data, "PNG").expect("saving should succeed");
         // Return an assets/-prefixed relative path with forward slashes and lowercase extension.
-        assert!(rel.starts_with("assets/"), "it should be a relative path under assets/: {rel}");
-        assert!(rel.ends_with(".png"), "the extension should be normalised to lowercase png: {rel}");
+        assert!(
+            rel.starts_with("assets/"),
+            "it should be a relative path under assets/: {rel}"
+        );
+        assert!(
+            rel.ends_with(".png"),
+            "the extension should be normalised to lowercase png: {rel}"
+        );
         assert!(!rel.contains(".."), "it should contain no ..: {rel}");
         // Persist identical content in the document's sibling assets directory.
         let got = std::fs::read(base.join(&rel)).expect("should be readable again");

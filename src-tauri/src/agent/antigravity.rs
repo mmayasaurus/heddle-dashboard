@@ -232,7 +232,10 @@ mod tests {
             post.ends_with(" waiting"),
             "PostInvocation should report waiting: {post}"
         );
-        assert!(stop.ends_with(" waiting"), "Stop should report waiting: {stop}");
+        assert!(
+            stop.ends_with(" waiting"),
+            "Stop should report waiting: {stop}"
+        );
         assert_eq!(v[GROUP]["PreInvocation"][0]["type"], "command");
         // Invocation events are flat, without nested hooks or matcher, matching Orca production form.
         assert!(
@@ -298,7 +301,10 @@ mod tests {
         // Our group now points to the current script and no longer contains the old path.
         let pre = v[GROUP]["PreInvocation"][0]["command"].as_str().unwrap();
         assert!(pre.starts_with(&script.display().to_string()) || pre.contains("hook.sh"));
-        assert!(!pre.contains("/old/hook.sh"), "the old vlx group should be replaced wholesale");
+        assert!(
+            !pre.contains("/old/hook.sh"),
+            "the old vlx group should be replaced wholesale"
+        );
         assert!(v[GROUP].get("PostInvocation").is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -313,7 +319,10 @@ mod tests {
         std::fs::write(&hooks, "{ not json").unwrap();
 
         // Invalid JSON returns Err and leaves the original file unchanged.
-        assert!(install_at(&script, &hooks).is_err(), "invalid JSON should be refused rather than written");
+        assert!(
+            install_at(&script, &hooks).is_err(),
+            "invalid JSON should be refused rather than written"
+        );
         assert_eq!(
             std::fs::read_to_string(&hooks).unwrap(),
             "{ not json",

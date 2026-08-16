@@ -7,7 +7,7 @@ const REGISTRY: &str = r#"{
   "claude": [
     {"id": "acct1", "configDir": null, "email": "one@example.com", "loggedIn": true},
     {"id": "acct2", "configDir": "/tmp/heddle-claude-tests/.claude-acct2", "email": "two@example.org", "loggedIn": true},
-    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": true}
+    {"id": "acct3", "configDir": "/tmp/heddle-claude-tests/.claude-acct3", "email": "three@example.net", "loggedIn": false}
   ]
 }"#;
 
@@ -55,6 +55,8 @@ fn registry_parses_ids_config_dirs_and_emails() {
         Some(Path::new("/tmp/heddle-claude-tests/.claude-acct2"))
     );
     assert_eq!(r[2].email.as_deref(), Some("three@example.net"));
+    assert_eq!(r[0].logged_in, Some(true));
+    assert_eq!(r[2].logged_in, Some(false));
     assert!(parse_registry(&serde_json::json!({})).is_empty());
 }
 
@@ -127,6 +129,7 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     assert_eq!(rows[0].captured_at, Some(now - 60));
     assert_eq!(rows[0].stale, Some(false));
     assert_eq!(rows[0].limit_reached, Some(false));
+    assert_eq!(rows[0].logged_in, Some(true));
     assert_eq!(rows[0].detail.as_ref().unwrap()["model"], "claude-fable-5");
     // acct2: at 100% → limitReached + code; captured 700s ago → stale.
     assert_eq!(rows[1].id, "acct2");
@@ -139,6 +142,7 @@ fn per_account_rows_come_from_claude_acct_files_and_top_level_is_the_active_acco
     assert_eq!(rows[2].five_hour, LimitWindow::default());
     assert_eq!(rows[2].limit_reached, None);
     assert_eq!(rows[2].note_codes, vec![CODE_NO_CAPTURE]);
+    assert_eq!(rows[2].logged_in, Some(false));
     // Full emails never leak.
     let js = serde_json::to_string(&rows).unwrap();
     assert!(

@@ -36,6 +36,7 @@ pub(super) struct Account {
     /// `None` = the default `~/.claude` (never set `CLAUDE_CONFIG_DIR` for it).
     pub config_dir: Option<PathBuf>,
     pub email: Option<String>,
+    pub logged_in: Option<bool>,
 }
 
 pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
@@ -66,6 +67,7 @@ pub(super) fn parse_registry(v: &Value) -> Vec<Account> {
                         id,
                         config_dir: a["configDir"].as_str().map(PathBuf::from),
                         email: a["email"].as_str().map(str::to_string),
+                        logged_in: a["loggedIn"].as_bool(),
                     })
                 })
                 .collect()
@@ -141,6 +143,7 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
                 .as_ref()
                 .and_then(|v| v["configDir"].as_str().map(PathBuf::from)),
             email: None,
+            logged_in: None,
         };
         rows.push(row(&acct, file.as_ref(), now));
     }
@@ -219,6 +222,7 @@ fn row_no_capture(a: &Account, label: String, detail: Value) -> AccountLimit {
         id: a.id.clone(),
         label,
         plan: None,
+        logged_in: a.logged_in,
         captured_at: None,
         stale: None,
         five_hour: LimitWindow::default(),
@@ -265,6 +269,7 @@ fn row(a: &Account, file: Option<&Value>, now: i64) -> AccountLimit {
         id: a.id.clone(),
         label,
         plan: None,
+        logged_in: a.logged_in,
         captured_at,
         stale: is_stale(captured_at, now, TAP_STALE_AFTER_SECS),
         five_hour,

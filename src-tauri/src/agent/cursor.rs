@@ -269,7 +269,11 @@ mod tests {
             .iter()
             .filter(|e| e["command"].as_str().unwrap().contains(MARKER))
             .collect();
-        assert_eq!(vlx.len(), 1, "the vlx entries should be deduplicated to one");
+        assert_eq!(
+            vlx.len(),
+            1,
+            "the vlx entries should be deduplicated to one"
+        );
         assert!(vlx[0]["command"].as_str().unwrap().ends_with(" waiting"));
         assert!(vlx[0]["command"]
             .as_str()
@@ -286,7 +290,10 @@ mod tests {
         let hooks = dir.join("hooks.json");
         std::fs::write(&hooks, "{ not json").unwrap();
 
-        assert!(install_at(&script, &hooks).is_err(), "invalid JSON should be refused rather than written");
+        assert!(
+            install_at(&script, &hooks).is_err(),
+            "invalid JSON should be refused rather than written"
+        );
         assert_eq!(
             std::fs::read_to_string(&hooks).unwrap(),
             "{ not json",

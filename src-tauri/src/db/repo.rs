@@ -1733,7 +1733,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let first = import_project(&conn, root.to_str().unwrap()).unwrap();
         let second = import_project(&conn, root.to_str().unwrap()).unwrap();
-        assert_eq!(first.id, second.id, "the same path should return the existing project rather than import it twice");
+        assert_eq!(
+            first.id, second.id,
+            "the same path should return the existing project rather than import it twice"
+        );
         assert_eq!(list_tree(&conn).unwrap().projects.len(), 1);
 
         #[cfg(unix)]
@@ -1743,7 +1746,10 @@ mod tests {
             let _ = std::fs::remove_file(&alias);
             symlink(&root, &alias).unwrap();
             let through_alias = import_project(&conn, alias.to_str().unwrap()).unwrap();
-            assert_eq!(first.id, through_alias.id, "a symlink should resolve to the same project");
+            assert_eq!(
+                first.id, through_alias.id,
+                "a symlink should resolve to the same project"
+            );
             let _ = std::fs::remove_file(alias);
         }
         let _ = std::fs::remove_dir_all(root);
@@ -1842,8 +1848,16 @@ mod tests {
         // Deleting g1 cascades through g2 and its session while preserving project-root sessions.
         delete_node(&conn, NodeKind::Group, &g1.id).unwrap();
         let tree = list_tree(&conn).unwrap();
-        assert_eq!(tree.groups.len(), 0, "child groups should be deleted in cascade");
-        assert_eq!(tree.sessions.len(), 1, "only the session at the project root remains");
+        assert_eq!(
+            tree.groups.len(),
+            0,
+            "child groups should be deleted in cascade"
+        );
+        assert_eq!(
+            tree.sessions.len(),
+            1,
+            "only the session at the project root remains"
+        );
         assert!(tree.sessions.iter().all(|s| s.id != s_in_g2.id));
 
         // Deleting the project clears everything.
@@ -1938,7 +1952,10 @@ mod tests {
             fork_session(&conn, &term.id).is_err(),
             "a terminal session should refuse to fork"
         );
-        assert!(fork_session(&conn, "no-such-id").is_err(), "a missing source should be an error");
+        assert!(
+            fork_session(&conn, "no-such-id").is_err(),
+            "a missing source should be an error"
+        );
     }
 
     /// agent_session_id round-trips and kind guards prevent cross-agent writes.
@@ -2167,7 +2184,11 @@ mod tests {
         // Deleting the parent recursively removes child and grandchild.
         delete_node(&conn, NodeKind::Session, &parent.id).unwrap();
         let tree = list_tree(&conn).unwrap();
-        assert_eq!(tree.sessions.len(), 0, "deleting a parent session should recursively delete all of its descendants");
+        assert_eq!(
+            tree.sessions.len(),
+            0,
+            "deleting a parent session should recursively delete all of its descendants"
+        );
         let _ = grand; // Used only to construct the chain; deleted with the parent.
     }
 
@@ -2290,7 +2311,11 @@ mod tests {
 
         // Only live sessions are physically removed; the group is tombstoned and archives remain.
         let hard = delete_node(&conn, NodeKind::Group, &g.id).unwrap();
-        assert_eq!(hard, vec![live.id.clone()], "only live sessions are deleted for real");
+        assert_eq!(
+            hard,
+            vec![live.id.clone()],
+            "only live sessions are deleted for real"
+        );
         let tree = list_tree(&conn).unwrap();
         assert!(tree.groups.is_empty(), "the group is hidden as a tombstone");
         assert!(tree.sessions.is_empty());
@@ -2301,10 +2326,18 @@ mod tests {
         // Restoration revives the group and returns the session to it.
         set_archived(&conn, &arch.id, false).unwrap();
         let tree = list_tree(&conn).unwrap();
-        assert_eq!(tree.groups.len(), 1, "restoring brings the group back as well");
+        assert_eq!(
+            tree.groups.len(),
+            1,
+            "restoring brings the group back as well"
+        );
         assert_eq!(tree.groups[0].id, g.id);
         let s = tree.sessions.iter().find(|s| s.id == arch.id).unwrap();
-        assert_eq!(s.group_id.as_deref(), Some(g.id.as_str()), "the session lands back in its original group");
+        assert_eq!(
+            s.group_id.as_deref(),
+            Some(g.id.as_str()),
+            "the session lands back in its original group"
+        );
         assert!(list_archived(&conn).unwrap().is_empty());
     }
 
@@ -2344,11 +2377,18 @@ mod tests {
         set_archived(&conn, &child.id, true).unwrap();
 
         let hard = delete_node(&conn, NodeKind::Session, &parent.id).unwrap();
-        assert_eq!(hard, vec![parent.id.clone()], "only the live parent session is deleted for real");
+        assert_eq!(
+            hard,
+            vec![parent.id.clone()],
+            "only the live parent session is deleted for real"
+        );
         let archd = list_archived(&conn).unwrap();
         assert_eq!(archd.len(), 1);
         assert_eq!(archd[0].id, child.id);
-        assert!(archd[0].parent_session_id.is_none(), "the archived child has been detached from its parent");
+        assert!(
+            archd[0].parent_session_id.is_none(),
+            "the archived child has been detached from its parent"
+        );
         assert_eq!(
             archd[0].group_id.as_deref(),
             Some(g.id.as_str()),
@@ -2392,7 +2432,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(cnt, 1, "the tombstoned group stays in the database for now, just hidden");
+        assert_eq!(
+            cnt, 1,
+            "the tombstoned group stays in the database for now, just hidden"
+        );
 
         // Permanent archive deletion reclaims the tombstoned group.
         delete_node(&conn, NodeKind::Session, &arch.id).unwrap();
@@ -2403,7 +2446,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(cnt, 0, "the tombstoned group is reclaimed once the last archive is deleted");
+        assert_eq!(
+            cnt, 0,
+            "the tombstoned group is reclaimed once the last archive is deleted"
+        );
         assert!(list_archived(&conn).unwrap().is_empty());
     }
 
@@ -2445,7 +2491,11 @@ mod tests {
         set_archived(&conn, &arch.id, true).unwrap();
 
         let hard = delete_node(&conn, NodeKind::Group, &outer.id).unwrap();
-        assert_eq!(hard, vec![live_b.id.clone()], "only the live session in inner B is deleted for real");
+        assert_eq!(
+            hard,
+            vec![live_b.id.clone()],
+            "only the live session in inner B is deleted for real"
+        );
 
         let count_group = |id: &str| -> i64 {
             conn.query_row(
@@ -2455,9 +2505,21 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(count_group(&outer.id), 1, "the outer group is kept as a tombstone");
-        assert_eq!(count_group(&inner_a.id), 1, "inner A holds an archive, so it is kept as a tombstone");
-        assert_eq!(count_group(&inner_b.id), 0, "inner B holds no archive and is deleted outright");
+        assert_eq!(
+            count_group(&outer.id),
+            1,
+            "the outer group is kept as a tombstone"
+        );
+        assert_eq!(
+            count_group(&inner_a.id),
+            1,
+            "inner A holds an archive, so it is kept as a tombstone"
+        );
+        assert_eq!(
+            count_group(&inner_b.id),
+            0,
+            "inner B holds no archive and is deleted outright"
+        );
         assert!(
             list_tree(&conn).unwrap().groups.is_empty(),
             "every tombstoned group is hidden from the normal tree"
@@ -2467,7 +2529,11 @@ mod tests {
         // Restoration revives outer/inner A and returns the archive to inner A.
         set_archived(&conn, &arch.id, false).unwrap();
         let tree = list_tree(&conn).unwrap();
-        assert_eq!(tree.groups.len(), 2, "the outer group and inner A are both restored");
+        assert_eq!(
+            tree.groups.len(),
+            2,
+            "the outer group and inner A are both restored"
+        );
         let s = tree.sessions.iter().find(|s| s.id == arch.id).unwrap();
         assert_eq!(
             s.group_id.as_deref(),
@@ -2533,8 +2599,16 @@ mod tests {
         let tree = list_tree(&conn).unwrap();
         assert_eq!(tree.groups.len(), 1, "the group is restored");
         let r = tree.sessions.iter().find(|x| x.id == s1.id).unwrap();
-        assert_eq!(r.group_id.as_deref(), Some(g.id.as_str()), "the session returns to its original group");
-        assert_eq!(list_archived(&conn).unwrap().len(), 1, "the other one is still archived");
+        assert_eq!(
+            r.group_id.as_deref(),
+            Some(g.id.as_str()),
+            "the session returns to its original group"
+        );
+        assert_eq!(
+            list_archived(&conn).unwrap().len(),
+            1,
+            "the other one is still archived"
+        );
         let _ = s2;
     }
 
@@ -2552,7 +2626,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(cnt, 0, "archiving an empty group degenerates into an outright delete");
+        assert_eq!(
+            cnt, 0,
+            "archiving an empty group degenerates into an outright delete"
+        );
     }
 
     /// Custom arguments/permission mode round-trip through full creation, reads, update, and fork;

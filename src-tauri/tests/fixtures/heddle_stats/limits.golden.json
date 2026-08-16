@@ -33,6 +33,7 @@
           "id": "00000000-0000-0000-0000-000000000007",
           "label": "a…@example.com",
           "limitReached": false,
+          "loggedIn": null,
           "note": null,
           "noteCodes": [],
           "plan": "prolite",
@@ -63,6 +64,7 @@
           "id": "00000000-0000-0000-0000-000000000005",
           "label": "b…@example.org",
           "limitReached": false,
+          "loggedIn": null,
           "note": null,
           "noteCodes": [],
           "plan": "pro",
@@ -158,6 +160,7 @@
           "id": "cursor-ide",
           "label": "v…@example.com",
           "limitReached": false,
+          "loggedIn": null,
           "note": "You've used 17% of your included total usage; You've used 87% of your included API usage; included API pool used up ($400.00 of $400.00) — named third-party models bill on-demand until the cycle resets",
           "noteCodes": [
             "cursor.includedApiExhausted"

@@ -627,11 +627,17 @@ mod tests {
             "bridge0",
             "bridge100",
         ] {
-            assert!(is_virtual_iface(n), "{n} should be treated as a virtual interface");
+            assert!(
+                is_virtual_iface(n),
+                "{n} should be treated as a virtual interface"
+            );
         }
         // Keep real LAN and VPN tunnel interfaces; lan_ips merely ranks VPNs lower.
         for n in ["en0", "en1", "eth0", "wlan0", "utun0", "ppp0"] {
-            assert!(!is_virtual_iface(n), "{n} should not be treated as a virtual interface");
+            assert!(
+                !is_virtual_iface(n),
+                "{n} should not be treated as a virtual interface"
+            );
         }
     }
 }
