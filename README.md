@@ -106,7 +106,7 @@ cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
 ```
 
 CI runs the same gate on every PR (`docs/CI.md`); reviewer bots comment on PRs and every comment is
-addressed before merge.
+addressed before merge ([docs/TESTING-BAR.md](docs/TESTING-BAR.md) describes the test bar).
 
 ## Project layout
 
@@ -128,7 +128,7 @@ src-tauri/src/    Rust backend
   git.rs          git status probing
 scripts/          dev scripts, the usage tap, the window keeper
 skills/           agent skills exposed inside heddle sessions
-docs/             USAGE_TAP.md, CI.md, upstream manuals + changelog
+docs/             USAGE_TAP.md, CI.md, TESTING-BAR.md, upstream manuals + changelog
 ```
 
 ## Documentation
@@ -136,6 +136,7 @@ docs/             USAGE_TAP.md, CI.md, upstream manuals + changelog
 - [ROADMAP.md](ROADMAP.md) — plan of record and decision log
 - [Usage tap](docs/USAGE_TAP.md) — how the provider caps are captured
 - [CI](docs/CI.md) — the PR gate and deterministic review tier
+- [Testing bar](docs/TESTING-BAR.md) — behavioral tests, not toggle-toggles
 - Upstream manuals (VelaTerm content; heddle-specific parts are above):
   [overview](docs/manuals/manuals-overview_20260709_2041.md) ·
   [getting started](docs/manuals/getting-started_20260709_2041.md) ·
@@ -158,7 +159,7 @@ Two conventions matter most in this codebase:
 
 Any command touching the network or the filesystem must be asynchronous — synchronous Tauri commands
 run on the main thread and freeze the UI. Tests must be behavioral — the switch must be shown to turn
-the function on, not just the toggle.
+the function on, not just the toggle ([docs/TESTING-BAR.md](docs/TESTING-BAR.md)).
 
 ## License
 
