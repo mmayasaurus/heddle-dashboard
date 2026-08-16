@@ -266,18 +266,7 @@ fn polls_accumulate_a_persisted_fable_estimate_per_account_and_surface_it_on_the
     assert_eq!(fw["fablePct"], 4.0);
     assert_eq!(fw["otherPct"], 1.0);
     assert_eq!(fw["unknownPct"], 10.0);
-    // acct1 is the active account → the same numbers ride on the top level.
-    assert_eq!(l.active_account.as_deref(), Some("acct1"));
-    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
-    assert_eq!(l.fable_weekly_samples, Some(3));
-    // Other accounts (no capture) carry no estimate.
-    assert_eq!(
-        l.accounts.as_ref().unwrap()[1].fable_weekly_estimate_pct,
-        None
-    );
-    // Re-polling the SAME capture doesn't double count.
-    let l = build(&s.0, &reg, None, now).unwrap();
-    assert_eq!(l.accounts.unwrap()[0].fable_weekly_samples, Some(3));
+    top_level_and_idempotency(&s, &reg, now);
     // The attribution file itself is never mistaken for an unregistered account row.
     let l = build(&s.0, &reg, None, now).unwrap();
     assert!(l.accounts.unwrap().iter().all(|r| !r.id.contains("attrib")));
@@ -321,6 +310,21 @@ fn single_file_mode_without_a_registry_still_accumulates_the_fable_estimate() {
     assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
     // Still the plain single-file entry otherwise (no rows).
     assert!(l.accounts.is_none());
+}
+
+/// Second half of the accumulation test (split for the length gate): the active row's numbers ride
+/// on the top level, other accounts stay null, and re-polling the same capture never double counts.
+fn top_level_and_idempotency(s: &Scratch, reg: &[Account], now: i64) {
+    let l = build(&s.0, reg, None, now - 120).unwrap();
+    assert_eq!(l.active_account.as_deref(), Some("acct1"));
+    assert_eq!(l.fable_weekly_estimate_pct, Some(4.0));
+    assert_eq!(l.fable_weekly_samples, Some(3));
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[1].fable_weekly_estimate_pct,
+        None
+    );
+    let l = build(&s.0, reg, None, now).unwrap();
+    assert_eq!(l.accounts.unwrap()[0].fable_weekly_samples, Some(3));
 }
 
 #[test]

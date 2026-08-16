@@ -153,42 +153,67 @@ fn apply_delta(state: &mut Attrib, cap: &Capture, used: f64, prev_used: f64, pre
     }
 }
 
+/// Ordering/duplicate guard: `true` when this capture must be dropped — it is older than the
+/// baseline, or identical (same timestamp, same reading, same exact value) to the last one.
+fn already_ingested(state: &Attrib, cap: &Capture) -> bool {
+    let Some(prev_at) = state.last_captured_at else {
+        return false;
+    };
+    if cap.captured_at < prev_at {
+        return true;
+    }
+    cap.captured_at == prev_at
+        && state.last_used_pct == cap.seven_day_used
+        && (cap.exact_fable_pct.is_none() || cap.exact_fable_pct == Some(state.fable_pct))
+}
+
+/// The exact-window path: adopt the provider's weekly Fable value verbatim. Entering exact mode
+/// drops the heuristic books; crossing into a new window while exact starts over first.
+fn ingest_exact(state: &mut Attrib, cap: &Capture, exact: f64, now: i64) -> bool {
+    if !state.exact || window_changed(state, cap) {
+        *state = Attrib {
+            exact: true,
+            ..Default::default()
+        };
+    }
+    let changed = state.fable_pct != exact || state.last_captured_at != Some(cap.captured_at);
+    state.fable_pct = exact;
+    if cap.seven_day_resets_at.is_some() {
+        state.window_resets_at = cap.seven_day_resets_at;
+    }
+    state.last_captured_at = Some(cap.captured_at);
+    state.last_used_pct = cap.seven_day_used;
+    state.updated_at = Some(now);
+    changed
+}
+
+/// Leaving exact mode inside the SAME window: keep what we KNOW (the last exact Fable share) as
+/// the seed, book the remainder as unknown, and rebuild confidence from zero — the estimate hides
+/// until fresh samples exist, then resumes well-seeded instead of amnesiac.
+fn seed_from_exact(state: &mut Attrib, cap: &Capture, used: f64, now: i64) {
+    let seed = state.fable_pct.min(used).max(0.0);
+    *state = Attrib {
+        window_resets_at: cap.seven_day_resets_at.or(state.window_resets_at),
+        last_captured_at: Some(cap.captured_at),
+        last_used_pct: Some(used),
+        fable_pct: seed,
+        unknown_pct: (used - seed).max(0.0),
+        updated_at: Some(now),
+        ..Default::default()
+    };
+}
+
 /// Fold one capture into the state. Returns whether the state changed (→ persist).
 ///
 /// Ordering: a capture at the SAME timestamp is re-processed only if its reading differs (two
 /// renders inside one second — gap 0, normal attribution); a capture OLDER than the last ingested
 /// one is dropped outright, so out-of-order writers can never rewind the baseline.
 pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
-    if let Some(prev_at) = state.last_captured_at {
-        if cap.captured_at < prev_at {
-            return false;
-        }
-        if cap.captured_at == prev_at
-            && state.last_used_pct == cap.seven_day_used
-            && (cap.exact_fable_pct.is_none() || cap.exact_fable_pct == Some(state.fable_pct))
-        {
-            return false; // already ingested this exact capture
-        }
+    if already_ingested(state, cap) {
+        return false;
     }
-    // Exact model-scoped weekly window: use it verbatim. Entering exact mode (or crossing into a
-    // new window while exact) drops the heuristic buckets — mixed-mode breakdowns would present
-    // stale "confidence" next to an exact value.
     if let Some(exact) = cap.exact_fable_pct {
-        if !state.exact || window_changed(state, cap) {
-            *state = Attrib {
-                exact: true,
-                ..Default::default()
-            };
-        }
-        let changed = state.fable_pct != exact || state.last_captured_at != Some(cap.captured_at);
-        state.fable_pct = exact;
-        if cap.seven_day_resets_at.is_some() {
-            state.window_resets_at = cap.seven_day_resets_at;
-        }
-        state.last_captured_at = Some(cap.captured_at);
-        state.last_used_pct = cap.seven_day_used;
-        state.updated_at = Some(now);
-        return changed;
+        return ingest_exact(state, cap, exact, now);
     }
     let Some(used) = cap.seven_day_used else {
         return false;
@@ -197,32 +222,14 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
         reset_state(state, cap, used, now);
         return true;
     };
-    if state.exact {
-        if window_changed(state, cap) {
-            // A new weekly window began while exact: the old share belongs to last week — full
-            // reset, never seed across windows.
-            reset_state(state, cap, used, now);
-            return true;
-        }
-        // The exact window disappeared mid-flight (same window): keep what we KNOW (the last
-        // exact Fable share) as the seed, book the remainder as unknown, and rebuild confidence
-        // from zero — the estimate hides until fresh samples exist, then resumes well-seeded
-        // instead of amnesiac.
-        let seed = state.fable_pct.min(used).max(0.0);
-        *state = Attrib {
-            window_resets_at: cap.seven_day_resets_at.or(state.window_resets_at),
-            last_captured_at: Some(cap.captured_at),
-            last_used_pct: Some(used),
-            fable_pct: seed,
-            unknown_pct: (used - seed).max(0.0),
-            updated_at: Some(now),
-            ..Default::default()
-        };
+    if window_changed(state, cap) {
+        // A new weekly window began: start the books over (exact or not — the old share belongs
+        // to last week and never seeds the new one).
+        reset_state(state, cap, used, now);
         return true;
     }
-    if window_changed(state, cap) {
-        // A new weekly window began: start the books over.
-        reset_state(state, cap, used, now);
+    if state.exact {
+        seed_from_exact(state, cap, used, now);
         return true;
     }
     apply_delta(state, cap, used, prev_used, prev_at);
