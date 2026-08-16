@@ -27,6 +27,18 @@ pub type Progress<'a> = &'a (dyn Fn(&str, Option<u8>) + Sync);
 /// Stable prefix marking rejected key authentication so the frontend can prompt for a password and retry.
 pub const AUTH_REQUIRED_TAG: &str = "__VLX_SSH_AUTH_REQUIRED__";
 
+/// SSH remote development is DISABLED in heddle builds (HED-42).
+///
+/// The provisioning path downloads VLINX's `vela-server` from `dl.velaterm.com` (verified with
+/// VelaTerm's minisign key) and installs it on the remote host — a third-party binary heddle does not
+/// build or publish. Until heddle owns its own server build the whole SSH-connect flow is gated off:
+/// the Tauri commands refuse with `SSH_REMOTE_DISABLED_MSG`, `server_supply` refuses to fetch, and the
+/// Connect panel hides the SSH mode (`ssh_remote_available`). The module is kept intact so it can be
+/// re-enabled by flipping this constant once a heddle server exists.
+pub const SSH_REMOTE_ENABLED: bool = false;
+/// User-facing refusal returned by every SSH-remote entry point while `SSH_REMOTE_ENABLED` is false.
+pub const SSH_REMOTE_DISABLED_MSG: &str = "SSH remote development is not available in this build";
+
 // ─────────────────────────── OpenSSH tool resolution (bundled first) ───────────────────────────
 
 /// Process-stable application data directory used by Windows to locate bundled OpenSSH.

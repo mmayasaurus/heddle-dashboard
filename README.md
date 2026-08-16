@@ -1,53 +1,62 @@
 # heddle
 
-A terminal manager built for the AI-agent era. heddle organizes scattered terminal sessions into a
-**project → group → session** tree, treats coding agents such as Claude Code and Codex as first-class
-citizens, and lets you take over any session from a browser or another machine.
+**heddle** is the cockpit of the [heddle](https://github.com/mmayasaurus/heddle) agent-orchestration
+system: a desktop terminal manager for fleets of coding agents (Claude Code, Codex, Gemini/Antigravity,
+Cursor) that shows, next to the terminals themselves, what the fleet is doing and how much of each
+provider's rate-limit window it has used — live per-provider windows, who is running what, and the recent
+sub-tasks heddle routed to workers.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > heddle is a fork of [VelaTerm](https://github.com/vlinx-io/VelaTerm) by VLINX Software (MIT),
-> rebranded and extended into the cockpit for the heddle agent-orchestration system.
-> Upstream copyright and license are retained in [LICENSE](LICENSE).
+> rebranded and extended by Very Good Fiber Goods (VGFG). Upstream copyright and license are retained
+> in [LICENSE](LICENSE); the terminal-manager core described under *Inherited from VelaTerm* is theirs.
 
 ![heddle main window](docs/assets/manuals/main-ui.png)
 
-## Why
+## What heddle adds
 
-Working with coding agents breaks the assumptions traditional terminals were built on:
+The **Fleet drawer** under the terminal stage (`src/layout/CenterPane/FleetDrawer.tsx`,
+`src-tauri/src/heddle_stats/`) — read-only, desktop-only, refreshed on a timer:
 
-- **Session sprawl.** Several agents run at once — one refactoring, one running tests, one waiting for
-  approval. A flat row of tabs stops scaling quickly.
-- **No visibility into agent state.** A plain terminal cannot tell you whether an agent is working,
-  blocked on a question, or finished.
-- **Lost context.** Closing a terminal usually throws away the agent conversation with it.
-- **Tied to one desk.** Long-running tasks keep going after you walk away, with no way to check in.
+- **Provider caps** — the *true* rolling 5-hour / 7-day rate-limit usage per provider, with live reset
+  countdowns and a refresh button. Claude numbers come from a **passthrough statusline tap**
+  (`docs/USAGE_TAP.md`, `scripts/heddle-usage-tap.mjs`) that records the exact payload Claude Code hands
+  its statusline (per-account snapshots appear as their own rows); Codex from the `claudex-usage` cache;
+  Gemini and Cursor sources are in progress. A summary bar shows one chip per provider (5-hour window %
+  + reset).
+- **Fleet roster** — named agents with their in-flight workers, scoped to the current project or all agents.
+- **Dispatch ledger** — the most recent dispatches heddle routed to workers (`~/.heddle/ledger.db`):
+  model, outcome, tokens, duration.
+- **Window keeper** (`scripts/heddle-window-keeper.py`) — keeps each Claude account's 5-hour window
+  ticking on a staggered schedule so a fresh window opens around the clock.
 
-heddle addresses each of these directly: a persistent session tree, live per-session agent status,
-transcripts that survive restarts, and remote access from a browser or over SSH.
+Plans, decisions and build order live in [ROADMAP.md](ROADMAP.md); the orchestration layer itself
+(routing table, dispatcher, MCP server, ledger) lives in the [heddle](https://github.com/mmayasaurus/heddle)
+repo. Work is tracked in Linear team **HED** (private).
 
-## Features
+## Inherited from VelaTerm
 
 - **Session tree** — projects, arbitrarily nested groups, and sessions, with drag-and-drop reordering,
   search, and persisted collapse state.
-- **Real PTYs** — every session is a full pseudo-terminal with complete input, output, and resize
-  handling, kept alive in the background while you work elsewhere.
+- **Real PTYs** — every session is a full pseudo-terminal, kept alive in the background while you work
+  elsewhere.
 - **Agent awareness** — per-session status for supported agents (working, waiting for input, done),
   driven by the agents' own hook mechanisms, plus desktop notifications and session resumption.
 - **Session spawning** — start a child session from inside a session, optionally in its own git
   worktree, and merge it back when the work is done.
-- **Split panes** — horizontal and vertical splits, with keyboard shortcuts for switching sessions.
-- **Document, image, and browser tabs** — open Markdown in a WYSIWYG editor, source files with syntax
-  highlighting, images in a viewer, and URLs in a built-in browser tab.
-- **Git integration** — branch, ahead/behind, and change counts per session, plus common actions.
-- **Remote access** — reach your sessions from a browser with end-to-end encrypted device pairing, or
-  connect to a remote machine over SSH and run sessions there.
-- **Mobile view** — a browser layout tuned for phones, served by the same remote access stack.
-- **Themes and i18n** — light/dark themes that follow the system, and a fully translated interface.
+- **Split panes**, **document / image / browser tabs**, **git integration**.
+- **Remote access** — reach your sessions from a browser with end-to-end encrypted device pairing.
+  (Upstream's SSH remote development — which provisions VelaTerm's server binary onto the remote host —
+  is disabled in heddle builds until heddle ships its own server; the code stays, gated off.)
+- **Themes and i18n** — light/dark themes that follow the system; 11 UI locales (English is complete;
+  several locales still carry upstream `TODO translate` markers).
 
 ## Platforms
 
-macOS (Apple Silicon and Intel), Windows (x64 and arm64), and Linux (x86_64 and aarch64).
+Developed and tested on macOS (Apple Silicon). Windows and Linux builds are inherited from upstream and
+have not been exercised by heddle yet. There is no auto-updater and no Electron edition; heddle never
+contacts a VelaTerm or heddle.app host.
 
 ## Tech stack
 
@@ -58,7 +67,7 @@ macOS (Apple Silicon and Intel), Windows (x64 and arm64), and Linux (x86_64 and 
 | Frontend | React 19 + TypeScript + Vite |
 | Terminal | xterm.js with the fit, web-links, search, image, and unicode11 addons |
 | State | Zustand |
-| Persistence | SQLite via `rusqlite` (bundled) |
+| Persistence | SQLite via `rusqlite` (bundled), in the app data dir |
 | Styling | Tailwind v4 with CSS-variable themes |
 
 ## Getting started
@@ -77,6 +86,7 @@ Other development modes:
 ```bash
 pnpm dev:web          # headless backend + Vite, driven from a normal browser
 pnpm dev:mobile       # same, with the mobile layout
+pnpm dev:server       # cross-build the headless server binary and launch the desktop app against it (--build-only to just build)
 pnpm dev:ls           # list running dev instances
 pnpm dev:stop <label> # stop one instance by label
 ```
@@ -95,11 +105,14 @@ pnpm lint                                         # eslint
 cargo test --manifest-path src-tauri/Cargo.toml   # backend tests
 ```
 
+CI runs the same gate on every PR (`docs/CI.md`); reviewer bots comment on PRs and every comment is
+addressed before merge ([docs/TESTING-BAR.md](docs/TESTING-BAR.md) describes the test bar).
+
 ## Project layout
 
 ```
 src/              React frontend
-  layout/         three-column + bottom-bar regions
+  layout/         three-column + bottom-bar regions; CenterPane/FleetDrawer.tsx = the heddle drawer
   store/          Zustand state
   ipc/            invoke / listen wrappers
   terminal/       xterm instance registry
@@ -107,28 +120,33 @@ src/              React frontend
   remote/         browser remote access and pairing
   mobile/         phone browser layout
 src-tauri/src/    Rust backend
+  heddle_stats/   Fleet drawer data: provider caps, roster, dispatch ledger views
   pty/            PTY manager
   db/             SQLite persistence
   agent/          agent detection, status, transcripts, spawning
   web/            embedded web server and command dispatch
   git.rs          git status probing
+scripts/          dev scripts, the usage tap, the window keeper
 skills/           agent skills exposed inside heddle sessions
-docs/manuals/     user manuals
+docs/             USAGE_TAP.md, CI.md, TESTING-BAR.md, upstream manuals + changelog
 ```
 
 ## Documentation
 
-- [Manuals overview](docs/manuals/manuals-overview_20260709_2041.md) — start here
-- [Getting started](docs/manuals/getting-started_20260709_2041.md)
-- [AI agent sessions](docs/manuals/ai-agent-sessions_20260709_2041.md)
-- [Remote development guide](docs/manuals/remote-development-guide_20260709_2041.md)
-- [Changelog](docs/changelog.md)
-- [CI & review](docs/CI.md) — what runs on every PR, the scanner rules, the review sweep
+- [ROADMAP.md](ROADMAP.md) — plan of record and decision log
+- [Usage tap](docs/USAGE_TAP.md) — how the provider caps are captured
+- [CI](docs/CI.md) — the PR gate and deterministic review tier
+- [Testing bar](docs/TESTING-BAR.md) — behavioral tests, not toggle-toggles
+- Upstream manuals (VelaTerm content; heddle-specific parts are above):
+  [overview](docs/manuals/manuals-overview_20260709_2041.md) ·
+  [getting started](docs/manuals/getting-started_20260709_2041.md) ·
+  [AI agent sessions](docs/manuals/ai-agent-sessions_20260709_2041.md) ·
+  [changelog](docs/changelog.md)
 
 ## Community
 
 - **[Upstream: VelaTerm](https://github.com/vlinx-io/VelaTerm)** — the project this fork builds on.
-- **[Issues](https://github.com/mmayasaurus/heddle-dashboard/issues)** — bugs and feature requests for the heddle fork.
+- **[Issues](https://github.com/mmayasaurus/heddle-dashboard/issues)** — bugs and feature requests for heddle.
 
 ## Contributing
 
@@ -140,7 +158,8 @@ Two conventions matter most in this codebase:
 2. **All code comments are written in English.**
 
 Any command touching the network or the filesystem must be asynchronous — synchronous Tauri commands
-run on the main thread and freeze the UI.
+run on the main thread and freeze the UI. Tests must be behavioral — the switch must be shown to turn
+the function on, not just the toggle ([docs/TESTING-BAR.md](docs/TESTING-BAR.md)).
 
 ## License
 
