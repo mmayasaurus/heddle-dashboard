@@ -928,6 +928,33 @@ const es: typeof en = {
   "fleet.comms.operatorSeal": "operator", // TODO translate
   "fleet.comms.directiveChip": (target) => `DIRECTIVE → ${target}`, // TODO translate
   "fleet.comms.fleetPresence": "Fleet", // TODO translate
+  // Fleet chatroom — operator composer + room management (HED-74c).
+  "fleet.comms.asOperator": "as Maya · operator", // TODO translate
+  "fleet.comms.atAll": "@all", // TODO translate
+  "fleet.comms.composerPlaceholder": (target) => `Message ${target} as operator`, // TODO translate
+  "fleet.comms.send": "Send", // TODO translate
+  "fleet.comms.replyingTo": (sender) => `Replying to ${sender}`, // TODO translate
+  "fleet.comms.operatorHintNoBinary": "Install heddle to enable the operator composer.", // TODO translate
+  "fleet.comms.operatorHintNoToken": "Run heddle-comms --init-operator-token to enable sending.", // TODO translate
+  "fleet.comms.operatorHintRevoked": "Operator token was rotated — restart the app.", // TODO translate
+  "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
+  "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
+  "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.newRoom": "+ New room", // TODO translate
+  "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
+  "fleet.comms.newRoomModalTitle": "New room", // TODO translate
+  "fleet.comms.roomNameLabel": "Name", // TODO translate
+  "fleet.comms.roomNamePlaceholder": "room-name", // TODO translate
+  "fleet.comms.roomNameRequired": "Name is required.", // TODO translate
+  "fleet.comms.roomTopicLabel": "Topic (optional)", // TODO translate
+  "fleet.comms.roomMembersLabel": "Members", // TODO translate
+  "fleet.comms.roomOpenLabel": "Open room", // TODO translate
+  "fleet.comms.createRoom": "Create room", // TODO translate
+  "fleet.comms.creating": "Creating…", // TODO translate
+  "fleet.comms.membersFailed": (addresses) => `Failed to add: ${addresses}`, // TODO translate
+  "fleet.comms.memberAddress": "Agent address", // TODO translate
+  "fleet.comms.addMember": "Add", // TODO translate
+  "fleet.comms.removeMember": "Remove", // TODO translate
   // Fleet drawer — route-mix scoreboard (HED-69).
   "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
   "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate

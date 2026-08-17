@@ -47,6 +47,9 @@ let roomsResponse: {
   recentRefusals: number;
 };
 let transcriptStore: Map<string, CommsMessage[]>;
+let operatorStatusResponse: { available: boolean; revoked: boolean; reason: string | null };
+
+const OK_RESULT = { outcome: "ok", code: null, reason: null };
 
 function installDefaultMock() {
   mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
@@ -58,6 +61,11 @@ function installDefaultMock() {
       return Promise.resolve({ schemaOk: true, schemaVersion: 1, messages: all.filter((m) => m.id > sinceId), floor: null });
     }
     if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
+    if (cmd === "heddle_comms_operator_status") return Promise.resolve(operatorStatusResponse);
+    if (cmd === "heddle_comms_send") return Promise.resolve(OK_RESULT);
+    if (cmd === "heddle_comms_create_room") return Promise.resolve(OK_RESULT);
+    if (cmd === "heddle_comms_add_member") return Promise.resolve(OK_RESULT);
+    if (cmd === "heddle_comms_remove_member") return Promise.resolve(OK_RESULT);
     return Promise.reject(new Error("unexpected invoke cmd: " + cmd));
   });
 }
@@ -66,6 +74,7 @@ beforeEach(() => {
   localStorage.clear();
   roomsResponse = { schemaOk: true, schemaVersion: 1, rooms: [mkRoom({ target: "#fleet", latestId: 0 })], needsHuman: [], recentRefusals: 0 };
   transcriptStore = new Map();
+  operatorStatusResponse = { available: true, revoked: false, reason: null };
   mockInvoke.mockReset();
   installDefaultMock();
 });
@@ -254,5 +263,108 @@ describe("ChatroomPane shell", () => {
     // While collapsed, Escape must not do anything (still collapsed, no error).
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.getByTestId("comms-strip")).toBeTruthy();
+  });
+});
+
+describe("ChatroomPane — HED-74c operator composer + room management wiring", () => {
+  it("the composer renders inside the expanded pane once a room is active", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    render(<ChatroomPane />);
+    expect(await screen.findByTestId("comms-composer")).toBeTruthy();
+  });
+
+  it("'+ New room' is enabled once the operator status poll confirms availability, and opens the create-room modal", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    render(<ChatroomPane />);
+    const btn = (await screen.findByTestId("comms-new-room-btn")) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+
+    fireEvent.click(btn);
+    expect(await screen.findByTestId("comms-room-modal")).toBeTruthy();
+  });
+
+  it("'+ New room' starts disabled (fail-safe) before the first operator-status poll resolves, with no premature hint", async () => {
+    let resolveStatus!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "heddle_comms_operator_status") return new Promise((resolve) => (resolveStatus = resolve));
+      if (cmd === "heddle_comms_rooms") return Promise.resolve(roomsResponse);
+      if (cmd === "heddle_comms_transcript") {
+        const target = args?.target as string;
+        const all = transcriptStore.get(target) ?? [];
+        return Promise.resolve({ schemaOk: true, schemaVersion: 1, messages: all, floor: null });
+      }
+      if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected invoke cmd: " + cmd));
+    });
+    localStorage.setItem(OPEN_KEY, "1");
+    render(<ChatroomPane />);
+
+    const btn = (await screen.findByTestId("comms-new-room-btn")) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("New room — operator and orchestrators only");
+
+    resolveStatus({ available: true, revoked: false, reason: null });
+    await waitFor(() => expect(btn.disabled).toBe(false));
+  });
+
+  it("'+ New room' is disabled with the operator hint when the operator is unavailable", async () => {
+    operatorStatusResponse = { available: false, revoked: false, reason: "no-token" };
+    localStorage.setItem(OPEN_KEY, "1");
+    render(<ChatroomPane />);
+    const btn = (await screen.findByTestId("comms-new-room-btn")) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(true));
+    expect(btn.title).toContain("--init-operator-token");
+  });
+
+  it("Escape closes the room-create modal without collapsing the whole pane", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    render(<ChatroomPane />);
+    fireEvent.click(await screen.findByTestId("comms-new-room-btn"));
+    expect(await screen.findByTestId("comms-room-modal")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("comms-room-modal")).toBeNull());
+    // The pane itself must still be expanded — Escape must not have bubbled into the collapse handler.
+    expect(screen.getByTestId("comms-overlay")).toBeTruthy();
+    expect(localStorage.getItem(OPEN_KEY)).toBe("1");
+  });
+
+  it("member controls appear in the header for an active CLOSED room, and are absent for an open room", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.rooms = [mkRoom({ target: "#fleet", open: true }), mkRoom({ target: "#heddle-build", open: false, memberCount: 3 })];
+    render(<ChatroomPane />);
+    await screen.findByTestId("comms-rail");
+
+    // #fleet auto-activates first (open room) — no member controls.
+    await waitFor(() => expect(screen.queryByTestId("comms-member-controls")).toBeNull());
+
+    fireEvent.click(screen.getByTestId("comms-room-#heddle-build"));
+    expect(await screen.findByTestId("comms-member-controls")).toBeTruthy();
+  });
+
+  it("clicking a needs-human row sets the composer's reply-to context", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.needsHuman = [mkNeedsHumanRow(1, { sender: "U.2", body: "may I run cargo update?" })];
+    render(<ChatroomPane />);
+    await screen.findByTestId("comms-rail");
+
+    fireEvent.click(screen.getByTestId("comms-needs-row-1"));
+    const ctx = await screen.findByTestId("comms-reply-ctx");
+    expect(ctx.textContent).toContain("U.2");
+    expect(ctx.textContent).toContain("may I run cargo update?");
+  });
+
+  it("switching rooms clears a pending reply-to context", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.rooms = [mkRoom({ target: "#fleet" }), mkRoom({ target: "T" })];
+    roomsResponse.needsHuman = [mkNeedsHumanRow(1, { target: "#fleet" })];
+    render(<ChatroomPane />);
+    await screen.findByTestId("comms-rail");
+
+    fireEvent.click(screen.getByTestId("comms-needs-row-1"));
+    await screen.findByTestId("comms-reply-ctx");
+
+    fireEvent.click(screen.getByTestId("comms-room-T"));
+    await waitFor(() => expect(screen.queryByTestId("comms-reply-ctx")).toBeNull());
   });
 });

@@ -51,57 +51,81 @@ function RosterRow({ agent }: { agent: FleetAgent }) {
   );
 }
 
+/** Disabled whenever operator status isn't confirmed AVAILABLE — fail-safe the same way the
+ *  composer is, so the brief pre-first-poll window (status unknown, no hint yet) reads disabled
+ *  rather than enabled. `hint` is display-only: it fills the title when there IS a specific reason
+ *  (HED-74c spec); disabled-with-no-hint-yet just keeps the default title. */
+function NewRoomButton({ onClick, disabled, hint }: { onClick: () => void; disabled: boolean; hint: string | null }) {
+  const t = useT();
+  return (
+    <button
+      className="comms-newroom"
+      type="button"
+      data-testid="comms-new-room-btn"
+      disabled={disabled}
+      title={hint ?? t("fleet.comms.newRoomTitle")}
+      onClick={onClick}
+    >
+      {t("fleet.comms.newRoom")}
+    </button>
+  );
+}
+
+function RoomRow({ room, active, unread, onSelect }: { room: CommsRoom; active: boolean; unread: boolean; onSelect: () => void }) {
+  const t = useT();
+  return (
+    <div
+      className={"comms-room" + (active ? " comms-room-active" : "")}
+      role="button"
+      tabIndex={0}
+      data-testid={`comms-room-${room.target}`}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      <span className="comms-room-name">{room.target}</span>
+      {room.open ? (
+        <span className="comms-open-tag">{t("fleet.comms.open")}</span>
+      ) : (
+        <>
+          <span className="comms-lock" title={t("fleet.comms.closedRoom")}>
+            🔒
+          </span>
+          <span className="comms-count">{room.memberCount ?? 0}</span>
+        </>
+      )}
+      {unread && <span className="comms-badge comms-badge-alert" data-testid={`comms-unread-${room.target}`} aria-label={t("fleet.comms.unread")} />}
+    </div>
+  );
+}
+
 export interface RoomsRailProps {
   rooms: CommsRoom[];
   activeTarget: string | null;
   unreadByTarget: Record<string, boolean>;
   onSelectRoom: (target: string) => void;
   roster: FleetAgent[];
+  onNewRoom: () => void;
+  newRoomDisabled: boolean;
+  newRoomHint: string | null;
 }
 
-export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, roster }: RoomsRailProps) {
+export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, roster, onNewRoom, newRoomDisabled, newRoomHint }: RoomsRailProps) {
   const t = useT();
 
   return (
     <div className="comms-rail" data-testid="comms-rail">
-      <h3 className="comms-rail-h">{t("fleet.comms.rooms")}</h3>
-      {rooms.map((r) => {
-        const active = r.target === activeTarget;
-        const unread = unreadByTarget[r.target];
-        return (
-          <div
-            key={r.target}
-            className={"comms-room" + (active ? " comms-room-active" : "")}
-            role="button"
-            tabIndex={0}
-            data-testid={`comms-room-${r.target}`}
-            onClick={() => {
-              onSelectRoom(r.target);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onSelectRoom(r.target);
-              }
-            }}
-          >
-            <span className="comms-room-name">{r.target}</span>
-            {r.open ? (
-              <span className="comms-open-tag">{t("fleet.comms.open")}</span>
-            ) : (
-              <>
-                <span className="comms-lock" title={t("fleet.comms.closedRoom")}>
-                  🔒
-                </span>
-                <span className="comms-count">{r.memberCount ?? 0}</span>
-              </>
-            )}
-            {unread && (
-              <span className="comms-badge comms-badge-alert" data-testid={`comms-unread-${r.target}`} aria-label={t("fleet.comms.unread")} />
-            )}
-          </div>
-        );
-      })}
+      <h3 className="comms-rail-h">
+        {t("fleet.comms.rooms")}
+        <NewRoomButton onClick={onNewRoom} disabled={newRoomDisabled} hint={newRoomHint} />
+      </h3>
+      {rooms.map((r) => (
+        <RoomRow key={r.target} room={r} active={r.target === activeTarget} unread={!!unreadByTarget[r.target]} onSelect={() => onSelectRoom(r.target)} />
+      ))}
 
       <h3 className="comms-rail-h">{t("fleet.comms.fleetPresence")}</h3>
       {roster.map((a) => (
