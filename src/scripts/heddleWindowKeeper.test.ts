@@ -541,6 +541,50 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(emitted).not.toContain(secretPrompt);
   });
 
+  it("rejects an implausible model field so content cannot leak through the one persisted string", () => {
+    // The model is the only transcript field persisted as a key. A malformed/adversarial record whose
+    // model carries body text must not enter turns.json OR the state file, and must not be counted.
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const secretModel = "leaked secret prompt smuggled through the model field with spaces";
+    writeTranscript(path.join(sharedProjects, "shared.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 10) * 1000).toISOString(), model: secretModel, input: 9, output: 9 },
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").byModel).toEqual({}); // implausible model → not counted
+    // Crucially, check the STATE file too — the existing privacy test omits it.
+    const stateBlob = fs.readFileSync(path.join(home, ".heddle", "transcript-usage-state.json"), "utf8");
+    const turnsBlob = fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct1.turns.json"), "utf8");
+    expect(stateBlob).not.toContain(secretModel);
+    expect(turnsBlob).not.toContain(secretModel);
+  });
+
+  it("runs the pings BEFORE transcript accounting, so a blocking transcript read cannot cost a ping", () => {
+    // A hung open() (here a FIFO named like a transcript) is not an exception, so the try/except
+    // around accounting cannot save the pings — only running them first does. Proof: the ping anchor
+    // exists even though accounting then blocks forever (we kill it with a timeout).
+    const mkfifo = spawnSync("mkfifo", ["--help"]);
+    if (mkfifo.error) return; // no mkfifo on this platform — skip
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    // NO window for acct1 → it is UNKNOWN and therefore the due ping. (A window would make it "live"
+    // = nothing to do, and there would be no ping to observe.)
+    expect(spawnSync("mkfifo", [path.join(sharedProjects, "blocking.jsonl")]).status).toBe(0);
+    // acct1 has no window anchor → it is the due ping; run with a short kill timeout since the keeper
+    // will hang in account_transcripts after pinging.
+    spawnSync("python3", [keeperPath], {
+      cwd: path.resolve(path.dirname(keeperPath), ".."),
+      env: { ...process.env, HOME: home, HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"), HEDDLE_ROTATE_NOTIFY: "0", CLAUDE_CONFIG_DIR: undefined },
+      encoding: "utf8",
+      timeout: 4000,
+    });
+    // The ping ran first: its keeper anchor is on disk despite accounting blocking afterward.
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.keeper.json"))).toBe(true);
+  });
+
   it("only counts transcript turns inside the current weekly window", () => {
     const home = mkHome();
     const { sharedProjects } = setupTranscriptAccounts(home);
@@ -855,7 +899,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
 
     const result = runKeeper([], home);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("[transcripts] accounting failed, continuing with pings:");
+    expect(result.stdout).toContain("[transcripts] accounting failed:");
     expect(calls(home)).toHaveLength(1);
   });
 });

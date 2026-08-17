@@ -463,6 +463,17 @@ def is_fable(model):
     return "fable" in re.split(r"[^a-z0-9]+", model.lower())
 
 
+# A real model id is a short single-line token (`claude-opus-4-8`, `gpt-5.6-codex`). The `model` field
+# is the ONE transcript value we persist as a key, so it is the one place body content could ride out
+# of the reader if a record were malformed or adversarial. Require it to look like a model id — capped
+# length, no whitespace or control characters — before it can enter turns.json / the state file.
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+
+
+def is_plausible_model(model):
+    return isinstance(model, str) and bool(_MODEL_RE.match(model))
+
+
 def add_transcript_turn(file_counts, account, model, usage):
     account_counts = file_counts.setdefault(account, {})
     counts = account_counts.setdefault(model, {"input": 0, "output": 0, "cacheCreation": 0,
@@ -619,7 +630,7 @@ def account_transcripts(accts, now):
                         continue
                     message = turn.get("message") or {}
                     model, usage = message.get("model"), message.get("usage")
-                    if isinstance(model, str) and isinstance(usage, dict):
+                    if is_plausible_model(model) and isinstance(usage, dict):
                         add_transcript_turn(file_counts, acct_id, model, usage)
                 except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
                     # Invalid complete records are skipped silently: logging a transcript line could leak it.
@@ -681,21 +692,10 @@ def main():
             log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
         return
 
-    if not dry:
-        # The advisor is SECONDARY. Keeping windows alive is what this job exists for, and that work
-        # happens below — so anything the advisor can throw (a hand-edited state file, an unexpected
-        # window shape) must degrade to a log line rather than abort the run before a single ping.
-        try:
-            advise_rotation(accts, state, now)
-        except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
-            log(f"[rotate] advisor failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
-        # Transcript summaries improve weekly routing, but the staggered pings remain this job's
-        # primary responsibility. A damaged transcript state file must therefore never block a ping.
-        try:
-            account_transcripts(accts, now)
-        except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
-            log(f"[transcripts] accounting failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
-
+    # PRIMARY JOB FIRST (adversarial review, cursor/grok): keep windows alive before ANY secondary
+    # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
+    # filesystem read — is not an exception, so the try/except guarding the advisor and transcript
+    # accounting below cannot catch it. Only doing the pings first guarantees a hang there costs no ping.
     for a in accts:
         w = window(a["id"])
         live = bool(w and w["resets_at"] and w["resets_at"] > now)
@@ -721,6 +721,18 @@ def main():
             state.update({"last_ping_ts": now, "last_ping_acct": a["id"]})
             write_json_atomic(STATE, state)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN
+
+    if not dry:
+        # SECONDARY work, now that the pings are done. Each is wrapped so a raised error degrades to a
+        # log line; a hung open() cannot reach here to block a ping because the pings already ran.
+        try:
+            advise_rotation(accts, state, now)
+        except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
+            log(f"[rotate] advisor failed: {type(e).__name__}: {str(e)[-160:]}")
+        try:
+            account_transcripts(accts, now)
+        except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
+            log(f"[transcripts] accounting failed: {type(e).__name__}: {str(e)[-160:]}")
 
     return 0
 
