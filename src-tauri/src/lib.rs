@@ -12,6 +12,11 @@ mod command_core;
 // Tauri command registry is compiled only for GUI builds.
 #[cfg(feature = "gui")]
 mod commands;
+// Read-only comms.db reader (Fleet chatroom panel): rooms/needs-human/transcript views over the
+// Node broker's log (`~/.heddle/comms.db`, src/comms/log.ts) — see comms/reader.rs for the
+// read-only contract this module enforces.
+#[cfg(feature = "gui")]
+mod comms;
 // heddle orchestration stats (Fleet drawer): ccusage caps + dispatch ledger, read-only.
 #[cfg(feature = "gui")]
 mod heddle_stats;
@@ -865,6 +870,9 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             heddle_stats::discipline::heddle_discipline,
             heddle_stats::heddle_provider_limits,
             heddle_stats::heddle_refresh_provider_limits,
+            // Fleet chatroom panel (read-only comms.db views): rooms/needs-human/transcript.
+            comms::reader::heddle_comms_rooms,
+            comms::reader::heddle_comms_transcript,
         ])
         .build(tauri_context())
         .expect("error while building tauri application")
