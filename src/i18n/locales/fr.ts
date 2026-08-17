@@ -923,6 +923,15 @@ const fr: typeof en = {
   "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
   "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
   "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
+
+  // Fleet drawer — discipline telemetry (HED-85).
+  "fleet.discipline.title": "Discipline \u00b7 memory-layer usage (24h)", // TODO translate
+  "fleet.discipline.empty": "No memory-layer calls recorded in the window.", // TODO translate
+  "fleet.discipline.zeroCalls": (agent: string) => `\u26a0 ${agent}: live, 0 memtrace/serena calls in 24h`, // TODO translate
+  "fleet.discipline.denied": (n: number) => `denied \u00d7${n}`, // TODO translate
+  "fleet.discipline.gateOn": "gate on", // TODO translate
+  "fleet.discipline.gateOff": "gate OFF", // TODO translate
+  "fleet.discipline.legacy": (n: number) => `+${n} unattributed memtrace calls (vendor telemetry)`, // TODO translate
 };
 
 export default fr;

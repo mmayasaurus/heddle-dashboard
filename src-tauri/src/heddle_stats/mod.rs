@@ -27,6 +27,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 mod claude;
+pub mod discipline;
 pub mod route_mix;
 mod codex;
 mod cursor;
