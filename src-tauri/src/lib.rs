@@ -873,6 +873,12 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             // Fleet chatroom panel (read-only comms.db views): rooms/needs-human/transcript.
             comms::reader::heddle_comms_rooms,
             comms::reader::heddle_comms_transcript,
+            // Fleet chatroom composer (write path, operator-only): status + send + room management.
+            comms::operator::heddle_comms_operator_status,
+            comms::operator::heddle_comms_send,
+            comms::operator::heddle_comms_create_room,
+            comms::operator::heddle_comms_add_member,
+            comms::operator::heddle_comms_remove_member,
         ])
         .build(tauri_context())
         .expect("error while building tauri application")
@@ -938,6 +944,11 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
                 // When enabled, remove only this process's pasted-image temp files on exit, preserving
                 // images used by other instances.
                 if let tauri::RunEvent::Exit = event {
+                    // Kill the operator's heddle-comms child. rmcp's Drop impls are only a partial
+                    // net: the client lives in a `static`, and statics are never dropped at normal
+                    // process exit — without this, quitting can leave an orphaned broker child
+                    // holding the operator session open.
+                    tauri::async_runtime::block_on(comms::operator::shutdown());
                     let enabled = app
                         .try_state::<Db>()
                         .map(|db| pasted_image_cleanup_enabled(db.inner()))

@@ -32,7 +32,12 @@ function mkHome({ usageDir = true }: { usageDir?: boolean } = {}): string {
 }
 
 function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = {}) {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude") };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"),
+    HEDDLE_ROTATE_NOTIFY: "0",
+  };
   delete env.CLAUDE_CONFIG_DIR;
   Object.assign(env, overrides);
   return spawnSync("python3", [keeperPath, ...args], { cwd: path.resolve(path.dirname(keeperPath), ".."), env, encoding: "utf8" });
@@ -54,6 +59,25 @@ function writeTap(home: string, account: string, capturedAt: number, used: numbe
     path.join(home, ".heddle", "usage", `claude-${account}.json`),
     JSON.stringify({ capturedAt, rate_limits: { five_hour: { used_percentage: used, resets_at: resetsAt } } }),
   );
+}
+
+function writeKeeperWindow(home: string, account: string, startedAt: number, resetsAt: number, used: number | null) {
+  fs.writeFileSync(
+    path.join(home, ".heddle", "usage", `claude-${account}.keeper.json`),
+    JSON.stringify({ account, startedAt, resets_at: resetsAt, used, source: "keeper-ping" }),
+  );
+}
+
+function seedRotationWindows(home: string, { activeUsed = 90, peerUsed = 20 } = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const resetsAt = now + 3600;
+  writeTap(home, "acct1", now + 2, activeUsed, resetsAt);
+  writeTap(home, "acct2", now + 1, peerUsed, resetsAt);
+  return { now, resetsAt };
+}
+
+function advice(home: string) {
+  return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "rotation-advice.json"), "utf8"));
 }
 
 function tempFiles(root: string): string[] {
@@ -148,10 +172,14 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(calls(home)).toHaveLength(1);
   });
 
-  it("pings the next account when the stagger is disabled", () => {
+  it("pings the next account when the stagger slot is due", () => {
     const home = mkHome();
     establishAcct1Window(home);
-    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "0" });
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({ last_ping_ts: Math.floor(Date.now() / 1000) - 61, last_ping_acct: "acct1" }),
+    );
+    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
     expect(calls(home)).toHaveLength(2);
     expect(calls(home)[1]).toContain(`CFG=${path.join(home, ".claude-acct2")}`);
@@ -173,7 +201,11 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     establishAcct1Window(home);
     const now = Math.floor(Date.now() / 1000);
     writeTap(home, "acct2", now, 7, now - 60);
-    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "0" });
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({ last_ping_ts: now - 61, last_ping_acct: "acct1" }),
+    );
+    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/acct2: EXPIRED.*pinged ok=True/);
     expect(calls(home)).toHaveLength(2);
@@ -197,5 +229,221 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stderr.match(/warning: unable to write window keeper log/g)).toHaveLength(1);
     expect(result.stdout).toContain("acct1: UNKNOWN (no capture) → WOULD ping (dry-run)");
     expect(result.stdout).toContain("acct2: UNKNOWN (no capture) → WOULD ping (dry-run)");
+  });
+
+  it("writes rotation advice for the freshest tap-sourced active account", () => {
+    const home = mkHome();
+    const { resetsAt } = seedRotationWindows(home);
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(calls(home)).toEqual([]);
+
+    const rotationAdvice = advice(home);
+    expect(rotationAdvice.active).toEqual({ id: "acct1", usedPct: 90, resetsAt });
+    expect(rotationAdvice.target).toEqual({ id: "acct2", usedPct: 20, resetsAt, source: "tap" });
+    expect(rotationAdvice.command).toContain("acct2");
+    expect(rotationAdvice.thresholdPct).toBe(85);
+  });
+
+  it("does not advise when the active tap usage is below the default rotation threshold", () => {
+    const home = mkHome();
+    seedRotationWindows(home, { activeUsed: 80 });
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("respects HEDDLE_ROTATE_PCT for rotation advice", () => {
+    const home = mkHome();
+    seedRotationWindows(home, { activeUsed: 80 });
+    const result = runKeeper([], home, { HEDDLE_ROTATE_PCT: "75" });
+    expect(result.status).toBe(0);
+    expect(advice(home).thresholdPct).toBe(75);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("keeps windows alive when HEDDLE_ROTATE_PCT is malformed", () => {
+    for (const rotatePct of ["abc", "85.5", ""]) {
+      const home = mkHome();
+      const result = runKeeper([], home, { HEDDLE_ROTATE_PCT: rotatePct });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("invalid HEDDLE_ROTATE_PCT");
+      expect(calls(home)).toHaveLength(1);
+    }
+  });
+
+  it("clamps HEDDLE_ROTATE_PCT outside 1-100", () => {
+    const zeroHome = mkHome();
+    seedRotationWindows(zeroHome, { activeUsed: 0 });
+    expect(runKeeper([], zeroHome, { HEDDLE_ROTATE_PCT: "0" }).status).toBe(0);
+    expect(fs.existsSync(path.join(zeroHome, ".heddle", "rotation-advice.json"))).toBe(false);
+
+    const highHome = mkHome();
+    seedRotationWindows(highHome, { activeUsed: 100 });
+    expect(runKeeper([], highHome, { HEDDLE_ROTATE_PCT: "250" }).status).toBe(0);
+    expect(advice(highHome).thresholdPct).toBe(100);
+  });
+
+  it("does not advise from an expired tap window for the busiest account", () => {
+    const home = mkHome();
+    const { now } = seedRotationWindows(home);
+    writeTap(home, "acct1", now + 3, 90, now - 1);
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+  });
+
+  it("does not choose an expired low-usage target", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    const resetsAt = now + 3600;
+    fs.writeFileSync(
+      path.join(home, ".heddle", "accounts.json"),
+      JSON.stringify({ claude: [...registry.claude.slice(0, 2), { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true }] }),
+    );
+    writeTap(home, "acct1", now + 3, 90, resetsAt);
+    writeTap(home, "acct2", now + 2, 1, now - 1);
+    writeTap(home, "acct3", now + 1, 40, resetsAt);
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct3");
+  });
+
+  it("does not advise from a keeper-started window without a tap capture", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeKeeperWindow(home, "acct1", now, now + 3600, 90);
+    writeKeeperWindow(home, "acct2", now, now + 3600, 20);
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("deduplicates rotation advice for the same active window", () => {
+    const home = mkHome();
+    const { resetsAt } = seedRotationWindows(home);
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({ last_ping_ts: 123, last_ping_acct: "acct2" }),
+    );
+    expect(runKeeper([], home).status).toBe(0);
+    const first = advice(home);
+    first.advisedAt = "must-not-be-overwritten";
+    fs.writeFileSync(path.join(home, ".heddle", "rotation-advice.json"), JSON.stringify(first));
+
+    expect(runKeeper([], home).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "window-keeper.state.json"), "utf8"));
+    expect(advice(home).advisedAt).toBe("must-not-be-overwritten");
+    expect(state.last_ping_ts).toBe(123);
+    expect(state.last_ping_acct).toBe("acct2");
+    expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("caps rotation advice dedupe entries at 50", () => {
+    const home = mkHome();
+    const { resetsAt } = seedRotationWindows(home);
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({
+        last_ping_ts: 123,
+        last_ping_acct: "acct2",
+        rotationAdvice: Array.from({ length: 55 }, (_, index) => ({ activeId: `old${index}`, resetsAt: index })),
+      }),
+    );
+
+    expect(runKeeper([], home).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "window-keeper.state.json"), "utf8"));
+    expect(state.rotationAdvice).toHaveLength(50);
+    expect(state.rotationAdvice[0]).toEqual({ activeId: "old6", resetsAt: 6 });
+    expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
+  });
+
+  it("advises again after the active tap window rolls over", () => {
+    const home = mkHome();
+    const { now, resetsAt } = seedRotationWindows(home);
+    expect(runKeeper([], home).status).toBe(0);
+    const first = advice(home);
+    first.advisedAt = "old-window";
+    fs.writeFileSync(path.join(home, ".heddle", "rotation-advice.json"), JSON.stringify(first));
+    writeTap(home, "acct1", now + 3, 90, resetsAt + 3600);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(advice(home).advisedAt).not.toBe("old-window");
+    expect(advice(home).active.resetsAt).toBe(resetsAt + 3600);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("writes targetless rotation advice when no eligible target exists", () => {
+    const home = mkHome();
+    seedRotationWindows(home, { peerUsed: 90 });
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target).toBeNull();
+    expect(advice(home).reason).toContain("every other logged-in account is also at/over the threshold or unknown");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not choose a logged-out account as the rotation target", () => {
+    const home = mkHome();
+    const { now, resetsAt } = seedRotationWindows(home);
+    writeTap(home, "acct3", now + 3, 1, resetsAt);
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct2");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("prefers known target usage over an unknown keeper window", () => {
+    const home = mkHome();
+    const { now, resetsAt } = seedRotationWindows(home);
+    const withUnknownPeer = {
+      claude: [...registry.claude, { id: "acct4", configDir: "~/.claude-acct4", loggedIn: true }],
+    };
+    fs.writeFileSync(path.join(home, ".heddle", "accounts.json"), JSON.stringify(withUnknownPeer));
+    writeKeeperWindow(home, "acct4", now, resetsAt, null);
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct2");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not invoke Claude or a relaunch command while advising", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    const result = runKeeper([], home, {
+      HEDDLE_RELAUNCH_TEMPLATE: `${path.join(home, "fake-claude")} --relaunch {account}`,
+    });
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(true);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not interpret the fleet post command through a shell", () => {
+    const home = mkHome();
+    const marker = path.join(home, "fleet-post-ran");
+    seedRotationWindows(home);
+
+    const result = runKeeper([], home, {
+      HEDDLE_FLEET_POST_CMD: `${path.join(home, "missing-fleet-hook")}; touch ${marker}`,
+    });
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("reports an unusable relaunch template without claiming there is no eligible target", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+
+    const result = runKeeper([], home, { HEDDLE_RELAUNCH_TEMPLATE: "{acct}" });
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct2");
+    expect(advice(home).command).toBeNull();
+    expect(advice(home).reason).toContain("HEDDLE_RELAUNCH_TEMPLATE");
+    expect(result.stdout).not.toContain("Command: no eligible target");
   });
 });

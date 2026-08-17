@@ -17,7 +17,7 @@ const ja: typeof en = {
   "common.copied": "コピーしました", // Copied
   "common.retry": "再試行", // Retry
   "common.refresh": "更新", // Refresh
-  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント", "fleet.loggedOut": "ログアウト中 — /login が必要", "fleet.keeperEstimate": "ウィンドウは有効（keeper 推定）— このアカウントの初回描画後に % を表示", "fleet.loginUnknown": "ログイン状態不明", "fleet.rotateAccounts": "Claude アカウントを切り替える", "fleet.fableWeekly": (pct) => `Fable は週間上限の約${pct}%（推定）`, "fleet.fableWeeklyExact": (pct) => `Fable は週間上限の${pct}%`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · その他 ${other}% · 不明 ${unknown}% · ${samples} 件のサンプル`,
+  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント", "fleet.loggedOut": "ログアウト中 — /login が必要", "fleet.keeperEstimate": "ウィンドウは有効（keeper 推定）— このアカウントの初回描画後に % を表示", "fleet.loginUnknown": "ログイン状態不明", "fleet.rotateAccounts": "Claude アカウントを切り替える", "fleet.fableWeekly": (pct) => `Fable は週間上限の約${pct}%（推定）`, "fleet.fableWeeklyExact": (pct) => `Fable は週間上限の${pct}%`, "fleet.fableWeeklyEstMark": "推定", "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · その他 ${other}% · 不明 ${unknown}% · ${samples} 件のサンプル`,
   "common.loading": "読み込み中…", // Loading…
   "common.prev": "前へ", // Previous
   "common.next": "次へ", // Next
@@ -918,6 +918,33 @@ const ja: typeof en = {
   "fleet.comms.operatorSeal": "operator", // TODO translate
   "fleet.comms.directiveChip": (target) => `DIRECTIVE → ${target}`, // TODO translate
   "fleet.comms.fleetPresence": "Fleet", // TODO translate
+  // Fleet chatroom — operator composer + room management (HED-74c).
+  "fleet.comms.asOperator": "as Maya · operator", // TODO translate
+  "fleet.comms.atAll": "@all", // TODO translate
+  "fleet.comms.composerPlaceholder": (target) => `Message ${target} as operator`, // TODO translate
+  "fleet.comms.send": "Send", // TODO translate
+  "fleet.comms.replyingTo": (sender) => `Replying to ${sender}`, // TODO translate
+  "fleet.comms.operatorHintNoBinary": "Install heddle to enable the operator composer.", // TODO translate
+  "fleet.comms.operatorHintNoToken": "Run heddle-comms --init-operator-token to enable sending.", // TODO translate
+  "fleet.comms.operatorHintRevoked": "Operator token was rotated — restart the app.", // TODO translate
+  "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
+  "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
+  "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.newRoom": "+ New room", // TODO translate
+  "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
+  "fleet.comms.newRoomModalTitle": "New room", // TODO translate
+  "fleet.comms.roomNameLabel": "Name", // TODO translate
+  "fleet.comms.roomNamePlaceholder": "room-name", // TODO translate
+  "fleet.comms.roomNameRequired": "Name is required.", // TODO translate
+  "fleet.comms.roomTopicLabel": "Topic (optional)", // TODO translate
+  "fleet.comms.roomMembersLabel": "Members", // TODO translate
+  "fleet.comms.roomOpenLabel": "Open room", // TODO translate
+  "fleet.comms.createRoom": "Create room", // TODO translate
+  "fleet.comms.creating": "Creating…", // TODO translate
+  "fleet.comms.membersFailed": (addresses) => `Failed to add: ${addresses}`, // TODO translate
+  "fleet.comms.memberAddress": "Agent address", // TODO translate
+  "fleet.comms.addMember": "Add", // TODO translate
+  "fleet.comms.removeMember": "Remove", // TODO translate
   // Fleet drawer — route-mix scoreboard (HED-69).
   "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
   "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate

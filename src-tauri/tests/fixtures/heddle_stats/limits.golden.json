@@ -8,9 +8,11 @@
             "account": "acct1",
             "configDir": null,
             "fableWeekly": {
+              "coverage": 0.0,
               "exact": false,
               "fablePct": 0.0,
               "lastCapturedAt": 1786831140,
+              "minCoverage": 0.25,
               "minSamples": 3,
               "otherPct": 0.0,
               "samples": 0,

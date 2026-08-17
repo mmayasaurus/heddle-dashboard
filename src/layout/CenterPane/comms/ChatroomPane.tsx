@@ -1,18 +1,24 @@
-//! Fleet chatroom — read-only surface (HED-74b). Default-collapsed strip that expands to an
-//! overlay with rooms+roster rail, transcript, pinned needs-human strip, and floor banner.
-//! NO composer, NO room creation, NO writes of any kind — those land in a separate PR.
+//! Fleet chatroom (HED-74b read-only surface + HED-74c operator write path). Default-collapsed
+//! strip that expands to an overlay with rooms+roster rail, transcript, pinned needs-human strip,
+//! floor banner, and — as of HED-74c — the operator composer and room-creation/membership
+//! affordances. The read-only poll (useCommsPoll) and the write path (useOperatorStatus + the
+//! four heddle_comms_* write commands) are fully separate data layers; nothing here ever inserts
+//! a message into the transcript locally — sends only ever clear the input and let the existing
+//! 2.5s poll surface whatever the broker actually logged.
 //!
-//! Self-contained: owns its own polling (useCommsPoll), its own CSS (comms.css), and its own
-//! open/closed persistence. The lane owner mounts <ChatroomPane /> with a single line; this file
-//! and its siblings under comms/ do not depend on or modify any existing component.
+//! Self-contained: owns its own polling, its own CSS (comms.css), and its own open/closed
+//! persistence. The lane owner mounts <ChatroomPane /> with a single line; this file and its
+//! siblings under comms/ do not depend on or modify any existing component.
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { useSuspendNativeViews } from "../../../hooks/nativeViewSuspend";
-import { isTauri } from "../../../ipc/transport";
+import { invoke, isTauri } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import "./comms.css";
+import { Composer } from "./Composer";
 import { FloorBanner } from "./FloorBanner";
 import { NeedsHumanStrip } from "./NeedsHumanStrip";
+import { RoomCreateModal } from "./RoomCreateModal";
 import { RoomsRail } from "./RoomsRail";
 import { Transcript } from "./Transcript";
 import {
@@ -24,6 +30,15 @@ import {
   type CommsRoom,
   type UseCommsPollResult,
 } from "./useCommsPoll";
+import {
+  isOperatorFailure,
+  operatorErrorResult,
+  operatorHint,
+  parseOperatorResult,
+  useOperatorStatus,
+  type CommsOperatorResult,
+  type UseOperatorStatusResult,
+} from "./useOperatorStatus";
 
 const OPEN_KEY = "heddle.comms.open";
 
@@ -69,20 +84,187 @@ function CollapsedStrip({ needsHuman, recentRefusals, onToggle }: CollapsedStrip
   );
 }
 
+/** Owns the address field + the add/remove call for RoomMemberControls below. A room-scoped hook
+ *  (not a plain closure) because it needs its own state; kept separate from the rendering purely
+ *  to stay inside the per-function Codacy line budget. */
+function useMemberAction(room: string) {
+  const [address, setAddress] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<CommsOperatorResult | null>(null);
+
+  const act = async (cmd: "heddle_comms_add_member" | "heddle_comms_remove_member") => {
+    const trimmed = address.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    try {
+      const raw = await invoke<unknown>(cmd, { room, address: trimmed });
+      const parsed = parseOperatorResult(raw);
+      if (isOperatorFailure(parsed)) {
+        setResult(parsed);
+      } else {
+        setResult(null);
+        setAddress("");
+      }
+    } catch (e) {
+      setResult(operatorErrorResult(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { address, setAddress, busy, result, act };
+}
+
+/** Operator-only add/remove for an existing CLOSED room, in the chat header (HED-74c spec). No
+ *  per-room member LIST is available from the backend (rooms only carry a count), so this is a
+ *  free-typed address rather than a picker — the roster letters are already visible in the rail
+ *  for reference. `opDisabled` is the fail-safe operator-availability gate (same as the composer's
+ *  own `!status.available`, true until the first status poll confirms otherwise); `hint` is
+ *  display-only text for the tooltip. */
+function RoomMemberControls({ room, opDisabled, hint }: { room: string; opDisabled: boolean; hint: string | null }) {
+  const t = useT();
+  const { address, setAddress, busy, result, act } = useMemberAction(room);
+  const disabled = opDisabled || busy;
+  return (
+    <div className="comms-member-ctl" data-testid="comms-member-controls">
+      <input
+        className="comms-member-ctl-input"
+        data-testid="comms-member-ctl-input"
+        value={address}
+        disabled={disabled}
+        placeholder={t("fleet.comms.memberAddress")}
+        title={hint ?? undefined}
+        onChange={(e) => {
+          setAddress(e.target.value);
+        }}
+      />
+      <button type="button" data-testid="comms-member-add" disabled={disabled || !address.trim()} onClick={() => void act("heddle_comms_add_member")}>
+        {t("fleet.comms.addMember")}
+      </button>
+      <button
+        type="button"
+        data-testid="comms-member-remove"
+        disabled={disabled || !address.trim()}
+        onClick={() => void act("heddle_comms_remove_member")}
+      >
+        {t("fleet.comms.removeMember")}
+      </button>
+      {result && (
+        <span className="comms-member-ctl-result" data-testid="comms-member-ctl-result">
+          {result.reason ?? t("fleet.comms.refusalGeneric")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface ChatColumnProps {
+  poll: UseCommsPollResult;
+  activeTarget: string | null;
+  highlightId: number | null;
+  opStatus: UseOperatorStatusResult;
+  replyTo: CommsNeedsHumanRow | null;
+  onClearReplyTo: () => void;
+  onNeedsHumanRowClick: (row: CommsNeedsHumanRow) => void;
+}
+
+/** The right-hand column: chat header (+ operator member controls on a closed room), pinned
+ *  needs-human strip, floor banner, poll-error line, transcript, and the composer. */
+function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onNeedsHumanRowClick }: ChatColumnProps) {
+  const t = useT();
+  const { needsHuman, floor, roomsError, transcriptError, rosterError, messages, rooms } = poll;
+  const activeRoom = rooms.find((r) => r.target === activeTarget);
+  const hint = operatorHint(t, opStatus.reason);
+  return (
+    <div className="comms-chat">
+      <div className="comms-chat-head">
+        <span className="comms-chat-name">{activeTarget ?? ""}</span>
+        {activeRoom && !activeRoom.open && (
+          // Keyed on the room target so React remounts (not reuses) this on a room switch — its
+          // address input and last result are per-room local state that must not survive one (B5).
+          <RoomMemberControls key={activeRoom.target} room={activeRoom.target} opDisabled={!opStatus.available} hint={hint} />
+        )}
+      </div>
+      <NeedsHumanStrip rows={needsHuman} onRowClick={onNeedsHumanRowClick} />
+      <FloorBanner floor={floor} />
+      {(roomsError ?? transcriptError ?? rosterError) && (
+        <div className="comms-err" data-testid="comms-error">
+          {roomsError ?? transcriptError ?? rosterError}
+        </div>
+      )}
+      <Transcript messages={messages} highlightId={highlightId} />
+      <Composer target={activeTarget} status={opStatus} floorHolder={floor?.holder ?? null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />
+    </div>
+  );
+}
+
 interface ExpandedOverlayProps {
   poll: UseCommsPollResult;
   activeTarget: string | null;
   highlightId: number | null;
+  opStatus: UseOperatorStatusResult;
+  replyTo: CommsNeedsHumanRow | null;
+  onClearReplyTo: () => void;
   onToggle: () => void;
   onSelectRoom: (target: string) => void;
   onNeedsHumanRowClick: (row: CommsNeedsHumanRow) => void;
+  onNewRoom: () => void;
+  showRoomCreate: boolean;
+  onCloseRoomCreate: () => void;
 }
 
-/** Expanded overlay: titlebar + loading/schema/empty gate + rail/chat body. */
-function ExpandedOverlay({ poll, activeTarget, highlightId, onToggle, onSelectRoom, onNeedsHumanRowClick }: ExpandedOverlayProps) {
+type OverlayBodyProps = Omit<ExpandedOverlayProps, "onToggle" | "showRoomCreate" | "onCloseRoomCreate">;
+
+/** The loading/schema/empty gate, then the rail + chat column once real data is in. Split out of
+ *  ExpandedOverlay purely to stay inside the per-function Codacy line budget — same props minus
+ *  the three the titlebar/modal-shell layer above it owns. */
+function OverlayBody({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onSelectRoom, onNeedsHumanRowClick, onNewRoom }: OverlayBodyProps) {
   const t = useT();
-  const { loaded, schemaOk, schemaVersion, rooms, unreadByTarget, roster, needsHuman, floor, roomsError, transcriptError, rosterError, messages } =
-    poll;
+  const { loaded, schemaOk, schemaVersion, rooms, unreadByTarget, roster } = poll;
+  if (!loaded) return <div className="comms-loading" data-testid="comms-loading" aria-hidden="true" />;
+  if (!schemaOk) {
+    return (
+      <div className="comms-schema-banner" data-testid="comms-schema-banner">
+        {t("fleet.comms.schemaUnsupported", schemaVersion)}
+      </div>
+    );
+  }
+  if (schemaVersion === 0) {
+    return (
+      <div className="comms-empty-state" data-testid="comms-empty-state">
+        {t("fleet.comms.emptyState")}
+      </div>
+    );
+  }
+  return (
+    <div className="comms-app">
+      <RoomsRail
+        rooms={rooms}
+        activeTarget={activeTarget}
+        unreadByTarget={unreadByTarget}
+        onSelectRoom={onSelectRoom}
+        roster={roster}
+        onNewRoom={onNewRoom}
+        newRoomDisabled={!opStatus.available}
+        newRoomHint={operatorHint(t, opStatus.reason)}
+      />
+      <ChatColumn
+        poll={poll}
+        activeTarget={activeTarget}
+        highlightId={highlightId}
+        opStatus={opStatus}
+        replyTo={replyTo}
+        onClearReplyTo={onClearReplyTo}
+        onNeedsHumanRowClick={onNeedsHumanRowClick}
+      />
+    </div>
+  );
+}
+
+/** Expanded overlay: titlebar + OverlayBody, with the room-create modal layered on top when open. */
+function ExpandedOverlay(props: ExpandedOverlayProps) {
+  const { onToggle, showRoomCreate, onCloseRoomCreate, poll } = props;
+  const t = useT();
   return (
     <div className="comms-overlay" data-testid="comms-overlay" role="dialog" aria-label={t("fleet.comms.title")}>
       <div className="comms-titlebar">
@@ -91,35 +273,8 @@ function ExpandedOverlay({ poll, activeTarget, highlightId, onToggle, onSelectRo
           ×
         </button>
       </div>
-
-      {!loaded ? (
-        <div className="comms-loading" data-testid="comms-loading" aria-hidden="true" />
-      ) : !schemaOk ? (
-        <div className="comms-schema-banner" data-testid="comms-schema-banner">
-          {t("fleet.comms.schemaUnsupported", schemaVersion)}
-        </div>
-      ) : schemaVersion === 0 ? (
-        <div className="comms-empty-state" data-testid="comms-empty-state">
-          {t("fleet.comms.emptyState")}
-        </div>
-      ) : (
-        <div className="comms-app">
-          <RoomsRail rooms={rooms} activeTarget={activeTarget} unreadByTarget={unreadByTarget} onSelectRoom={onSelectRoom} roster={roster} />
-          <div className="comms-chat">
-            <div className="comms-chat-head">
-              <span className="comms-chat-name">{activeTarget ?? ""}</span>
-            </div>
-            <NeedsHumanStrip rows={needsHuman} onRowClick={onNeedsHumanRowClick} />
-            <FloorBanner floor={floor} />
-            {(roomsError ?? transcriptError ?? rosterError) && (
-              <div className="comms-err" data-testid="comms-error">
-                {roomsError ?? transcriptError ?? rosterError}
-              </div>
-            )}
-            <Transcript messages={messages} highlightId={highlightId} />
-          </div>
-        </div>
-      )}
+      <OverlayBody {...props} />
+      {showRoomCreate && <RoomCreateModal roster={poll.roster} onClose={onCloseRoomCreate} />}
     </div>
   );
 }
@@ -144,12 +299,14 @@ function useDefaultRoomFallback(
 }
 
 /** Escape collapses the overlay while it's expanded; it's never wired up while collapsed, so it
- *  doesn't steal Escape from anything else on the page. */
-function useEscapeToCollapse(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>) {
+ *  doesn't steal Escape from anything else on the page. Suppressed while the room-create modal is
+ *  open — that modal owns Escape itself (closing just the modal), and without this guard both
+ *  window-level listeners would fire together and collapse the whole pane out from under it. */
+function useEscapeToCollapse(open: boolean, setOpen: Dispatch<SetStateAction<boolean>>, suppressed: boolean) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || suppressed) return;
       lsSet(OPEN_KEY, "0");
       setOpen(false);
     };
@@ -157,16 +314,20 @@ function useEscapeToCollapse(open: boolean, setOpen: Dispatch<SetStateAction<boo
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, setOpen]);
+  }, [open, setOpen, suppressed]);
 }
 
-/** Binds the three write-local-state callbacks the collapsed/expanded views need. Not a hook
- *  (calls none) — deliberately not `use`-prefixed so it can be called after the isTauri gate. */
+/** Binds the write-local-state callbacks the collapsed/expanded views need. Not a hook (calls
+ *  none) — deliberately not `use`-prefixed so it can be called after the isTauri gate. Switching
+ *  rooms (but not receiving a needs-human click, which sets its own target) clears any pending
+ *  reply-to context — replying to a message in a room the operator has since navigated away from
+ *  would silently reply to the wrong place. */
 function bindChatroomActions(
   setOpen: Dispatch<SetStateAction<boolean>>,
   setActiveTarget: Dispatch<SetStateAction<string | null>>,
   setHighlightId: Dispatch<SetStateAction<number | null>>,
   setPinned: Dispatch<SetStateAction<boolean>>,
+  setReplyTo: Dispatch<SetStateAction<CommsNeedsHumanRow | null>>,
 ) {
   const toggle = () => {
     setOpen((o) => {
@@ -178,11 +339,13 @@ function bindChatroomActions(
     setPinned(false);
     setActiveTarget(target);
     setHighlightId(null);
+    setReplyTo(null);
   };
   const handleNeedsHumanRowClick = (row: CommsNeedsHumanRow) => {
     setPinned(true);
     setActiveTarget(row.target);
     setHighlightId(row.id);
+    setReplyTo(row);
   };
   return { toggle, selectRoom, handleNeedsHumanRowClick };
 }
@@ -205,14 +368,17 @@ export function ChatroomPane() {
   // rooms[] (a DM/agent target) — pins it so the default-room fallback effect leaves it alone
   // instead of bouncing back to #fleet on the next rooms poll.
   const [pinned, setPinned] = useState(false);
+  const [replyTo, setReplyTo] = useState<CommsNeedsHumanRow | null>(null);
+  const [showRoomCreate, setShowRoomCreate] = useState(false);
   const poll = useCommsPoll(open, activeTarget);
+  const opStatus = useOperatorStatus(open);
 
   useDefaultRoomFallback(poll.rooms, activeTarget, pinned, setActiveTarget);
-  useEscapeToCollapse(open, setOpen);
+  useEscapeToCollapse(open, setOpen, showRoomCreate);
 
   if (!isTauri) return null;
 
-  const { toggle, selectRoom, handleNeedsHumanRowClick } = bindChatroomActions(setOpen, setActiveTarget, setHighlightId, setPinned);
+  const { toggle, selectRoom, handleNeedsHumanRowClick } = bindChatroomActions(setOpen, setActiveTarget, setHighlightId, setPinned, setReplyTo);
 
   if (!open) {
     return <CollapsedStrip needsHuman={poll.needsHuman} recentRefusals={poll.recentRefusals} onToggle={toggle} />;
@@ -223,9 +389,21 @@ export function ChatroomPane() {
       poll={poll}
       activeTarget={activeTarget}
       highlightId={highlightId}
+      opStatus={opStatus}
+      replyTo={replyTo}
+      onClearReplyTo={() => {
+        setReplyTo(null);
+      }}
       onToggle={toggle}
       onSelectRoom={selectRoom}
       onNeedsHumanRowClick={handleNeedsHumanRowClick}
+      onNewRoom={() => {
+        setShowRoomCreate(true);
+      }}
+      showRoomCreate={showRoomCreate}
+      onCloseRoomCreate={() => {
+        setShowRoomCreate(false);
+      }}
     />
   );
 }
