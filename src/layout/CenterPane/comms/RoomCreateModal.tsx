@@ -83,7 +83,10 @@ function MemberPicker({ roster, selected, onToggle }: MemberPickerProps) {
     <div className="comms-modal-field">
       <span className="comms-modal-label">{t("fleet.comms.roomMembersLabel")}</span>
       <div className="comms-modal-members" data-testid="comms-modal-members">
-        {roster.map((a) => (
+        {/* Exclude the synthetic "(orphaned)" row (pid 0) the roster appends to hold in-flight
+            workers with no live orchestrator — it is a display label, not an addressable agent, and
+            selecting it would add a bogus room member (codex, #39). */}
+        {roster.filter((a) => a.pid !== 0).map((a) => (
           <button
             key={a.name}
             type="button"

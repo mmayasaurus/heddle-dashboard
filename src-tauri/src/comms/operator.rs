@@ -339,9 +339,20 @@ async fn ensure_client(ctx: &AppCtx) -> Result<(), &'static str> {
     }
 
     let _spawn_guard = spawn_lock().lock().await;
-    // Another caller may have already finished spawning while this one waited for the spawn lock.
-    if state().lock().await.client.is_some() {
-        return Ok(());
+    // Re-check EVERYTHING the first guard checked, not just the client: a caller queued behind us on
+    // the spawn lock may have finished spawning (client now Some) OR just failed and set the backoff.
+    // Testing only `client.is_some()` here would let a burst of callers each spawn in turn behind a
+    // single failure, defeating the backoff entirely (gitar, #39).
+    {
+        let guard = state().lock().await;
+        if guard.client.is_some() {
+            return Ok(());
+        }
+        if let (Some(last), Some(reason)) = (guard.last_spawn_failure, guard.last_reason) {
+            if last.elapsed() < SPAWN_BACKOFF {
+                return Err(reason);
+            }
+        }
     }
 
     let (program, args, token) = match resolve_spawn_plan(ctx).await {

@@ -108,6 +108,25 @@ describe("useOperatorStatus", () => {
     expect(result.current.loaded).toBe(true);
   });
 
+  it("fails closed on re-expand: a prior 'available' does not survive a collapse (copilot #39)", async () => {
+    vi.useFakeTimers();
+    statusResponse = { available: true, revoked: false, reason: null };
+    const { result, rerender } = renderHook(({ e }) => useOperatorStatus(e), {
+      initialProps: { e: true },
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.available).toBe(true);
+    expect(result.current.loaded).toBe(true);
+
+    // Collapse the pane: availability must drop to fail-closed immediately, so a later re-expand
+    // cannot briefly re-enable write affordances on the stale value before the fresh poll lands.
+    act(() => rerender({ e: false }));
+    expect(result.current.available).toBe(false);
+    expect(result.current.loaded).toBe(false);
+  });
+
   it("loaded stays false before the first response settles", () => {
     vi.useFakeTimers();
     mockInvoke.mockImplementation(() => new Promise(() => {})); // never resolves

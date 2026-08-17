@@ -76,7 +76,15 @@ export function useOperatorStatus(expanded: boolean): UseOperatorStatusResult {
 
   useEffect(() => {
     if (!isTauri) return;
-    if (!expanded) return;
+    if (!expanded) {
+      // Fail closed on collapse: drop the previous availability so a re-expand cannot briefly
+      // re-enable write affordances on stale 'available' state before the fresh poll lands. Doing
+      // it on collapse (not re-expand) means the state is already fail-closed when the pane
+      // re-renders, leaving no stale frame (copilot, #39).
+      setStatus(UNKNOWN_STATUS);
+      setLoaded(false);
+      return;
+    }
     let cancelled = false;
     const fetchStatus = async () => {
       if (!isTauri) return;

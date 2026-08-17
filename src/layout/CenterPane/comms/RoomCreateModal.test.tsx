@@ -206,3 +206,19 @@ describe("RoomCreateModal — partial failure and closing", () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 });
+
+
+describe("RoomCreateModal — synthetic roster row (codex #39)", () => {
+  it("excludes the '(orphaned)' pid:0 row from the member picker", () => {
+    // The roster command appends a synthetic { name: "(orphaned)", pid: 0 } row to hold in-flight
+    // workers with no live orchestrator. It is a display label, not an addressable agent — selecting
+    // it as a room member would add a bogus address.
+    const withOrphan: FleetAgent[] = [
+      mkAgent("R"),
+      { name: "(orphaned)", pid: 0, sessionId: "", cwd: "", status: "", kind: "", updatedAtMs: 0, alive: false, workers: [] },
+    ];
+    render(<RoomCreateModal roster={withOrphan} onClose={vi.fn()} />);
+    expect(screen.queryByTestId("comms-modal-member-R")).toBeTruthy();
+    expect(screen.queryByTestId("comms-modal-member-(orphaned)")).toBeNull();
+  });
+});
