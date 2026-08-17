@@ -87,6 +87,13 @@ async function flush(ms = 0) {
   });
 }
 
+/** Last element without `Array.prototype.at` — this repo's tsconfig lib is ES2020, and `.at()`
+ *  needs ES2022. A stray home-directory @types/node masks the error locally, so a `.at(` here
+ *  passes `tsc` on a dev machine and fails the CI gate. Indexed access is the repo convention. */
+function lastCall<T>(calls: T[]): T | undefined {
+  return calls.length > 0 ? calls[calls.length - 1] : undefined;
+}
+
 describe("useCommsPoll", () => {
   it("fetches rooms immediately on mount and sets loaded=true", async () => {
     vi.useFakeTimers();
@@ -131,21 +138,21 @@ describe("useCommsPoll", () => {
     });
     await flush();
     expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]);
-    const firstFetch = mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript").at(-1);
+    const firstFetch = lastCall(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript"));
     expect(firstFetch?.[1]).toEqual({ target: "#fleet", sinceId: null });
 
     // A new message lands upstream; the next 2.5s cursor poll must append only it.
     transcriptStore.set("#fleet", [...transcriptStore.get("#fleet")!, mkMsg(3, "#fleet")]);
     await flush(2500);
     expect(result.current.messages.map((m) => m.id)).toEqual([1, 2, 3]);
-    const cursorFetch = mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript").at(-1);
+    const cursorFetch = lastCall(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript"));
     expect(cursorFetch?.[1]).toEqual({ target: "#fleet", sinceId: 2 });
 
     // Switching rooms replaces the visible messages with T's (not a union with #fleet's).
     rerender({ target: "T" });
     await flush();
     expect(result.current.messages.map((m) => m.id)).toEqual([50]);
-    const switchFetch = mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript").at(-1);
+    const switchFetch = lastCall(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript"));
     expect(switchFetch?.[1]).toEqual({ target: "T", sinceId: null });
   });
 
