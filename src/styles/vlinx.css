@@ -397,6 +397,9 @@ svg { display: block; }
 .fleet-capline { --fleet-capline-row-height: 14px; display: grid; grid-template-columns: 40px 140px 44px minmax(72px, 1fr); align-items: center; column-gap: 8px; min-height: var(--fleet-capline-row-height); line-height: var(--fleet-capline-row-height); }
 .fleet-capline-lbl { min-width: 0; overflow: hidden; color: var(--text-faint); font-size: 10px; text-transform: uppercase; text-overflow: ellipsis; }
 .fleet-seg { position: relative; display: inline-block; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* the tick anchors to the GLYPH RUN, not the 140px track — the box is wider than the ░█ text, so
+   50% of the box overstates the cap (llamapreview, PR #33); 50% of the run is the true cell boundary */
+.fleet-seg-run { position: relative; display: inline-block; }
 .fleet-capline > .fleet-seg { width: 140px; }
 .fleet-seg-empty { opacity: 0.3; }
 .fleet-seg-soft-cap-tick { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: currentColor; opacity: 0.8; }

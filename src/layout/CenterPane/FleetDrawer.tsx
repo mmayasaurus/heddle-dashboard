@@ -436,9 +436,11 @@ function SegBar({
   const filled = Math.round((p / 100) * segments);
   return (
     <span className="fleet-seg" style={{ color }}>
-      {"█".repeat(filled)}
-      <span className="fleet-seg-empty">{"░".repeat(segments - filled)}</span>
-      {softCapTick && <span className="fleet-seg-soft-cap fleet-seg-soft-cap-tick" aria-hidden="true" />}
+      <span className="fleet-seg-run">
+        {"█".repeat(filled)}
+        <span className="fleet-seg-empty">{"░".repeat(segments - filled)}</span>
+        {softCapTick && <span className="fleet-seg-soft-cap fleet-seg-soft-cap-tick" aria-hidden="true" />}
+      </span>
     </span>
   );
 }
@@ -459,7 +461,7 @@ function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: 
     : undefined;
   return (
     <div className="fleet-capline fleet-provcap-account-row fleet-provcap-fable-weekly" title={title}>
-      <span className="fleet-capline-lbl fleet-provcap-fable-label" title={label}>Fable</span>
+      <span className="fleet-capline-lbl fleet-provcap-fable-label" title={label} aria-label={label}>Fable</span>
       <SegBar pct={pct} color={color} softCapTick />
       <span className="fleet-capline-pct fleet-provcap-fable-est" title={label}>{`${roundedPct}%`}</span>
       <span className="fleet-dim fleet-capline-reset" title={label}>{detail?.exact ? "" : t("fleet.fableWeeklyEstMark")}</span>
