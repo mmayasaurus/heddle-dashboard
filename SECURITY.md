@@ -13,18 +13,26 @@ The current version is shown in the title bar and in [the changelog](docs/change
 **Please do not open a public issue for a security problem.**
 
 Use GitHub's private vulnerability reporting instead: go to the
-[Security tab](https://github.com/vlinx-io/heddle/security) of this repository and choose *Report a
-vulnerability*. The report stays private between you and the maintainers until a fix is published.
+[Security tab](https://github.com/mmayasaurus/heddle-dashboard/security) of this repository and
+choose *Report a vulnerability*. The report stays private between you and the maintainers until a
+fix is published.
+
+This project is a fork of [VelaTerm](https://github.com/vlinx-io/VelaTerm). If the problem reproduces
+on unmodified upstream VelaTerm, please report it upstream as well — fixes for inherited code have
+to land there to reach every fork. Problems in this fork's own additions (the agent fleet drawer,
+usage and ledger views, and the heddle integration generally) belong here.
 
 A useful report includes the affected version and platform, what an attacker gains, and the shortest
 sequence of steps that reproduces the problem. A proof of concept helps but is not required.
 
 ## What to expect
 
-heddle is maintained by a small team, so please allow a few working days for a first reply. We aim
-to acknowledge a report within five working days, tell you whether we consider it a vulnerability and
-why, and keep you informed while a fix is prepared. Once a fix ships, the release notes describe the
-issue, and we are happy to credit you by the name or handle you prefer.
+heddle is maintained by one person alongside other work, so replies here are best effort rather
+than a schedule — expect a first response in days rather than hours. If a week passes with no reply,
+please add a note to the report rather than assuming it was ignored; that is far more likely to be a
+missed notification than a decision. When I do reply I will say whether it is considered a
+vulnerability and why, and keep you posted while a fix is prepared. Once a fix ships, the release
+notes describe the issue, and I am happy to credit you by the name or handle you prefer.
 
 ## Areas worth a closer look
 
@@ -41,6 +49,12 @@ especially valuable:
   into agent configuration directories.
 - **File and document handling** — path resolution for opened files, pasted images, and the built-in
   Markdown and source viewers.
+- **Fleet integration (this fork's own code)** — the agent fleet drawer and the usage tap: the tap
+  sits in front of the Claude Code statusline renderer and writes rate-limit records under
+  `~/.heddle/usage/`, and the drawer reads heddle's ledger and roster state. Anything that lets that
+  passthrough alter or leak the payload it forwards, or lets untrusted ledger/roster content reach
+  the UI as markup or a command, is in scope. Reports here belong in this repository rather than
+  upstream.
 
 ## Out of scope
 
