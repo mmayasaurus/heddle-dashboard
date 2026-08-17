@@ -172,20 +172,33 @@ jobs:
         run: pnpm lint
 
   gate:
-    # Required-check context string — do not rename (see header; HED-13).
+    # The REQUIRED context `gate` (HED-13 ruleset) is published ONLY by runs that
+    # represent real merge-readiness: commit-driven events and base RETARGETS
+    # (`edited` with changes.base.ref.from set). A title/body EDIT publishes a
+    # DIFFERENT, non-required name — the point of HED-142.
     #
-    # No event guard anywhere in this workflow, even though a PR title/body edit
-    # carries no new commit. Skipping was tried and MEASURED on heddle#30 and is
-    # unsafe: a skipped job still publishes a check-run under its name, GitHub
-    # takes the NEWEST run of a given name for required-check evaluation, and it
-    # treats `skipped` as passing — so a reviewer bot editing the PR body would
-    # have superseded a RED gate with a passing one (and skipped leaves would
-    # likewise have hidden `lint`'s honest red). A dynamic job name avoided the
-    # masking but published the raw expression text as the check name, also
-    # measured. Re-running is the honest option: the run evaluates the same
-    # merge ref and reaches the same verdict. Public-repo minutes are free; a
-    # maskable required check is not.
-    name: gate
+    # Two prior attempts this reconciles:
+    #  - HED-91 first SKIPPED edits — unsafe: a skipped job publishes a check-run
+    #    under its name, GitHub takes the NEWEST run of a name and treats
+    #    `skipped` as passing, so a bot body-edit could mask a RED `gate` (and a
+    #    skipped leaf could hide `lint`'s honest red).
+    #  - HED-91 then made edits RUN under the static name `gate`. That fixed
+    #    masking but created HED-142: bot body-edits at PR-open fire several
+    #    `edited` runs that cancel each other in the edit concurrency slot; a
+    #    cancelled run's `always()` aggregator (below) publishes `gate: FAILURE`,
+    #    and with no later commit to heal it the required context stays RED with
+    #    no code cause (measured live on dashboard#41, run 32068437179).
+    # The fix: edits neither skip NOR publish `gate`. A running edit job evaluates
+    # this to `gate (edit …)`; a cancelled-before-eval one publishes the raw
+    # expression text — either way NOT the string `gate`, so the required
+    # context's newest run at the head SHA stays the commit/retarget verdict.
+    # The commit-driven `gate` already established readiness at that SHA and an
+    # edit does not change the SHA, so nothing is lost by not re-publishing.
+    # Residual (in the REVIEW-SWEEP noise list): the non-required `gate (edit …)`
+    # context may flap cancelled/red during a bot-edit storm — cosmetic, no
+    # merge-readiness signal, never blocks merge. The leaf jobs (web/rust/…) are
+    # likewise non-required and may flap the same way; only `gate` is required.
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'gate' || 'gate (edit — non-required; no merge-readiness signal)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [web, rust, rust-test]
