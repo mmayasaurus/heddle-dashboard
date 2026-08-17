@@ -14,8 +14,10 @@
 //!     used at the first capture of a window is `unknown`, not attributed;
 //!   - a gap longer than `MAX_GAP_SECS` between ingested captures (the app wasn't watching) sends the
 //!     delta to `unknown` instead of inflating whichever model happened to render next;
-//!   - the estimate is `null` until `MIN_SAMPLES` positive deltas were attributed (confidence), and the
-//!     sample count is always exposed next to it;
+//!   - the estimate is `null` until BOTH `MIN_SAMPLES` positive deltas were attributed AND those
+//!     samples cover at least `MIN_COVERAGE` of the observed window (HED-136 — a handful of samples
+//!     over a window we barely saw is not evidence about the window as a whole); the sample count and
+//!     the coverage are always exposed next to it;
 //!   - if the payload ever carries a model-scoped window (any `rate_limits` key mentioning `fable`
 //!     with a `used_percentage`), that exact value wins and `exact: true` is set — the tap already
 //!     captures `rate_limits` verbatim, so nothing else has to change.
@@ -266,7 +268,9 @@ pub(super) fn coverage(state: &Attrib) -> f64 {
 /// The estimate to expose: exact value when the payload had one, else the attributed Fable share once
 /// there are enough samples AND they cover enough of the window, else `None`.
 ///
-/// The coverage half exists because the sample count alone lied (HED-136). Measured live on
+/// The coverage requirement (the second condition, AND-ed with the sample count — not a 0.5
+/// threshold; `MIN_COVERAGE` is a quarter) exists because the sample count alone lied (HED-136).
+/// Measured live on
 /// 2026-08-17: an account showed `samples: 3` with 40 of its 43 weekly points unattributed, so the
 /// old `samples >= MIN_SAMPLES` gate returned `Some(0.0)` — which HED-76's soft cap reads as "Fable
 /// is quiet" when the truth was "we accounted for 7% of this window". A router that cannot see its
