@@ -49,8 +49,12 @@ import { Fragment } from "react";
  *  branch is a hard anchor between two length-BOUNDED alnum runs (`{1,32}`), so the pattern cannot
  *  backtrack pathologically — the ReDoS shape Codacy flagged. Child sequence numbers mirror
  *  CHILD_RE (positive, no leading zero), not a loose `\d+`. */
+// The hyphenated alternative precedes the single-uppercase-letter one: JS alternation is ordered,
+// so with `[A-Z]` first, `@X-ray` matched just `@X` (\b sits before the hyphen) and left `-ray` as
+// prose — a broken partial highlight. Hyphenated-first matches `@X-ray` whole; a token with no
+// hyphen falls through to `[A-Z]`/numeric unchanged (gitar, #40).
 const MENTION_RE =
-  /(?<![A-Za-z0-9._%+-])@(?:all|operator|orchestrator|[A-Z](?:\.[1-9][0-9]{0,8})?|[A-Za-z0-9]{1,32}-[A-Za-z0-9]{1,32}(?:\.[1-9][0-9]{0,8})?|[0-9]{1,20}(?:\.[1-9][0-9]{0,8})?)\b/g;
+  /(?<![A-Za-z0-9._%+-])@(?:all|operator|orchestrator|[A-Za-z0-9]{1,32}-[A-Za-z0-9]{1,32}(?:\.[1-9][0-9]{0,8})?|[A-Z](?:\.[1-9][0-9]{0,8})?|[0-9]{1,20}(?:\.[1-9][0-9]{0,8})?)\b/g;
 
 export interface MentionSegment {
   text: string;

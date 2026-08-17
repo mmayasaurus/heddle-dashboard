@@ -156,3 +156,19 @@ describe("splitMentions — email addresses must never highlight (left boundary,
     }
   });
 });
+
+
+describe("splitMentions — uppercase-first hyphenated ids are not shadowed (gitar #40)", () => {
+  const mentions = (body: string) =>
+    splitMentions(body).filter((seg) => seg.mention).map((seg) => seg.text);
+
+  it("matches @X-ray whole, not a broken @X partial", () => {
+    // The single-letter branch used to win the ordered alternation and stop at the hyphen.
+    expect(mentions("paging @X-ray now")).toEqual(["@X-ray"]);
+    expect(splitMentions("paging @X-ray now").map((seg) => seg.text).join("")).toBe("paging @X-ray now");
+  });
+
+  it("leaves hyphen-free tokens on the single-letter/numeric branches unchanged", () => {
+    expect(mentions("@T @K.1 @3")).toEqual(["@T", "@K.1", "@3"]);
+  });
+});
