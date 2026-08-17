@@ -482,3 +482,92 @@ fn a_changed_exact_value_in_the_same_second_is_not_a_duplicate() {
     // And the truly identical capture is still a no-op.
     assert!(!ingest(&mut s, &second, t0 + 2));
 }
+
+// ── HED-136: sample COUNT is not coverage — a soft cap must not read blindness as a quiet zero ──
+
+/// The exact live shape that made the lever inert (acct2, 2026-08-17): three attributed deltas
+/// against forty unattributed points. The old `samples >= MIN_SAMPLES` gate returned `Some(0.0)`,
+/// which HED-76 reads as "Fable is quiet" when the truth is "we accounted for 7% of this window".
+#[test]
+fn a_handful_of_samples_over_a_barely_seen_window_reports_unknown_not_zero() {
+    let s = Attrib {
+        fable_pct: 0.0,
+        other_pct: 3.0,
+        unknown_pct: 40.0,
+        samples: 3,
+        ..Attrib::default()
+    };
+    assert!(
+        coverage(&s) < MIN_COVERAGE,
+        "3 of 43 points is not coverage"
+    );
+    assert_eq!(
+        estimate(&s),
+        None,
+        "an unseen window must read as unknown, never as a confident 0%"
+    );
+}
+
+/// The other half of the same rule: once most of the window IS attributed, the estimate is a real
+/// number again. Without this, "always None" would also pass the test above.
+#[test]
+fn a_well_covered_window_still_reports_its_attributed_share() {
+    let s = Attrib {
+        fable_pct: 30.0,
+        other_pct: 10.0,
+        unknown_pct: 5.0,
+        samples: 4,
+        ..Attrib::default()
+    };
+    assert!(coverage(&s) >= MIN_COVERAGE);
+    assert_eq!(estimate(&s), Some(30.0));
+}
+
+/// Coverage gates the HEURISTIC path only. An exact model-scoped window is an authoritative reading
+/// from the payload, not something we inferred, so it is never suppressed for lack of samples.
+#[test]
+fn an_exact_reading_is_never_gated_on_coverage() {
+    // An exact ZERO is the sharpest case: it is the one reading that looks identical to the blindness
+    // this ticket is about, and it must still be reported — because here we were TOLD it is zero.
+    let s = Attrib {
+        fable_pct: 0.0,
+        other_pct: 0.0,
+        unknown_pct: 40.0,
+        exact: true,
+        samples: 0,
+        ..Attrib::default()
+    };
+    assert!(
+        coverage(&s) < MIN_COVERAGE,
+        "nothing attributed heuristically"
+    );
+    assert_eq!(
+        estimate(&s),
+        Some(0.0),
+        "a model-scoped window is authoritative; only the inferred path needs coverage"
+    );
+}
+
+/// A fresh window has observed nothing; coverage must read 0.0 rather than dividing by zero into a
+/// NaN that would compare false against every threshold and silently admit the estimate.
+#[test]
+fn an_empty_window_has_zero_coverage_not_a_nan() {
+    let s = Attrib::default();
+    assert_eq!(coverage(&s), 0.0);
+    assert_eq!(estimate(&s), None);
+}
+
+/// The breakdown must say WHY an estimate is missing, or "no estimate" is indistinguishable from a bug.
+#[test]
+fn the_detail_breakdown_exposes_coverage_and_its_threshold() {
+    let s = Attrib {
+        fable_pct: 0.0,
+        other_pct: 3.0,
+        unknown_pct: 40.0,
+        samples: 3,
+        ..Attrib::default()
+    };
+    let d = detail(&s);
+    assert!((d["coverage"].as_f64().unwrap() - 3.0 / 43.0).abs() < 1e-9);
+    assert_eq!(d["minCoverage"].as_f64(), Some(MIN_COVERAGE));
+}

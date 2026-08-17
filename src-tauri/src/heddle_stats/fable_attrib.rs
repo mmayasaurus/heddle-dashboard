@@ -34,6 +34,15 @@ use serde_json::Value;
 pub(super) const MIN_SAMPLES: i64 = 3;
 /// Longer than this between ingested captures = nobody was watching; the delta is `unknown`.
 pub(super) const MAX_GAP_SECS: i64 = 600;
+/// Fraction of the OBSERVED window that must be attributed before the estimate is a usable number.
+///
+/// A QUARTER, not a half. Starting to watch mid-window is the normal case — the app polls into a week
+/// already in progress, and everything burned before the first capture is unknown forever — so a
+/// half-coverage bar would suppress the estimate almost always, trading one useless answer for
+/// another. A quarter still admits the ordinary mid-window start (measured: a bracketed run covering
+/// 5 of 15 points, 33%) while rejecting the case that actually misled (live acct2, 2026-08-17: 3 of
+/// 43 points, 7%, reported as a confident `Some(0.0)`).
+pub(super) const MIN_COVERAGE: f64 = 0.25;
 
 /// Persisted attribution state for one account and one weekly window. Percent values are percentage
 /// points of the account's weekly cap.
@@ -242,13 +251,32 @@ pub(super) fn ingest(state: &mut Attrib, cap: &Capture, now: i64) -> bool {
     true
 }
 
+/// How much of the observed window we actually attributed, 0.0-1.0. `samples` counts DELTAS and says
+/// nothing about how much of the window they covered, which is the difference between "Fable is
+/// quiet" and "we barely saw this window".
+pub(super) fn coverage(state: &Attrib) -> f64 {
+    let attributed = state.fable_pct + state.other_pct;
+    let observed = attributed + state.unknown_pct;
+    if observed <= 0.0 {
+        return 0.0; // nothing observed yet — not "fully covered"
+    }
+    attributed / observed
+}
+
 /// The estimate to expose: exact value when the payload had one, else the attributed Fable share once
-/// enough samples exist, else `None`.
+/// there are enough samples AND they cover enough of the window, else `None`.
+///
+/// The coverage half exists because the sample count alone lied (HED-136). Measured live on
+/// 2026-08-17: an account showed `samples: 3` with 40 of its 43 weekly points unattributed, so the
+/// old `samples >= MIN_SAMPLES` gate returned `Some(0.0)` — which HED-76's soft cap reads as "Fable
+/// is quiet" when the truth was "we accounted for 7% of this window". A router that cannot see its
+/// input must be told that, not handed a reassuring zero: `None` means unknown, and the caller is
+/// expected to treat unknown conservatively rather than as all-clear.
 pub(super) fn estimate(state: &Attrib) -> Option<f64> {
     if state.exact {
         return Some(state.fable_pct);
     }
-    (state.samples >= MIN_SAMPLES).then_some(state.fable_pct)
+    (state.samples >= MIN_SAMPLES && coverage(state) >= MIN_COVERAGE).then_some(state.fable_pct)
 }
 
 /// The `detail` breakdown for the drawer tooltip / router.
@@ -260,6 +288,10 @@ pub(super) fn detail(state: &Attrib) -> Value {
         "samples": state.samples,
         "exact": state.exact,
         "minSamples": MIN_SAMPLES,
+        // Surfaced so a consumer can see WHY an estimate is absent: too few samples, or samples that
+        // covered too little of the window. Without this, "no estimate" is indistinguishable from a bug.
+        "coverage": coverage(state),
+        "minCoverage": MIN_COVERAGE,
         "windowResetsAt": state.window_resets_at,
         "lastCapturedAt": state.last_captured_at,
         "updatedAt": state.updated_at,
