@@ -181,6 +181,17 @@ def post_rotation_advice(text):
         log(f"rotation advisor: fleet post failed: {str(e)[-160:]}")
 
 
+def pct(v):
+    """Round a provider percentage for human-facing use. A live capture really does read
+    `7.000000000000001` (float arithmetic upstream), and this advisor's whole product is a sentence a
+    person reads under pressure — an alert saying "87.00000000000001%" looks broken and costs the
+    advice the credibility it needs to be acted on. `None` when there is no number to show."""
+    try:
+        return round(float(v), 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def advise_rotation(accts, state):
     # A tap capture is written only when a live interactive session renders its statusline. The newest
     # tap is therefore the load-bearing signal for which account is actively in use; keeper anchors do
@@ -212,29 +223,30 @@ def advise_rotation(accts, state):
         return
 
     target, target_window = rotation_target(accts, active["id"])
+    active_pct = pct(active_window["used"])
     target_payload = None
     command = None
     if target:
-        target_payload = {"id": target["id"], "usedPct": target_window.get("used"),
+        target_payload = {"id": target["id"], "usedPct": pct(target_window.get("used")),
                           "resetsAt": target_window.get("resets_at"), "source": target_window.get("source")}
         try:
             command = RELAUNCH_TEMPLATE.format(account=target["id"])
         except (KeyError, ValueError) as e:
             log(f"rotation advisor: invalid relaunch template: {str(e)[-160:]}")
     if target:
-        reason = (f"{active['id']} is at {active_window['used']}%, meeting the {ROTATE_PCT}% rotation "
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation "
                   f"threshold; {target['id']} has the most available headroom.")
     else:
-        reason = (f"{active['id']} is at {active_window['used']}%, meeting the {ROTATE_PCT}% rotation threshold; "
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation threshold; "
                   "every other logged-in account is also at/over the threshold or unknown.")
     advice = {"advisedAt": int(time.time()),
-              "active": {"id": active["id"], "usedPct": active_window["used"], "resetsAt": resets_at},
+              "active": {"id": active["id"], "usedPct": active_pct, "resetsAt": resets_at},
               "target": target_payload, "command": command, "thresholdPct": ROTATE_PCT, "reason": reason}
     advice_text = f"Heddle rotation advice: {reason} Command: {command or 'no eligible target'}"
 
     # These channels are deliberately independent: a broken desktop or fleet hook must not interrupt
     # the five-minute keeper job, nor should it prevent the durable advice artifact from being attempted.
-    log(f"rotation advisor: active={active['id']} used={active_window['used']}% target={target and target['id']} command={command}")
+    log(f"rotation advisor: active={active['id']} used={active_pct}% target={target and target['id']} command={command}")
     try:
         write_json_atomic(ROTATION_ADVICE, advice)
     except Exception as e:
