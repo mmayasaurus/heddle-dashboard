@@ -185,11 +185,15 @@ def pct(v):
     """Round a provider percentage for human-facing use. A live capture really does read
     `7.000000000000001` (float arithmetic upstream), and this advisor's whole product is a sentence a
     person reads under pressure — an alert saying "87.00000000000001%" looks broken and costs the
-    advice the credibility it needs to be acted on. `None` when there is no number to show."""
+    advice the credibility it needs to be acted on. `None` when there is no number to show.
+
+    A whole number comes back as an int so the common case still reads "7%" rather than "7.0%": the
+    goal is to remove noise, not to add a decimal nobody asked for."""
     try:
-        return round(float(v), 1)
+        rounded = round(float(v), 1)
     except (TypeError, ValueError):
         return None
+    return int(rounded) if rounded == int(rounded) else rounded
 
 
 def advise_rotation(accts, state):
