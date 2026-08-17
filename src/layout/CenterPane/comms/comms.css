@@ -500,3 +500,305 @@
     box-shadow: 0 0 0 2px transparent;
   }
 }
+
+/* ── HED-74c: operator write path — "+ New room", composer, room-create modal, member controls ── */
+
+.comms-rail-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.comms-newroom {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.comms-newroom:hover:not(:disabled),
+.comms-newroom:focus-visible:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg-0);
+  outline: none;
+}
+.comms-newroom:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Room-header operator member controls (existing closed room only). */
+.comms-member-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.comms-member-ctl-input {
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 7px;
+  width: 110px;
+}
+.comms-member-ctl button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.comms-member-ctl button:hover:not(:disabled),
+.comms-member-ctl button:focus-visible:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+  outline: none;
+}
+.comms-member-ctl button:disabled,
+.comms-member-ctl-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.comms-member-ctl-result {
+  color: var(--red);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* Composer (approved mock card 02). */
+.comms-composer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.comms-reply-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.comms-reply-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.comms-reply-clear {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  flex: none;
+}
+.comms-reply-clear:hover,
+.comms-reply-clear:focus-visible {
+  color: var(--text);
+  outline: none;
+}
+.comms-refusal {
+  color: var(--red);
+  background: var(--comms-red-soft);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
+.comms-composer-hint {
+  color: var(--yellow);
+  font-size: 11px;
+}
+.comms-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.comms-composer-as {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 2px 8px;
+  flex: none;
+}
+.comms-composer-input {
+  flex: 1;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 9px 12px;
+  resize: none;
+  max-height: 120px;
+}
+.comms-composer-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.comms-composer-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.comms-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: none;
+  user-select: none;
+}
+.comms-send {
+  background: var(--accent);
+  color: var(--bg-0);
+  border: 0;
+  border-radius: 8px;
+  font-weight: 650;
+  font-size: 13px;
+  padding: 9px 16px;
+  cursor: pointer;
+  flex: none;
+}
+.comms-send:hover:not(:disabled),
+.comms-send:focus-visible:not(:disabled) {
+  filter: brightness(1.1);
+  outline: none;
+}
+.comms-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Room-create modal (approved mock card 07). */
+.comms-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 260; /* above ChatroomPane's own overlay (250); below the live-tabs eviction modal (300) */
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+.comms-modal {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.comms-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.comms-modal-title {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 13px;
+}
+.comms-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.comms-modal-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.comms-modal-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0 8px;
+}
+.comms-modal-hash {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.comms-modal-name-row .comms-modal-input {
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+}
+.comms-modal-input {
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 8px 10px;
+}
+.comms-modal-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.comms-modal-error {
+  color: var(--red);
+  font-size: 11.5px;
+}
+.comms-modal-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.comms-member-chip {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  background: var(--bg-active);
+  color: var(--text-mid);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.comms-member-chip:hover,
+.comms-member-chip:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+.comms-member-chip-on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+.comms-modal .comms-send {
+  align-self: flex-end;
+}
