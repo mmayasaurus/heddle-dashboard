@@ -484,18 +484,20 @@ function CapLine({
   color,
   note,
   className,
+  title,
 }: {
   label: string;
   win: LimitWindow;
   color: string;
   note?: string | null;
   className?: string;
+  title?: string;
 }) {
   const t = useT();
   const pct = win.usedPercentage;
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
-      <span className="fleet-capline-lbl" title={label}>{label}</span>
+      <span className="fleet-capline-lbl" title={title ?? label}>{label}</span>
       <SegBar pct={pct} color={color} />
       <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
       <LiveClock render={(now) => (
@@ -503,6 +505,202 @@ function CapLine({
           {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
         </span>
       )} />
+    </div>
+  );
+}
+
+/** Extra named windows beyond 5h/7d (the shape both the provider-level and per-account `windows[]` share). */
+function filterExtraWindows(windows: LimitWindow[] | null | undefined): LimitWindow[] {
+  return (windows ?? []).filter(
+    (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
+  );
+}
+
+function isNullWindow(win: LimitWindow | null | undefined): boolean {
+  return (win?.usedPercentage ?? null) == null;
+}
+
+/** True when neither rolling window carries real data but named windows do — the case where those windows should stand in for 5h/7d as the primary bars. */
+function shouldPromoteWindows(
+  fiveHour: LimitWindow | null | undefined,
+  sevenDay: LimitWindow | null | undefined,
+  windows: LimitWindow[],
+): boolean {
+  return isNullWindow(fiveHour) && isNullWindow(sevenDay) && windows.length > 0;
+}
+
+/**
+ * Short column label (fits the 40px label column) for a window promoted to a primary CapLine.
+ * The three Cursor pools are hand-mapped since their real labels don't reduce mechanically
+ * (the API pool's label leads with "included", not "API"); anything else falls back to its
+ * label's first word, truncated to 4 chars.
+ */
+function shortWindowLabel(win: LimitWindow): string {
+  switch (win.id) {
+    case "included-total": return "INCL";
+    case "included-api": return "API";
+    case "usage-based": return "O-D";
+    default: {
+      const firstWord = (win.label ?? win.id ?? "").trim().split(/\s+/)[0] ?? "";
+      return firstWord.slice(0, 4).toUpperCase();
+    }
+  }
+}
+
+function fmtWindowAmount(n: number | null | undefined, unit: string | null | undefined): string {
+  if (n == null) return "";
+  if (unit === "usd") return `$${n.toFixed(2)}`;
+  return unit ? `${n} ${unit}` : String(n);
+}
+
+/** Full label + amounts for a promoted window's tooltip — the short column label loses this detail. */
+function windowTooltip(win: LimitWindow): string {
+  const full = win.label ?? win.id ?? "window";
+  if (win.usedAmount != null && win.limitAmount != null) {
+    return `${full} — ${fmtWindowAmount(win.usedAmount, win.unit)} of ${fmtWindowAmount(win.limitAmount, win.unit)}`;
+  }
+  return full;
+}
+
+/**
+ * Renders 5h/7d as usual, unless both are empty and real named windows exist — then those windows
+ * become the primary CapLines instead (short label + SegBar, full detail in the title tooltip).
+ * Shared by the provider-level caps and each account's caps inside the account cycler.
+ */
+function CapLineGroup({
+  fiveHour,
+  sevenDay,
+  windows,
+  color,
+  note,
+  className,
+}: {
+  fiveHour: LimitWindow | null | undefined;
+  sevenDay: LimitWindow | null | undefined;
+  windows: LimitWindow[];
+  color: string;
+  note?: string | null;
+  className?: string;
+}) {
+  if (shouldPromoteWindows(fiveHour, sevenDay, windows)) {
+    return (
+      <>
+        {windows.map((win, index) => (
+          <CapLine
+            key={`${win.id ?? win.label ?? "window"}-${index}`}
+            label={shortWindowLabel(win)}
+            win={win}
+            color={color}
+            note={index === 0 ? note : undefined}
+            title={windowTooltip(win)}
+            className={className}
+          />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      <CapLine label="5h" win={fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={note} className={className} />
+      <CapLine label="7d" win={sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className={className} />
+    </>
+  );
+}
+
+/**
+ * One account's detail: head row (id · label · i/N chip · ⟳ rotate), its caplines (promoted when
+ * eligible), and the captured/state rows. Shared by any provider with accounts.length >= 2, plus
+ * Claude at accounts.length >= 1 (Claude keeps showing its single account's detail instead of the
+ * top-level 5h/7d). FableWeeklyLine and the login-state/keeper-estimate messaging stay Claude-only —
+ * other providers only surface a state row when their account actually carries loggedIn/limitReached
+ * data, and hide it entirely otherwise.
+ */
+function AccountCycler({
+  p,
+  accounts,
+  selectedAccountId,
+  onSelectAccount,
+  color,
+}: {
+  p: ProviderLimit;
+  accounts: ProviderAccount[];
+  selectedAccountId: string | undefined;
+  onSelectAccount: (id: string) => void;
+  color: string;
+}) {
+  const t = useT();
+  const isClaude = p.provider === "claude";
+  const selectedAccountIndex = Math.max(0, accounts.findIndex((account) => account.id === selectedAccountId));
+  const selectedAccount = accounts[selectedAccountIndex];
+  if (!selectedAccount) return null;
+  const acctWindows = filterExtraWindows(selectedAccount.windows);
+
+  return (
+    <div className="fleet-provcap-account-detail">
+      <div className="fleet-provcap-account-row fleet-provcap-account-head">
+        <span className="fleet-provcap-account-label" title={selectedAccount.id}>{selectedAccount.id}</span>
+        {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
+          <span className="fleet-provcap-account-plan" title={`· ${selectedAccount.label}`}>· {selectedAccount.label}</span>
+        )}
+        {accounts.length > 1 && <>
+          <span className="fleet-sp" />
+          <span className="fleet-provcap-account-position" title={`${selectedAccountIndex + 1}/${accounts.length}`}>{selectedAccountIndex + 1}/{accounts.length}</span>
+          <button
+            className="fleet-provcap-account-rotate"
+            onClick={() => {
+              onSelectAccount(accounts[(selectedAccountIndex + 1) % accounts.length].id);
+            }}
+            aria-label={t("fleet.rotateAccounts")}
+            title={t("fleet.rotateAccounts")}
+            type="button"
+          >
+            ⟳
+          </button>
+        </>}
+      </div>
+      <CapLineGroup
+        fiveHour={selectedAccount.fiveHour}
+        sevenDay={selectedAccount.sevenDay}
+        windows={acctWindows}
+        color={color}
+        note={selectedAccount.note}
+        className="fleet-provcap-account-row"
+      />
+      {isClaude && <FableWeeklyLine account={selectedAccount} color={color} />}
+      <LiveClock render={(now) => {
+        const capturedAt = selectedAccount.capturedAt ?? (p.activeAccount === selectedAccount.id ? p.capturedAt : null);
+        const capturedMinutes = capturedMinutesAgo(capturedAt, now);
+        const stale = selectedAccount.stale === true;
+        const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
+          (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
+        );
+        const stateMessages = [
+          selectedAccount.loggedIn === false ? t("fleet.loggedOut") : null,
+          isClaude && selectedAccount.loggedIn == null ? t("fleet.loginUnknown") : null,
+          isClaude && selectedAccount.loggedIn === true && keeperEstimate ? t("fleet.keeperEstimate") : null,
+          selectedAccount.limitReached ? t("fleet.limitReached") : null,
+        ].filter((message): message is string => message != null);
+        return (
+          <>
+            <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
+              {capturedMinutes != null ? (
+                <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}`}>
+                  {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                </span>
+              ) : "—"}
+            </div>
+            {(isClaude || stateMessages.length > 0) && (
+              <div className="fleet-provcap-account-row fleet-provcap-account-state" title={stateMessages.join(" · ") || undefined}>
+                {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out" title={t("fleet.loggedOut")}>{t("fleet.loggedOut")}</span>}
+                {isClaude && selectedAccount.loggedIn == null && <span className="fleet-dim" title={t("fleet.loginUnknown")}>{t("fleet.loginUnknown")}</span>}
+                {isClaude && selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate" title={t("fleet.keeperEstimate")}>{t("fleet.keeperEstimate")}</span>}
+                {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
+                {stateMessages.length === 0 && <span className="fleet-provcap-spacer">&nbsp;</span>}
+              </div>
+            )}
+          </>
+        );
+      }} />
     </div>
   );
 }
@@ -518,9 +716,10 @@ function ProviderCapBlock({
   const color = providerColor(p.provider);
   const isStale = isProviderStale(p, Date.now());
   const [refreshing, setRefreshing] = useState(false);
-  const [accountsExpanded, setAccountsExpanded] = useState(false);
   const accounts = p.accounts ?? [];
-  const isClaudeAccounts = p.provider === "claude" && accounts.length >= 1;
+  // Claude keeps its single-account detail view at accounts.length === 1; every other provider only
+  // switches from the top-level 5h/7d to the account cycler once there's more than one account to cycle.
+  const showAccountCycler = accounts.length >= 2 || (p.provider === "claude" && accounts.length >= 1);
   const defaultAccountId = p.activeAccount && accounts.some((account) => account.id === p.activeAccount)
     ? p.activeAccount
     : accounts[0]?.id;
@@ -529,12 +728,10 @@ function ProviderCapBlock({
     setSelectedAccountId(defaultAccountId);
   }, [defaultAccountId]);
   const effectiveSelectedId = selectedAccountId ?? defaultAccountId;
-  const selectedAccountIndex = Math.max(0, accounts.findIndex((account) => account.id === effectiveSelectedId));
-  const selectedAccount = accounts[selectedAccountIndex];
-  const extraWindows = (p.windows ?? []).filter(
-    (win) => win.id !== "fiveHour" && win.id !== "sevenDay" && win.id !== "five_hour" && win.id !== "seven_day",
-  );
-  const hasExtras = isClaudeAccounts || accounts.length > 1 || extraWindows.length > 0;
+  const extraWindows = filterExtraWindows(p.windows);
+  // When promoted, extraWindows renders as primary CapLines above — it must not also appear below as text.
+  const topWindowsPromoted = shouldPromoteWindows(p.fiveHour, p.sevenDay, extraWindows);
+  const hasExtras = showAccountCycler || extraWindows.length > 0;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -557,7 +754,7 @@ function ProviderCapBlock({
       <div className="fleet-provcap-name" style={{ color }}>
         <span className="fleet-provcap-provider" title={p.provider}>{p.provider}</span>
         {p.note && <span className="fleet-provcap-note" title={p.note}>ⓘ</span>}
-        {isClaudeAccounts ? <span className="fleet-dim fleet-provcap-model" title={`${accounts.length} acct`}>{accounts.length} acct</span> : p.model && <span className="fleet-dim fleet-provcap-model" title={p.model}>{p.model}</span>}
+        {showAccountCycler ? <span className="fleet-dim fleet-provcap-model" title={`${accounts.length} acct`}>{accounts.length} acct</span> : p.model && <span className="fleet-dim fleet-provcap-model" title={p.model}>{p.model}</span>}
         <button
           className={"fleet-provcap-refresh" + (refreshing ? " refreshing" : "")}
           disabled={refreshing}
@@ -571,7 +768,7 @@ function ProviderCapBlock({
           ⟳
         </button>
       </div>
-      {!isClaudeAccounts && <LiveClock render={(now) => {
+      {!showAccountCycler && <LiveClock render={(now) => {
         const capturedMinutes = capturedMinutesAgo(p.capturedAt, now);
         const providerIsStale = isProviderStale(p, now);
         return (
@@ -584,110 +781,14 @@ function ProviderCapBlock({
           </div>
         );
       }} />}
-      {!isClaudeAccounts && <>
-        <CapLine label="5h" win={p.fiveHour} color={color} note={p.note} />
-        <CapLine label="7d" win={p.sevenDay} color={color} />
-      </>}
-      {hasExtras && <div className="fleet-provcap-extras">
-        {isClaudeAccounts && selectedAccount && (
-          <div className="fleet-provcap-account-detail">
-            <div className="fleet-provcap-account-row fleet-provcap-account-head">
-              <span className="fleet-provcap-account-label" title={selectedAccount.id}>{selectedAccount.id}</span>
-              {selectedAccount.label && selectedAccount.label !== selectedAccount.id && (
-                <span className="fleet-provcap-account-plan" title={`· ${selectedAccount.label}`}>· {selectedAccount.label}</span>
-              )}
-              {accounts.length > 1 && <>
-                <span className="fleet-sp" />
-                <span className="fleet-provcap-account-position" title={`${selectedAccountIndex + 1}/${accounts.length}`}>{selectedAccountIndex + 1}/{accounts.length}</span>
-                <button
-                  className="fleet-provcap-account-rotate"
-                  onClick={() => {
-                    setSelectedAccountId(accounts[(selectedAccountIndex + 1) % accounts.length].id);
-                  }}
-                  aria-label={t("fleet.rotateAccounts")}
-                  title={t("fleet.rotateAccounts")}
-                  type="button"
-                >
-                  ⟳
-                </button>
-              </>}
-            </div>
-            <CapLine label="5h" win={selectedAccount.fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={selectedAccount.note} className="fleet-provcap-account-row" />
-            <CapLine label="7d" win={selectedAccount.sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className="fleet-provcap-account-row" />
-            <FableWeeklyLine account={selectedAccount} color={color} />
-            <LiveClock render={(now) => {
-              const capturedAt = selectedAccount.capturedAt ?? (p.activeAccount === selectedAccount.id ? p.capturedAt : null);
-              const capturedMinutes = capturedMinutesAgo(capturedAt, now);
-              const stale = selectedAccount.stale === true;
-              const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
-                (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
-              );
-              const stateMessages = [
-                selectedAccount.loggedIn === false ? t("fleet.loggedOut") : null,
-                selectedAccount.loggedIn == null ? t("fleet.loginUnknown") : null,
-                selectedAccount.loggedIn === true && keeperEstimate ? t("fleet.keeperEstimate") : null,
-                selectedAccount.limitReached ? t("fleet.limitReached") : null,
-              ].filter((message): message is string => message != null);
-              return (
-                <>
-                  <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
-                    {capturedMinutes != null ? (
-                      <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}`}>
-                        {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
-                      </span>
-                    ) : "—"}
-                  </div>
-                  <div className="fleet-provcap-account-row fleet-provcap-account-state" title={stateMessages.join(" · ") || undefined}>
-                    {selectedAccount.loggedIn === false && <span className="fleet-provcap-logged-out" title={t("fleet.loggedOut")}>{t("fleet.loggedOut")}</span>}
-                    {selectedAccount.loggedIn == null && <span className="fleet-dim" title={t("fleet.loginUnknown")}>{t("fleet.loginUnknown")}</span>}
-                    {selectedAccount.loggedIn === true && keeperEstimate && <span className="fleet-provcap-keeper-estimate" title={t("fleet.keeperEstimate")}>{t("fleet.keeperEstimate")}</span>}
-                    {selectedAccount.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
-                    {selectedAccount.loggedIn === true && !keeperEstimate && !selectedAccount.limitReached && <span className="fleet-provcap-spacer">&nbsp;</span>}
-                  </div>
-                </>
-              );
-            }} />
-          </div>
-        )}
-      {!isClaudeAccounts && accounts.length > 1 && (
-        <div className="fleet-provcap-accounts">
-          <button
-            className="fleet-provcap-account-toggle"
-            onClick={() => {
-              setAccountsExpanded((expanded) => !expanded);
-            }}
-            aria-label={`${accounts.length} accounts`}
-            title={`${accounts.length} accounts`}
-            type="button"
-          >
-            {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
-          </button>
-          {accountsExpanded && accounts.map((account, index) => {
-            const capsTitle = [account.sevenDay?.usedPercentage, account.fiveHour?.usedPercentage]
-              .filter((pct): pct is number => pct != null)
-              .map((pct) => `${Math.round(pct)}%`)
-              .join(" · ");
-            return (
-              <div className="fleet-provcap-account" key={`${account.label}-${index}`}>
-                <span className="fleet-provcap-account-label" title={account.label}>{account.label}</span>
-                {account.plan && <span className="fleet-provcap-account-plan" title={`· ${account.plan}`}>· {account.plan}</span>}
-                <span className="fleet-provcap-account-caps" title={capsTitle}>
-                  <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
-                  {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
-                  {account.fiveHour?.usedPercentage != null && (
-                    <>
-                      <span className="fleet-provcap-account-separator">·</span>
-                      <SegBar pct={account.fiveHour.usedPercentage} color={color} segments={6} /> {Math.round(account.fiveHour.usedPercentage)}%
-                    </>
-                  )}
-                </span>
-                {account.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
-              </div>
-            );
-          })}
-        </div>
+      {!showAccountCycler && (
+        <CapLineGroup fiveHour={p.fiveHour} sevenDay={p.sevenDay} windows={extraWindows} color={color} note={p.note} />
       )}
-      {extraWindows.map((win, index) => (
+      {hasExtras && <div className="fleet-provcap-extras">
+        {showAccountCycler && (
+          <AccountCycler p={p} accounts={accounts} selectedAccountId={effectiveSelectedId} onSelectAccount={setSelectedAccountId} color={color} />
+        )}
+      {!showAccountCycler && !topWindowsPromoted && extraWindows.map((win, index) => (
         <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
           <span title={win.label ?? win.id ?? "window"}>{win.label ?? win.id ?? "window"}</span>
           <span title={win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>

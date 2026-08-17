@@ -31,7 +31,7 @@ const en = {
   "fleet.loggedOut": "logged out — /login needed",
   "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
   "fleet.loginUnknown": "login state unknown",
-  "fleet.rotateAccounts": "Rotate Claude accounts",
+  "fleet.rotateAccounts": "Rotate accounts",
   "fleet.fableWeekly": (pct: number) => `Fable ≈${pct}% of weekly (est.)`,
   "fleet.fableWeeklyExact": (pct: number) => `Fable ${pct}% of weekly`,
   "fleet.fableWeeklyEstMark": "est.",
