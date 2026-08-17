@@ -10,51 +10,63 @@
 //! renderer, never innerHTML. mentions.test.tsx asserts a body containing `<img onerror=...>`
 //! still renders as inert literal text with no element created from it.
 //!
+//! DESIGN — capture-then-predicate, not shape-enumeration. The prior regex enumerated mention
+//! *shapes* as ordered alternatives, which shadows any longer id that starts like a shorter one:
+//! `@all-hands` matched only `@all` (which MEANS broadcast — actively misleading), `@operator-x`
+//! matched only `@operator`, and `@claude-sonnet-4` partial-matched to `@claude-sonnet`. That was
+//! the 4th regression in that one regex. This file no longer enumerates shapes: `AT_TOKEN` below
+//! captures the FULL `@`-token — any run shaped like address.ts's own `AGENT_RE`, plus an optional
+//! `.child` suffix — with no alternation to shadow. A separate pure predicate, `isAgentMention`,
+//! then decides whether that whole captured id is a mention worth highlighting. Widening what
+//! counts as a mention is now a one-line predicate change, never a regex-shape edit that can
+//! shadow a differently-shaped id again.
+//!
 //! GRAMMAR — grounded in the broker's own parser, ~/Developer/heddle/src/comms/address.ts (read,
 //! not guessed):
-//!   BROADCAST = '@all'                            — literal, matched as-is.
-//!   OPERATOR  = 'operator'                         — the human's address. Note this is
-//!     "operator", not "orchestrator" — address.ts has no "orchestrator" address kind at all.
-//!     `@orchestrator` is a comms-protocol convention for "reach my dispatcher" used constantly in
-//!     fleet chat, so it is highlighted here on explicit request, but it does not round-trip
-//!     through address.ts's parseAddress().
+//!   BROADCAST = '@all'                            — literal; address.ts's own broadcast address.
+//!   OPERATOR  = 'operator'                         — the human's address, address.ts's own. Note
+//!     this is "operator", not "orchestrator" — address.ts has no "orchestrator" address kind at
+//!     all. `@orchestrator` is a comms-protocol convention for "reach my dispatcher" used
+//!     constantly in fleet chat, so it is highlighted here on explicit request, but it does not
+//!     round-trip through address.ts's parseAddress().
 //!   AGENT_RE  = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/  — real broker agent ids allow mixed case,
 //!     digit-only, and hyphenated ids ("codex-B" and "3" are address.ts's own docstring examples).
-//!     This file highlights uppercase-FIRST single letters (`@T`, not `@t`), hyphenated ids
-//!     (`@codex-B`, this fleet runs codex-A..E) and numeric ids (`@3`). It does NOT highlight a
-//!     bare lowercase word after a stray "@" (`@Kubernetes`) — a hyphen or digit is what marks an
-//!     identifier — and a left boundary keeps it out of email addresses (`user@codex-B.com`).
+//!     `AT_TOKEN` captures this full shape unconditionally; `isAgentMention` then highlights the
+//!     capture when its base id is `all`/`operator`/`orchestrator`, a single UPPERCASE letter
+//!     (`@T`), all-digit (`@3`), or contains a hyphen anywhere (`@codex-B`, `@all-hands`) — a
+//!     hyphen or digit is what marks an identifier, but note the real rule is narrower than "has a
+//!     digit": `@T1` has a digit yet is NOT a mention, because it is neither a lone uppercase
+//!     letter nor all-digit nor hyphenated — just an ordinary mixed word. A bare capitalised word
+//!     after a stray "@" (`@Kubernetes`) is likewise not a mention. The LEFT lookbehind
+//!     `(?<![\p{L}\p{N}._%+-])` keeps `AT_TOKEN` out of email addresses (`user@codex-B.com`),
+//!     Unicode letters/digits included (`café@codex-B.com`, `用户@T`) — without the `\p` classes
+//!     (vs. plain `[A-Za-z0-9]`) a non-ASCII letter right before `@` would not block the match.
 //!   CHILD_RE  = /^([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.([1-9][0-9]{0,8})$/ — a child's sequence
 //!     number is a positive integer with no leading zero, one level deep only (`K.1.1` is not an
-//!     address). The mention regex mirrors that digit grammar exactly, not a loose `\d+`.
+//!     address). `AT_TOKEN`'s optional `.child` suffix mirrors that digit grammar exactly, not a
+//!     loose `\d+`; `isAgentMention` decides on the BASE id (before the `.child`), so `@codex-B.2`
+//!     is a mention because `codex-B` is, independent of the suffix.
 
 import { Fragment } from "react";
 
-/** `@`-prefixed mention token. Three families, deliberately narrower than address.ts's full
- *  `AGENT_RE` charset so an ordinary capitalised word after a stray "@" (`@Kubernetes`) is not
- *  swallowed as a mention:
- *
- *   - the literals `@all` (address.ts BROADCAST), `@operator` (address.ts OPERATOR — the human
- *     at the keyboard, and the single most important thing to notice being mentioned) and
- *     `@orchestrator` (a live routing convention in the comms tooling rather than an address.ts
- *     grammar element — it never round-trips through parseAddress);
- *   - a single-uppercase-letter agent with an optional child suffix (`@T`, `@K.1`);
- *   - a hyphenated or numeric id (`@codex-B`, `@3`) — address.ts's own docs give these as real
- *     agent ids, and this fleet runs codex-A..codex-E. A hyphen or digit is what separates an
- *     identifier from ordinary prose, which is why the bare-word case stays excluded.
- *
- *  The LEFT lookbehind `(?<![A-Za-z0-9._%+-])` is load-bearing: without it the `@` in an email
- *  address (`user@codex-B.com`, `a@3.com`) would match, since widening to hyphenated/numeric ids
- *  removed the accidental protection the old single-letter grammar had. The `-` in the hyphenated
- *  branch is a hard anchor between two length-BOUNDED alnum runs (`{1,32}`), so the pattern cannot
- *  backtrack pathologically — the ReDoS shape Codacy flagged. Child sequence numbers mirror
- *  CHILD_RE (positive, no leading zero), not a loose `\d+`. */
-// The hyphenated alternative precedes the single-uppercase-letter one: JS alternation is ordered,
-// so with `[A-Z]` first, `@X-ray` matched just `@X` (\b sits before the hyphen) and left `-ray` as
-// prose — a broken partial highlight. Hyphenated-first matches `@X-ray` whole; a token with no
-// hyphen falls through to `[A-Z]`/numeric unchanged (gitar, #40).
-const MENTION_RE =
-  /(?<![A-Za-z0-9._%+-])@(?:all|operator|orchestrator|[A-Za-z0-9]{1,32}-[A-Za-z0-9]{1,32}(?:\.[1-9][0-9]{0,8})?|[A-Z](?:\.[1-9][0-9]{0,8})?|[0-9]{1,20}(?:\.[1-9][0-9]{0,8})?)\b/g;
+// Capture the whole @-token: an AGENT_RE-shaped id (address.ts: [A-Za-z0-9][A-Za-z0-9_-]{0,63})
+// plus an optional .child suffix. Unicode-aware LEFT boundary so no identifier/letter/digit
+// (ASCII or not) precedes the @ — this is what keeps it out of emails, incl. café@… / 用户@….
+const AT_TOKEN = /(?<![\p{L}\p{N}._%+-])@([A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:\.[1-9][0-9]{0,8})?)/gu;
+
+/** Is the captured id (the part after @, possibly with a .child) a mention we highlight, vs an
+ *  ordinary word after a stray @ (`@Kubernetes`)? Decided on the BASE (before any .child):
+ *   - the literals all / operator / orchestrator (broadcast, the human, the routing convention);
+ *   - a single UPPERCASE letter (`@T`); an all-digit id (`@3`); or any id containing a hyphen
+ *     (`@codex-B`, `@all-hands`, `@claude-sonnet-4`) — a hyphen or digit is what distinguishes an
+ *     identifier from prose. Everything else (a bare word) is not a mention. */
+function isAgentMention(id: string): boolean {
+  const base = id.split(".")[0];
+  return (
+    base === "all" || base === "operator" || base === "orchestrator" ||
+    /^[A-Z]$/.test(base) || /^[0-9]+$/.test(base) || base.includes("-")
+  );
+}
 
 export interface MentionSegment {
   text: string;
@@ -68,13 +80,13 @@ export interface MentionSegment {
 export function splitMentions(body: string): MentionSegment[] {
   const segments: MentionSegment[] = [];
   let cursor = 0;
-  MENTION_RE.lastIndex = 0;
+  AT_TOKEN.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = MENTION_RE.exec(body)) !== null) {
+  while ((match = AT_TOKEN.exec(body)) !== null) {
     if (match.index > cursor) {
       segments.push({ text: body.slice(cursor, match.index), mention: false });
     }
-    segments.push({ text: match[0], mention: true });
+    segments.push({ text: match[0], mention: isAgentMention(match[1]) });
     cursor = match.index + match[0].length;
   }
   if (cursor < body.length) {

@@ -172,3 +172,71 @@ describe("splitMentions — uppercase-first hyphenated ids are not shadowed (git
     expect(mentions("@T @K.1 @3")).toEqual(["@T", "@K.1", "@3"]);
   });
 });
+
+describe("splitMentions — capture-then-predicate: whole ids that shadow a shorter keyword/agent as a prefix (HED-130)", () => {
+  const mentions = (body: string) =>
+    splitMentions(body).filter((seg) => seg.mention).map((seg) => seg.text);
+
+  it("highlights the WHOLE token, never the shadowed shorter prefix a shape-enumerating regex would stop at", () => {
+    expect(mentions("@all-hands")).toEqual(["@all-hands"]);
+    expect(mentions("@operator-x")).toEqual(["@operator-x"]);
+    expect(mentions("@orchestrator-foo")).toEqual(["@orchestrator-foo"]);
+    expect(mentions("@claude-sonnet-4")).toEqual(["@claude-sonnet-4"]);
+    expect(mentions("@foo-bar-baz")).toEqual(["@foo-bar-baz"]);
+  });
+
+  it("round-trips exactly for each of those inputs", () => {
+    for (const body of ["@all-hands", "@operator-x", "@orchestrator-foo", "@claude-sonnet-4", "@foo-bar-baz"]) {
+      expect(splitMentions(body).map((seg) => seg.text).join("")).toBe(body);
+    }
+  });
+});
+
+describe("splitMentions — near-miss ids stay plain text, not a mention (HED-130)", () => {
+  const mentions = (body: string) =>
+    splitMentions(body).filter((seg) => seg.mention).map((seg) => seg.text);
+
+  it("does not highlight a keyword extended by ordinary letters, or a single letter followed by a digit", () => {
+    expect(mentions("@operators")).toEqual([]);
+    expect(mentions("@allx")).toEqual([]);
+    // @T1 is the case the old file header over-claimed: it has a digit, but a digit merely
+    // appearing inside a mixed letter+digit word does not make it an identifier — only an
+    // all-digit id, a lone uppercase letter, or a hyphenated id does.
+    expect(mentions("@T1")).toEqual([]);
+  });
+});
+
+describe("splitMentions — email boundary holds for +tags and Unicode letters/digits (HED-130)", () => {
+  const mentions = (body: string) =>
+    splitMentions(body).filter((seg) => seg.mention).map((seg) => seg.text);
+
+  it("does not highlight an email's @ when preceded by a +tag or a non-ASCII letter/digit", () => {
+    expect(mentions("user+tag@codex-B.com")).toEqual([]);
+    expect(mentions("café@codex-B.com")).toEqual([]);
+    expect(mentions("sí@3.com")).toEqual([]);
+    expect(mentions("用户@T")).toEqual([]);
+  });
+
+  it("round-trips exactly for each of those inputs", () => {
+    for (const body of ["user+tag@codex-B.com", "café@codex-B.com", "sí@3.com", "用户@T"]) {
+      expect(splitMentions(body).map((seg) => seg.text).join("")).toBe(body);
+    }
+  });
+});
+
+describe("splitMentions — round-trip holds for the reviewer's hostile input mix (HED-130)", () => {
+  it("never loses or reorders a character, across empty/degenerate/unicode/long-numeric inputs", () => {
+    const inputs = [
+      "",
+      "@",
+      "@@@T",
+      "@T@K",
+      "café@codex-B.com ping @T",
+      `@${"1".repeat(21)}`,
+      "@all-hands and @codex-B.2",
+    ];
+    for (const input of inputs) {
+      expect(splitMentions(input).map((seg) => seg.text).join("")).toBe(input);
+    }
+  });
+});
