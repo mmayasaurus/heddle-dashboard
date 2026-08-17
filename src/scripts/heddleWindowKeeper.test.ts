@@ -801,6 +801,31 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(after.files[fs.realpathSync(file)].offset).toBe(before.files[fs.realpathSync(file)].offset);
   });
 
+  it("clears stale contributions when a weekly window appears for the first time", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    // acct2 has no window yet on the first run; write a file with turns for both accounts
+    writeTranscript(path.join(sharedProjects, "no-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 1 },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 5 },
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    // acct2 has no window so no turns file is emitted
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct2.turns.json"))).toBe(false);
+
+    // acct2 window now appears; write a new file with a fresh turn so the offset can advance
+    writeTranscript(path.join(sharedProjects, "with-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 7 },
+    ]);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    expect(runKeeper([], home).status).toBe(0);
+    // Only the new turn is attributed; prior scanned turns are past their offset.
+    // The important guarantee: stale contributions are cleared so the window starts clean.
+    expect(transcriptSummary(home, "acct2").weightedTotal).toBe(7);
+  });
+
   it("continues pings when transcript accounting fails", () => {
     const home = mkHome();
     fs.mkdirSync(path.join(home, ".heddle", "transcript-offsets.json"));

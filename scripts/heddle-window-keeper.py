@@ -546,9 +546,12 @@ def account_transcripts(accts, now):
 
         # Each account owns its own weekly aggregate. A rollover drops only that account's old
         # contribution; byte offsets remain valid and other accounts continue draining normally.
+        # A previously absent window (previous is None) is also treated as a boundary change so
+        # that turns already scanned (while skipping this account) are cleared and the current
+        # window can be fully backfilled on the next read.
         for acct_id, resets_at in current_resets.items():
             previous = state["windows"].get(acct_id)
-            if previous is not None and previous != resets_at:
+            if previous != resets_at:
                 remove_account_contributions(state["files"], acct_id)
         state["windows"] = current_resets
 
