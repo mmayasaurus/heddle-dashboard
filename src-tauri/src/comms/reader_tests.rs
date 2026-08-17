@@ -192,24 +192,64 @@ fn seeded_db(path: &Path) {
 // ─────────────────────────────────────── test 1 ───────────────────────────────────────
 
 #[test]
-fn wrong_schema_version_reports_not_ok_with_zero_rows_and_no_error() {
+fn a_schema_version_above_the_supported_range_reports_not_ok_with_zero_rows_and_no_error() {
+    // Forward-incompatible: a future bump could change a table this reader DOES read, so anything
+    // above the max is refused rather than read optimistically. v3 stands in for "not yet known".
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("v2.db");
+    let path = dir.path().join("v3.db");
     let conn = Connection::open(&path).unwrap();
-    conn.execute_batch("PRAGMA user_version = 2;").unwrap();
+    conn.execute_batch("PRAGMA user_version = 3;").unwrap();
     drop(conn);
 
     let snap = rooms_at(&path).expect("version mismatch must not Err");
     assert!(!snap.schema_ok);
-    assert_eq!(snap.schema_version, 2);
+    assert_eq!(snap.schema_version, 3);
     assert!(snap.rooms.is_empty() && snap.needs_human.is_empty());
     assert_eq!(snap.recent_refusals, 0);
 
     let ts = transcript_at(&path, "#fleet", None, None).expect("version mismatch must not Err");
     assert!(!ts.schema_ok);
-    assert_eq!(ts.schema_version, 2);
+    assert_eq!(ts.schema_version, 3);
     assert!(ts.messages.is_empty());
     assert!(ts.floor.is_none());
+}
+
+#[test]
+fn the_additive_v2_schema_is_read_normally_not_refused() {
+    // Regression for a real miss: the reader pinned v1, so against the LIVE fleet log (bumped to
+    // v2 for `message_mentions`) it rendered "schema unsupported" over perfectly readable data.
+    // v2 changes nothing this reader touches, so it must read exactly like v1.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    seeded_db(&path);
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "PRAGMA user_version = 2; \
+         CREATE TABLE IF NOT EXISTS message_mentions ( \
+           message_id INTEGER NOT NULL, address TEXT NOT NULL, PRIMARY KEY (message_id, address));",
+    )
+    .unwrap();
+    drop(conn);
+
+    let snap = rooms_at(&path).unwrap();
+    assert!(snap.schema_ok, "an additive v2 database must be read, not refused");
+    assert_eq!(snap.schema_version, 2);
+    // (the shared fixture seeds messages/deliveries/participants, not rooms — the queue and the
+    // transcript are the load-bearing reads here)
+    assert_eq!(
+        snap.needs_human.iter().map(|r| r.id).collect::<Vec<_>>(),
+        vec![5, 4],
+        "the needs-human queue still reads on v2"
+    );
+
+    let ts = transcript_at(&path, "K.1", None, None).unwrap();
+    assert!(ts.schema_ok);
+    assert_eq!(ts.schema_version, 2);
+    assert_eq!(
+        ts.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![2, 6],
+        "transcript still reads on v2"
+    );
 }
 
 // ─────────────────────────────────────── test 2 ───────────────────────────────────────
