@@ -37,10 +37,12 @@
 //!     hyphen or digit is what marks an identifier, but note the real rule is narrower than "has a
 //!     digit": `@T1` has a digit yet is NOT a mention, because it is neither a lone uppercase
 //!     letter nor all-digit nor hyphenated — just an ordinary mixed word. A bare capitalised word
-//!     after a stray "@" (`@Kubernetes`) is likewise not a mention. The LEFT lookbehind
-//!     `(?<![\p{L}\p{N}._%+-])` keeps `AT_TOKEN` out of email addresses (`user@codex-B.com`),
-//!     Unicode letters/digits included (`café@codex-B.com`, `用户@T`) — without the `\p` classes
-//!     (vs. plain `[A-Za-z0-9]`) a non-ASCII letter right before `@` would not block the match.
+//!     after a stray "@" (`@Kubernetes`) is likewise not a mention. `splitMentions` keeps
+//!     `AT_TOKEN` out of email addresses (`user@codex-B.com`, `café@codex-B.com`, `用户@T`) by
+//!     checking the character immediately before the `@` against `LEFT_BOUNDARY_CHAR` in code — a
+//!     regex lookbehind is deliberately avoided: it reaches the WebView untransformed and older
+//!     WKWebView (< Safari 16.4) would throw a syntax error, whereas a `\p{…}` character class is
+//!     supported far earlier.
 //!   CHILD_RE  = /^([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.([1-9][0-9]{0,8})$/ — a child's sequence
 //!     number is a positive integer with no leading zero, one level deep only (`K.1.1` is not an
 //!     address). `AT_TOKEN`'s optional `.child` suffix mirrors that digit grammar exactly, not a
@@ -50,9 +52,19 @@
 import { Fragment } from "react";
 
 // Capture the whole @-token: an AGENT_RE-shaped id (address.ts: [A-Za-z0-9][A-Za-z0-9_-]{0,63})
-// plus an optional .child suffix. Unicode-aware LEFT boundary so no identifier/letter/digit
-// (ASCII or not) precedes the @ — this is what keeps it out of emails, incl. café@… / 用户@….
-const AT_TOKEN = /(?<![\p{L}\p{N}._%+-])@([A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:\.[1-9][0-9]{0,8})?)/gu;
+// plus an optional .child suffix. The LEFT boundary is checked in splitMentions against the
+// preceding character (LEFT_BOUNDARY_CHAR) rather than a regex lookbehind: a `(?<!…)` lookbehind
+// reaches the Tauri WebView untransformed (tsc does not rewrite regex — same trap as `.at()`), and
+// WKWebView only gained lookbehind in Safari 16.4, so on an older macOS WebView it would be a
+// SYNTAX ERROR that blanks the whole bundle. Unicode property escapes in a plain character class
+// (below) are supported far earlier (Safari 11.1), so LEFT_BOUNDARY_CHAR is safe where a lookbehind
+// is not.
+const AT_TOKEN = /@([A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:\.[1-9][0-9]{0,8})?)/g;
+
+// A char that, immediately before an @-token, means it is glued to an identifier/email local part
+// (`user@…`, `café@…`, `用户@…`) and so must NOT be treated as a mention. Unicode letters/digits
+// included — a non-ASCII letter right before @ must block it just like an ASCII one.
+const LEFT_BOUNDARY_CHAR = /[\p{L}\p{N}._%+-]/u;
 
 /** Is the captured id (the part after @, possibly with a .child) a mention we highlight, vs an
  *  ordinary word after a stray @ (`@Kubernetes`)? Decided on the BASE (before any .child):
@@ -86,7 +98,11 @@ export function splitMentions(body: string): MentionSegment[] {
     if (match.index > cursor) {
       segments.push({ text: body.slice(cursor, match.index), mention: false });
     }
-    segments.push({ text: match[0], mention: isAgentMention(match[1]) });
+    // Glued to a preceding identifier/letter/digit (an email local part, a longer word) → plain
+    // text, never a mention. This replaces the removed lookbehind; the text is still emitted in
+    // order so the round-trip invariant holds either way.
+    const gluedLeft = match.index > 0 && LEFT_BOUNDARY_CHAR.test(body[match.index - 1]);
+    segments.push({ text: match[0], mention: isAgentMention(match[1]) && !gluedLeft });
     cursor = match.index + match[0].length;
   }
   if (cursor < body.length) {
