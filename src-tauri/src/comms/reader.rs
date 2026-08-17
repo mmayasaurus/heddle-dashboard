@@ -13,7 +13,7 @@
 //! SCHEMA STATE MACHINE (never deviate): missing db file → `schemaOk: true, schemaVersion: 0`,
 //! empty payloads (fresh install, not an error). `user_version != 1` on an existing file →
 //! `schemaOk: false` with the observed version, empty payloads, and no table is ever queried in
-//! that state. Only `user_version == 1` reads tables.
+//! that state. Only a supported `user_version` reads tables.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,9 +21,24 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 
-/// The `PRAGMA user_version` this reader understands — must track `COMMS_SCHEMA_VERSION` in
-/// `src/comms/log.ts`.
-const COMMS_SCHEMA_VERSION: i64 = 1;
+/// The `PRAGMA user_version` range this reader understands, tracking `COMMS_SCHEMA_VERSION` in the
+/// broker's `src/comms/log.ts`.
+///
+/// A RANGE rather than one pinned version, because the broker's bumps so far are purely ADDITIVE:
+/// v2 added a `message_mentions` table and changed nothing this reader touches (`messages`,
+/// `deliveries`, `participants`, `rooms`, `room_members`, `room_floor`). Pinning v1 meant the panel
+/// refused a live v2 database and rendered "unsupported" while perfectly readable data sat there —
+/// found by pointing it at the real fleet log.
+///
+/// The safety property is unchanged and deliberate: anything ABOVE the max is still refused rather
+/// than read optimistically, because a future bump could change a table we do read. Widen this only
+/// after checking the broker's migration is additive for those tables.
+const COMMS_SCHEMA_MIN: i64 = 1;
+const COMMS_SCHEMA_MAX: i64 = 2;
+
+fn schema_supported(v: i64) -> bool {
+    (COMMS_SCHEMA_MIN..=COMMS_SCHEMA_MAX).contains(&v)
+}
 
 // ─────────────────────────────── output shapes (contract-fixed) ───────────────────────────────
 
@@ -181,7 +196,7 @@ fn rooms_at(path: &Path) -> Result<RoomsSnapshot, String> {
     }
     let conn = open_readonly(path)?;
     let version = read_user_version(&conn)?;
-    if version != COMMS_SCHEMA_VERSION {
+    if !schema_supported(version) {
         return Ok(empty_rooms_snapshot(version, false));
     }
     Ok(RoomsSnapshot {
@@ -321,7 +336,7 @@ fn transcript_at(
     }
     let conn = open_readonly(path)?;
     let version = read_user_version(&conn)?;
-    if version != COMMS_SCHEMA_VERSION {
+    if !schema_supported(version) {
         return Ok(empty_transcript(version, false));
     }
     // One deferred read transaction so the page, its delivery aggregates, sender kinds and the
