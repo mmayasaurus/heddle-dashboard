@@ -24,6 +24,12 @@ Workflows, gate, and deterministic review: [docs/CI.md](docs/CI.md)
 
 Tap and keeper facts: [docs/USAGE_TAP.md](docs/USAGE_TAP.md)
 
+## Session lifecycle
+
+`/startup` to orient (live sources only — no hand-maintained state doc), `/closeout` before ending or
+handing off (nothing uncommitted, nothing unpushed, Linear reflects reality). Both in
+[.claude/commands/](.claude/commands/).
+
 ## Worktrees
 
 One worktree per active agent: [.claude/rules/worktree-discipline.md](.claude/rules/worktree-discipline.md)
