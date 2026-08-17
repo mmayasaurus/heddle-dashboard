@@ -80,6 +80,74 @@ function advice(home: string) {
   return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "rotation-advice.json"), "utf8"));
 }
 
+type TranscriptTurn = {
+  ownerAccountUuid: string;
+  timestamp: string;
+  model: string;
+  input?: number;
+  output?: number;
+  cacheCreation?: number;
+  cacheRead?: number;
+  prompt?: string;
+  isSidechain?: boolean;
+};
+
+function setupTranscriptAccounts(home: string) {
+  const sharedProjects = path.join(home, "shared-projects");
+  fs.mkdirSync(sharedProjects, { recursive: true });
+  const accounts = [
+    { id: "acct1", configDir: path.join(home, ".claude"), uuid: "uuid-acct1" },
+    { id: "acct2", configDir: path.join(home, ".claude-acct2"), uuid: "uuid-acct2" },
+  ];
+  for (const account of accounts) {
+    fs.mkdirSync(account.configDir, { recursive: true });
+    fs.writeFileSync(path.join(account.configDir, ".claude.json"), JSON.stringify({ accountUuid: account.uuid }));
+    fs.symlinkSync(sharedProjects, path.join(account.configDir, "projects"), "dir");
+  }
+  return { accounts, sharedProjects };
+}
+
+function writeTranscriptWindow(home: string, account: string, resetsAt: number) {
+  const now = Math.floor(Date.now() / 1000);
+  fs.writeFileSync(
+    path.join(home, ".heddle", "usage", `claude-${account}.json`),
+    JSON.stringify({
+      capturedAt: now,
+      rate_limits: {
+        five_hour: { used_percentage: 1, resets_at: now + 3600 },
+        seven_day: { resets_at: resetsAt },
+      },
+    }),
+  );
+}
+
+function transcriptLine(turn: TranscriptTurn): string {
+  return JSON.stringify({
+    type: "assistant",
+    ownerAccountUuid: turn.ownerAccountUuid,
+    timestamp: turn.timestamp,
+    ...(turn.isSidechain ? { isSidechain: true } : {}),
+    message: {
+      model: turn.model,
+      usage: {
+        input_tokens: turn.input ?? 0,
+        output_tokens: turn.output ?? 0,
+        cache_creation_input_tokens: turn.cacheCreation ?? 0,
+        cache_read_input_tokens: turn.cacheRead ?? 0,
+      },
+      content: turn.prompt ?? "fixture assistant content",
+    },
+  });
+}
+
+function writeTranscript(file: string, turns: TranscriptTurn[]) {
+  fs.writeFileSync(file, `${turns.map(transcriptLine).join("\n")}\n`);
+}
+
+function transcriptSummary(home: string, account: string) {
+  return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "usage", `claude-${account}.turns.json`), "utf8"));
+}
+
 function tempFiles(root: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -445,5 +513,393 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(advice(home).command).toBeNull();
     expect(advice(home).reason).toContain("HEDDLE_RELAUNCH_TEMPLATE");
     expect(result.stdout).not.toContain("Command: no eligible target");
+  });
+
+  it("attributes shared transcript turns by owner account and deduplicates symlinked project dirs", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    const resetsAt = now + 6 * 86400;
+    writeTranscriptWindow(home, "acct1", resetsAt);
+    writeTranscriptWindow(home, "acct2", resetsAt);
+    const secretPrompt = "fixture-secret-prompt-must-never-leave-the-reader";
+    writeTranscript(path.join(sharedProjects, "shared.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 10) * 1000).toISOString(), model: "claude-fable-5", input: 2, output: 3, prompt: secretPrompt },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date((now - 9) * 1000).toISOString(), model: "claude-opus-5", input: 4, output: 5, prompt: secretPrompt },
+    ]);
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(calls(home)).toEqual([]);
+    expect(transcriptSummary(home, "acct1").byModel).toEqual({
+      "claude-fable-5": { input: 2, output: 3, cacheCreation: 0, cacheRead: 0, turns: 1 },
+    });
+    expect(transcriptSummary(home, "acct2").byModel).toEqual({
+      "claude-opus-5": { input: 4, output: 5, cacheCreation: 0, cacheRead: 0, turns: 1 },
+    });
+    const emitted = `${result.stdout}${result.stderr}${fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct1.turns.json"), "utf8")}${fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct2.turns.json"), "utf8")}`;
+    expect(emitted).not.toContain(secretPrompt);
+  });
+
+  it("rejects an implausible model field so content cannot leak through the one persisted string", () => {
+    // The model is the only transcript field persisted as a key. A malformed/adversarial record whose
+    // model carries body text must not enter turns.json OR the state file, and must not be counted.
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const secretModel = "leaked secret prompt smuggled through the model field with spaces";
+    writeTranscript(path.join(sharedProjects, "shared.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 10) * 1000).toISOString(), model: secretModel, input: 9, output: 9 },
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").byModel).toEqual({}); // implausible model → not counted
+    // Crucially, check the STATE file too — the existing privacy test omits it.
+    const stateBlob = fs.readFileSync(path.join(home, ".heddle", "transcript-usage-state.json"), "utf8");
+    const turnsBlob = fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct1.turns.json"), "utf8");
+    expect(stateBlob).not.toContain(secretModel);
+    expect(turnsBlob).not.toContain(secretModel);
+  });
+
+  it("runs the pings BEFORE transcript accounting, so a blocking transcript read cannot cost a ping", () => {
+    // A hung open() (here a FIFO named like a transcript) is not an exception, so the try/except
+    // around accounting cannot save the pings — only running them first does. Proof: the ping anchor
+    // exists even though accounting then blocks forever (we kill it with a timeout).
+    const mkfifo = spawnSync("mkfifo", ["--help"]);
+    if (mkfifo.error) return; // no mkfifo on this platform — skip
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    // NO window for acct1 → it is UNKNOWN and therefore the due ping. (A window would make it "live"
+    // = nothing to do, and there would be no ping to observe.)
+    expect(spawnSync("mkfifo", [path.join(sharedProjects, "blocking.jsonl")]).status).toBe(0);
+    // acct1 has no window anchor → it is the due ping; run with a short kill timeout since the keeper
+    // will hang in account_transcripts after pinging.
+    spawnSync("python3", [keeperPath], {
+      cwd: path.resolve(path.dirname(keeperPath), ".."),
+      env: { ...process.env, HOME: home, HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"), HEDDLE_ROTATE_NOTIFY: "0", CLAUDE_CONFIG_DIR: undefined },
+      encoding: "utf8",
+      timeout: 4000,
+    });
+    // The ping ran first: its keeper anchor is on disk despite accounting blocking afterward.
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.keeper.json"))).toBe(true);
+  });
+
+  it("only counts transcript turns inside the current weekly window", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    const resetsAt = now + 6 * 86400;
+    writeTranscriptWindow(home, "acct1", resetsAt);
+    writeTranscriptWindow(home, "acct2", resetsAt);
+    writeTranscript(path.join(sharedProjects, "windowed.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 30) * 1000).toISOString(), model: "claude-opus-5", input: 7 },
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 8 * 86400) * 1000).toISOString(), model: "claude-fable-5", input: 99 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").byModel).toEqual({
+      "claude-opus-5": { input: 7, output: 0, cacheCreation: 0, cacheRead: 0, turns: 1 },
+    });
+  });
+
+  it("excludes cache reads from Fable weights and uses null for zero weighted totals", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    const resetsAt = now + 6 * 86400;
+    writeTranscriptWindow(home, "acct1", resetsAt);
+    writeTranscriptWindow(home, "acct2", resetsAt);
+    writeTranscript(path.join(sharedProjects, "weighted.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 1, output: 9, cacheRead: 10000 },
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 10 },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-haiku-5", cacheRead: 9999 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    const weighted = transcriptSummary(home, "acct1");
+    expect(weighted.weightedTotal).toBe(20);
+    expect(weighted.fableWeighted).toBe(10);
+    expect(weighted.fableShare).toBe(0.5);
+    expect(weighted.cacheReadTotal).toBe(10000);
+    expect(transcriptSummary(home, "acct2")).toMatchObject({ weightedTotal: 0, fableWeighted: 0, fableShare: null, cacheReadTotal: 9999 });
+  });
+
+  it("incrementally accumulates transcript turns and is idempotent without new bytes", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "incremental.jsonl");
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 2 }]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    fs.appendFileSync(file, `${transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 3 })}\n`);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(5);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(5);
+  });
+
+  it("re-reads a transcript from zero after truncation", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "truncated.jsonl");
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 999 }]);
+    expect(runKeeper([], home).status).toBe(0);
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 1 }]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").byModel["claude-fable-5"].turns).toBe(1);
+  });
+
+  it("leaves a partial trailing transcript line for later completion", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "partial.jsonl");
+    fs.writeFileSync(file, transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 4 }));
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(0);
+    fs.appendFileSync(file, "\n");
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(4);
+  });
+
+  it("does not record transcript turns for an account without a seven-day tap window", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTap(home, "acct2", now, 1, now + 3600);
+    writeTranscript(path.join(sharedProjects, "unknown-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 2 },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 4 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(2);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct2.turns.json"))).toBe(false);
+  });
+
+  it("respects the global transcript byte budget and resumes the backlog later", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const first = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 2 });
+    const second = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 3 });
+    fs.writeFileSync(path.join(sharedProjects, "budgeted.jsonl"), `${first}\n${second}\n`);
+
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(Buffer.byteLength(first) + 1) }).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(2);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(5);
+  });
+
+  it("skips an oversized transcript record so later files drain on a later run", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const oversized = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", prompt: "x".repeat(1000) });
+    fs.writeFileSync(path.join(sharedProjects, "a-oversized.jsonl"), `${oversized}\n`);
+    writeTranscript(path.join(sharedProjects, "z-following.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 7 },
+    ]);
+
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(Buffer.byteLength(oversized) - 1) }).status).toBe(0);
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(Buffer.byteLength(oversized) - 1) }).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(7);
+  });
+
+  it("counts a normal record left partial by an earlier file's budget, not dropped as oversized", () => {
+    // gitar-bot's budget-boundary case: a short read caused by an EARLIER file consuming the run
+    // budget must NOT be misread as an oversized record — advancing the offset there would split a
+    // normal record and silently drop its turn. It must be left and read whole on a later run.
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const firstLine = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 5 });
+    const secondLine = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 9, prompt: "x".repeat(1000) });
+    fs.writeFileSync(path.join(sharedProjects, "a-first.jsonl"), `${firstLine}\n`);
+    fs.writeFileSync(path.join(sharedProjects, "b-second.jsonl"), `${secondLine}\n`);
+    // Budget leaves the whole first file plus only a PARTIAL second record — its newline sits just past.
+    const budget = Buffer.byteLength(firstLine) + 1 + (Buffer.byteLength(secondLine) - 5);
+    expect(Buffer.byteLength(secondLine) < budget).toBe(true); // second record is normal, not oversized
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(budget) }).status).toBe(0);
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(budget) }).status).toBe(0);
+    // Both turns counted: 5 (first) + 9 (second, read whole on the second run) = 14. Under the old
+    // misclassification the second was split and dropped, leaving 5.
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(14);
+  });
+
+  it("restarts at zero when a truncated transcript regrows past a stale offset", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "regrown.jsonl");
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 1 }]);
+    expect(runKeeper([], home).status).toBe(0);
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 2, prompt: "x".repeat(1000) }]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").byModel).toEqual({
+      "claude-fable-5": { input: 2, output: 0, cacheCreation: 0, cacheRead: 0, turns: 1 },
+    });
+  });
+
+  it("persists each transcript file offset and counts together in one state object", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "atomic-state.jsonl");
+    writeTranscript(file, [{ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 3 }]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "transcript-usage-state.json"), "utf8"));
+    expect(state.files[fs.realpathSync(file)]).toMatchObject({ offset: fs.statSync(file).size, accounts: {
+      acct1: { "claude-opus-5": { input: 3, turns: 1 } },
+    } });
+    expect(fs.existsSync(path.join(home, ".heddle", "transcript-offsets.json"))).toBe(false);
+  });
+
+  it("withholds transcript accounting for an already-ended weekly window", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now - 1);
+    writeTranscript(path.join(sharedProjects, "stale-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now - 60) * 1000).toISOString(), model: "claude-opus-5", input: 5 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.turns.json"))).toBe(false);
+  });
+
+  it("does not count a future-dated transcript turn before the weekly reset", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscript(path.join(sharedProjects, "future-turn.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date((now + 3600) * 1000).toISOString(), model: "claude-opus-5", input: 5 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(0);
+  });
+
+  it("excludes isSidechain transcript turns from account totals", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscript(path.join(sharedProjects, "sidechain.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 5, isSidechain: true },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(0);
+  });
+
+  it("does not double-count transcript bytes across sequential accounting runs", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscript(path.join(sharedProjects, "sequential-lock.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 5 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(5);
+  });
+
+  it("continues attribution when another account has an unreadable UUID config", () => {
+    const home = mkHome();
+    const { accounts, sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    fs.writeFileSync(path.join(accounts[1].configDir, ".claude.json"), "{");
+    writeTranscript(path.join(sharedProjects, "malformed-config.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 5 },
+    ]);
+
+    expect(runKeeper([], home).status).toBe(0);
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(5);
+  });
+
+  it("keeps other accounts' counts and offsets when one weekly window rolls over", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const file = path.join(sharedProjects, "rollover.jsonl");
+    writeTranscript(file, [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 1 },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 2 },
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    const before = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "transcript-usage-state.json"), "utf8"));
+    writeTranscriptWindow(home, "acct1", now + 13 * 86400);
+
+    expect(runKeeper([], home).status).toBe(0);
+    const after = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "transcript-usage-state.json"), "utf8"));
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(0);
+    expect(transcriptSummary(home, "acct2").weightedTotal).toBe(2);
+    expect(after.files[fs.realpathSync(file)].offset).toBe(before.files[fs.realpathSync(file)].offset);
+  });
+
+  it("clears stale contributions when a weekly window appears for the first time", () => {
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    // acct2 has no window yet on the first run; write a file with turns for both accounts
+    writeTranscript(path.join(sharedProjects, "no-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-opus-5", input: 1 },
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 5 },
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    // acct2 has no window so no turns file is emitted
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct2.turns.json"))).toBe(false);
+
+    // acct2 window now appears; write a new file with a fresh turn so the offset can advance
+    writeTranscript(path.join(sharedProjects, "with-window.jsonl"), [
+      { ownerAccountUuid: "uuid-acct2", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 7 },
+    ]);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    expect(runKeeper([], home).status).toBe(0);
+    // Only the new turn is attributed; prior scanned turns are past their offset.
+    // The important guarantee: stale contributions are cleared so the window starts clean.
+    expect(transcriptSummary(home, "acct2").weightedTotal).toBe(7);
+  });
+
+  it("continues pings when transcript accounting fails", () => {
+    const home = mkHome();
+    fs.mkdirSync(path.join(home, ".heddle", "transcript-offsets.json"));
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[transcripts] accounting failed:");
+    expect(calls(home)).toHaveLength(1);
   });
 });
