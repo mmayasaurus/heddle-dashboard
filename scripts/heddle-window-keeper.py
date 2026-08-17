@@ -316,7 +316,9 @@ def main():
     for a in accts:
         w = window(a["id"])
         live = bool(w and w["resets_at"] and w["resets_at"] > now)
-        status = f"live ({w.get('source')}), {w['used'] if w.get('used') is not None else '?'}% used, resets {fmt(w['resets_at'])}" if live else ("EXPIRED" if w and w.get("resets_at") else "UNKNOWN (no capture)")
+        # Same rounding as the advisor: this status line is where an operator reads the numbers when
+        # they are deciding whether to rotate, and `7.000000000000001%` is noise in that moment.
+        status = f"live ({w.get('source')}), {pct(w['used']) if w.get('used') is not None else '?'}% used, resets {fmt(w['resets_at'])}" if live else ("EXPIRED" if w and w.get("resets_at") else "UNKNOWN (no capture)")
         if live:
             log(f"{a['id']}: {status} → nothing to do"); continue
         since_last = now - float(state.get("last_ping_ts") or 0)
