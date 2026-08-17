@@ -32,6 +32,9 @@ const en = {
   "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
   "fleet.loginUnknown": "login state unknown",
   "fleet.rotateAccounts": "Rotate Claude accounts",
+  "fleet.fableWeekly": (pct: number) => `Fable ≈${pct}% of weekly (est.)`,
+  "fleet.fableWeeklyExact": (pct: number) => `Fable ${pct}% of weekly`,
+  "fleet.fableWeeklyBreakdown": (fable: number, other: number, unknown: number, samples: number) => `Fable ${fable}% · other ${other}% · unknown ${unknown}% · ${samples} samples`,
   "common.loading": "Loading…",
   "common.prev": "Previous",
   "common.next": "Next",
@@ -934,6 +937,17 @@ const en = {
   "statusbar.updateReady": "Restart to update",
   "statusbar.updateFailed": "Update failed",
   "statusbar.updateTooltip": "Click for details",
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour",
+  "fleet.routeMix.empty": "No dispatches in the window.",
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`,
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`,
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`,
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset",
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014",
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`,
 };
 
 export default en;

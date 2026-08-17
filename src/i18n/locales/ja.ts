@@ -17,7 +17,7 @@ const ja: typeof en = {
   "common.copied": "コピーしました", // Copied
   "common.retry": "再試行", // Retry
   "common.refresh": "更新", // Refresh
-  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント", "fleet.loggedOut": "ログアウト中 — /login が必要", "fleet.keeperEstimate": "ウィンドウは有効（keeper 推定）— このアカウントの初回描画後に % を表示", "fleet.loginUnknown": "ログイン状態不明", "fleet.rotateAccounts": "Claude アカウントを切り替える",
+  "fleet.title": "フリート", "fleet.refresh": "更新", "fleet.capsWaiting": "上限: ステータスラインの描画待ち…", "fleet.usageUnavailable": "使用量を取得できません", "fleet.noActiveWindow": "有効なウィンドウなし", "fleet.capturedMinutesAgo": (n) => `${n}分前に取得`, "fleet.stale": "古い", "fleet.limitReached": "上限到達", "fleet.resetting": "リセット中…", "fleet.currentProject": "現在のプロジェクト", "fleet.allAgents": "すべてのエージェント", "fleet.loggedOut": "ログアウト中 — /login が必要", "fleet.keeperEstimate": "ウィンドウは有効（keeper 推定）— このアカウントの初回描画後に % を表示", "fleet.loginUnknown": "ログイン状態不明", "fleet.rotateAccounts": "Claude アカウントを切り替える", "fleet.fableWeekly": (pct) => `Fable は週間上限の約${pct}%（推定）`, "fleet.fableWeeklyExact": (pct) => `Fable は週間上限の${pct}%`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · その他 ${other}% · 不明 ${unknown}% · ${samples} 件のサンプル`,
   "common.loading": "読み込み中…", // Loading…
   "common.prev": "前へ", // Previous
   "common.next": "次へ", // Next
@@ -902,6 +902,17 @@ const ja: typeof en = {
   "statusbar.updateReady": "Restart to update", // TODO translate
   "statusbar.updateFailed": "Update failed", // TODO translate
   "statusbar.updateTooltip": "Click for details", // TODO translate
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
+  "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
 };
 
 export default ja;

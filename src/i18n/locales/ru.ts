@@ -27,7 +27,7 @@ const ru: typeof en = {
   "common.copied": "Скопировано", // Copied
   "common.retry": "Повторить", // Retry
   "common.refresh": "Обновить", // Refresh
-  "fleet.title": "Флот", "fleet.refresh": "Обновить", "fleet.capsWaiting": "лимиты: ожидание отрисовки строки состояния…", "fleet.usageUnavailable": "использование недоступно", "fleet.noActiveWindow": "нет активного окна", "fleet.capturedMinutesAgo": (n) => `зафиксировано ${n} ${plural(n, "минуту", "минуты", "минут")} назад`, "fleet.stale": "устарело", "fleet.limitReached": "лимит исчерпан", "fleet.resetting": "сброс…", "fleet.currentProject": "Текущий проект", "fleet.allAgents": "Все агенты", "fleet.loggedOut": "выход выполнен — нужен /login", "fleet.keeperEstimate": "окно активно (оценка keeper) — % появится после первого рендера этого аккаунта", "fleet.loginUnknown": "статус входа неизвестен", "fleet.rotateAccounts": "Переключить аккаунты Claude",
+  "fleet.title": "Флот", "fleet.refresh": "Обновить", "fleet.capsWaiting": "лимиты: ожидание отрисовки строки состояния…", "fleet.usageUnavailable": "использование недоступно", "fleet.noActiveWindow": "нет активного окна", "fleet.capturedMinutesAgo": (n) => `зафиксировано ${n} ${plural(n, "минуту", "минуты", "минут")} назад`, "fleet.stale": "устарело", "fleet.limitReached": "лимит исчерпан", "fleet.resetting": "сброс…", "fleet.currentProject": "Текущий проект", "fleet.allAgents": "Все агенты", "fleet.loggedOut": "выход выполнен — нужен /login", "fleet.keeperEstimate": "окно активно (оценка keeper) — % появится после первого рендера этого аккаунта", "fleet.loginUnknown": "статус входа неизвестен", "fleet.rotateAccounts": "Переключить аккаунты Claude", "fleet.fableWeekly": (pct) => `Fable ≈${pct}% недельного лимита (оценка)`, "fleet.fableWeeklyExact": (pct) => `Fable ${pct}% недельного лимита`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · другое ${other}% · неизвестно ${unknown}% · ${samples} ${plural(samples, "образец", "образца", "образцов")}`,
   "common.loading": "Загрузка…", // Loading…
   "common.prev": "Назад", // Previous
   "common.next": "Далее", // Next
@@ -929,6 +929,17 @@ const ru: typeof en = {
   "statusbar.updateReady": "Restart to update", // TODO translate
   "statusbar.updateFailed": "Update failed", // TODO translate
   "statusbar.updateTooltip": "Click for details", // TODO translate
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
+  "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
 };
 
 export default ru;

@@ -17,7 +17,7 @@ const vi: typeof en = {
   "common.copied": "Đã sao chép",
   "common.retry": "Thử lại",
   "common.refresh": "Làm mới",
-  "fleet.title": "Đội", "fleet.refresh": "Làm mới", "fleet.capsWaiting": "giới hạn: đang chờ thanh trạng thái hiển thị…", "fleet.usageUnavailable": "không có dữ liệu sử dụng", "fleet.noActiveWindow": "không có cửa sổ hoạt động", "fleet.capturedMinutesAgo": (n) => `đã ghi nhận ${n} phút trước`, "fleet.stale": "cũ", "fleet.limitReached": "đã đạt giới hạn", "fleet.resetting": "đang đặt lại…", "fleet.currentProject": "Dự án hiện tại", "fleet.allAgents": "Tất cả tác nhân", "fleet.loggedOut": "đã đăng xuất — cần /login", "fleet.keeperEstimate": "cửa sổ đang hoạt động (ước tính keeper) — % xuất hiện sau lần hiển thị đầu tiên của tài khoản này", "fleet.loginUnknown": "không rõ trạng thái đăng nhập", "fleet.rotateAccounts": "Chuyển tài khoản Claude",
+  "fleet.title": "Đội", "fleet.refresh": "Làm mới", "fleet.capsWaiting": "giới hạn: đang chờ thanh trạng thái hiển thị…", "fleet.usageUnavailable": "không có dữ liệu sử dụng", "fleet.noActiveWindow": "không có cửa sổ hoạt động", "fleet.capturedMinutesAgo": (n) => `đã ghi nhận ${n} phút trước`, "fleet.stale": "cũ", "fleet.limitReached": "đã đạt giới hạn", "fleet.resetting": "đang đặt lại…", "fleet.currentProject": "Dự án hiện tại", "fleet.allAgents": "Tất cả tác nhân", "fleet.loggedOut": "đã đăng xuất — cần /login", "fleet.keeperEstimate": "cửa sổ đang hoạt động (ước tính keeper) — % xuất hiện sau lần hiển thị đầu tiên của tài khoản này", "fleet.loginUnknown": "không rõ trạng thái đăng nhập", "fleet.rotateAccounts": "Chuyển tài khoản Claude", "fleet.fableWeekly": (pct) => `Fable ≈${pct}% giới hạn tuần (ước tính)`, "fleet.fableWeeklyExact": (pct) => `Fable ${pct}% giới hạn tuần`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · khác ${other}% · không rõ ${unknown}% · ${samples} mẫu`,
   "common.loading": "Đang tải…",
   "common.prev": "Trước",
   "common.next": "Tiếp",
@@ -883,6 +883,17 @@ const vi: typeof en = {
   "statusbar.updateReady": "Khởi động lại để cập nhật",
   "statusbar.updateFailed": "Cập nhật thất bại",
   "statusbar.updateTooltip": "Nhấp để xem chi tiết",
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
+  "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
 };
 
 export default vi;

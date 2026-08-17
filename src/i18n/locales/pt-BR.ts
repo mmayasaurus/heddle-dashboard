@@ -17,7 +17,7 @@ const ptBR: typeof en = {
   "common.copied": "Copiado", // Copied
   "common.retry": "Tentar novamente", // Retry
   "common.refresh": "Atualizar", // Refresh
-  "fleet.title": "Frota", "fleet.refresh": "Atualizar", "fleet.capsWaiting": "limites: aguardando a renderização da barra de status…", "fleet.usageUnavailable": "uso indisponível", "fleet.noActiveWindow": "sem janela ativa", "fleet.capturedMinutesAgo": (n) => `capturado há ${n} min`, "fleet.stale": "desatualizado", "fleet.limitReached": "limite atingido", "fleet.resetting": "redefinindo…", "fleet.currentProject": "Projeto atual", "fleet.allAgents": "Todos os agentes", "fleet.loggedOut": "desconectado — /login necessário", "fleet.keeperEstimate": "janela ativa (estimativa do keeper) — % aparece após a primeira renderização nesta conta", "fleet.loginUnknown": "estado de login desconhecido", "fleet.rotateAccounts": "Alternar contas Claude",
+  "fleet.title": "Frota", "fleet.refresh": "Atualizar", "fleet.capsWaiting": "limites: aguardando a renderização da barra de status…", "fleet.usageUnavailable": "uso indisponível", "fleet.noActiveWindow": "sem janela ativa", "fleet.capturedMinutesAgo": (n) => `capturado há ${n} min`, "fleet.stale": "desatualizado", "fleet.limitReached": "limite atingido", "fleet.resetting": "redefinindo…", "fleet.currentProject": "Projeto atual", "fleet.allAgents": "Todos os agentes", "fleet.loggedOut": "desconectado — /login necessário", "fleet.keeperEstimate": "janela ativa (estimativa do keeper) — % aparece após a primeira renderização nesta conta", "fleet.loginUnknown": "estado de login desconhecido", "fleet.rotateAccounts": "Alternar contas Claude", "fleet.fableWeekly": (pct) => `Fable ≈${pct}% do limite semanal (est.)`, "fleet.fableWeeklyExact": (pct) => `Fable ${pct}% do limite semanal`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · outros ${other}% · desconhecido ${unknown}% · ${samples} amostras`,
   "common.loading": "Carregando…", // Loading…
   "common.prev": "Anterior", // Previous
   "common.next": "Próximo", // Next
@@ -912,6 +912,17 @@ const ptBR: typeof en = {
   "statusbar.updateReady": "Restart to update", // TODO translate
   "statusbar.updateFailed": "Update failed", // TODO translate
   "statusbar.updateTooltip": "Click for details", // TODO translate
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
+  "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
 };
 
 export default ptBR;

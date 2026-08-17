@@ -17,7 +17,7 @@ const zhCN: typeof en = {
   "common.copied": "已复制",
   "common.retry": "重试",
   "common.refresh": "刷新",
-  "fleet.title": "集群", "fleet.refresh": "刷新", "fleet.capsWaiting": "限额：等待状态栏渲染…", "fleet.usageUnavailable": "使用量不可用", "fleet.noActiveWindow": "无活动窗口", "fleet.capturedMinutesAgo": (n) => `${n} 分钟前捕获`, "fleet.stale": "已过期", "fleet.limitReached": "已达限额", "fleet.resetting": "正在重置…", "fleet.currentProject": "当前项目", "fleet.allAgents": "所有智能体", "fleet.loggedOut": "已登出 — 需要 /login", "fleet.keeperEstimate": "窗口仍有效（keeper 估算）— 此账号首次渲染后显示 %", "fleet.loginUnknown": "登录状态未知", "fleet.rotateAccounts": "切换 Claude 账号",
+  "fleet.title": "集群", "fleet.refresh": "刷新", "fleet.capsWaiting": "限额：等待状态栏渲染…", "fleet.usageUnavailable": "使用量不可用", "fleet.noActiveWindow": "无活动窗口", "fleet.capturedMinutesAgo": (n) => `${n} 分钟前捕获`, "fleet.stale": "已过期", "fleet.limitReached": "已达限额", "fleet.resetting": "正在重置…", "fleet.currentProject": "当前项目", "fleet.allAgents": "所有智能体", "fleet.loggedOut": "已登出 — 需要 /login", "fleet.keeperEstimate": "窗口仍有效（keeper 估算）— 此账号首次渲染后显示 %", "fleet.loginUnknown": "登录状态未知", "fleet.rotateAccounts": "切换 Claude 账号", "fleet.fableWeekly": (pct) => `Fable 约占每周限额的 ${pct}%（估算）`, "fleet.fableWeeklyExact": (pct) => `Fable 占每周限额的 ${pct}%`, "fleet.fableWeeklyBreakdown": (fable, other, unknown, samples) => `Fable ${fable}% · 其他 ${other}% · 未知 ${unknown}% · ${samples} 个样本`,
   "common.loading": "加载中…",
   "common.prev": "上一个",
   "common.next": "下一个",
@@ -890,6 +890,17 @@ const zhCN: typeof en = {
   "statusbar.updateReady": "重启以完成更新",
   "statusbar.updateFailed": "更新失败",
   "statusbar.updateTooltip": "点击查看详情",
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour", // TODO translate
+  "fleet.routeMix.empty": "No dispatches in the window.", // TODO translate
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`, // TODO translate
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`, // TODO translate
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`, // TODO translate
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset", // TODO translate
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014", // TODO translate
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`, // TODO translate
 };
 
 export default zhCN;
