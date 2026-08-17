@@ -17,7 +17,7 @@ Use GitHub's private vulnerability reporting instead: go to the
 choose *Report a vulnerability*. The report stays private between you and the maintainers until a
 fix is published.
 
-This project is a fork of [VelaTerm](https://github.com/vlinx-io/heddle). If the problem reproduces
+This project is a fork of [VelaTerm](https://github.com/vlinx-io/VelaTerm). If the problem reproduces
 on unmodified upstream VelaTerm, please report it upstream as well — fixes for inherited code have
 to land there to reach every fork. Problems in this fork's own additions (the agent fleet drawer,
 usage and ledger views, and the heddle integration generally) belong here.
