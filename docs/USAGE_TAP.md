@@ -53,7 +53,7 @@ keys they don't know.
 | `note` | string? | English diagnostic caveat about the payload (e.g. a window the provider stopped exposing) — same category as backend error strings; for UI copy localize via `noteCodes` |
 | `noteCodes` | string[]? | stable dot-namespaced codes for every condition in `note` (`codex.no5hWindow`, `codex.noData`, `codex.legacyMode`) — the translation-key layer; `null` when the source has no notes concept |
 | `accounts` | `AccountLimit[]?` | per-account rows for multi-account providers (claude 4 · codex 2 · cursor 2 today), ONE shape for all: `{id, label, plan?, capturedAt?, stale?, fiveHour, sevenDay, windows[], limitReached?, note?, noteCodes[], detail?}` — `id` is a stable key (claude: registry id `acct1`; codex: wham `account_id`; cursor: `cursor-ide` / `cursor-agent-keychain`), `label` a **masked** email (`m…@example.com`) or the id, `capturedAt`/`stale` judged per account, `detail` provider-specific raw facts (documented per source below). Account codes: `claude.noCapture`, `claude.limitReached`, `codex.accountFetchFailed`, `codex.rateLimitReached`, `codex.spendControlReached`, `codex.overageLimitReached`, `cursor.includedApiExhausted`, `cursor.includedTotalExhausted`, `cursor.onDemandLimitReached`, `cursor.tokenExpired`, `cursor.tokenExpiringSoon`, `cursor.fetchFailed` |
-| `fableWeeklyEstimatePct` | number? | Claude only (the active account's): estimated share of the WEEKLY cap consumed by Fable models, in percentage points (Fable's soft cap is 50%). `null` until ≥3 attributed samples, or N/A. An **estimate by design** — see "Fable weekly estimate"; exact when the payload carries a Fable-scoped window |
+| `fableWeeklyEstimatePct` | number? | Claude only (the active account's): estimated share of the WEEKLY cap consumed by Fable models, in percentage points (Fable's soft cap is 50%). `null` until ≥3 attributed samples AND ≥25% window coverage (HED-136), or N/A. An **estimate by design** — see "Fable weekly estimate"; exact when the payload carries a Fable-scoped window |
 | `fableWeeklySamples` | number? | the number of attributed samples behind the estimate (its confidence); `null` for other providers. Both fields also appear on every Claude `accounts[]` row (with the breakdown in `detail.fableWeekly`) |
 | `activeAccount` | string? | the `accounts[].id` whose numbers the top-level `fiveHour`/`sevenDay`/`windows` show — the account this process/dispatch is on (claude: `CLAUDE_CONFIG_DIR` → registry, else the default; cursor: the cursor-agent login, which is what heddle's dispatches bill); `null` when the top level is a binding (max) view (codex) or unknown |
 | `windows` | `NamedWindow[]?` | extra named windows beyond 5h/7d, binding across accounts: `{id, label, usedPercentage?, resetsAt?, usedAmount?, limitAmount?, unit?}` — `null` when the provider has no such notion, `[]` when it does but none are present |
@@ -258,15 +258,20 @@ does record on every capture: the `model` of the rendering session and the accou
   first capture of a window is `unknown`, not attributed; a gap longer than 10 min between ingested
   captures (the app wasn't watching) sends that delta to `unknown` rather than to whichever model
   rendered next; a downward correction inside a window shrinks the buckets proportionally; the
-  estimate is `null` until ≥3 positive samples were attributed, and the sample count is always shown
-  next to it. Interleaved sessions on one account (Fable and Haiku both rendering) still blur the
-  attribution — this is a best-effort signal for a soft cap, not an accounting record.
+  estimate is `null` until BOTH ≥3 positive samples were attributed AND those samples cover ≥25% of
+  the observed window (HED-136: a few samples over a window we barely watched is not evidence about
+  the window as a whole, and reporting it as `0%` let a soft cap read blindness as "Fable is quiet");
+  the sample count and the coverage are always shown next to it. Interleaved sessions on one account
+  (Fable and Haiku both rendering) still blur the attribution — this is a best-effort signal for a
+  soft cap, not an accounting record.
 - **Exact when possible**: if a `rate_limits` key mentioning `fable` with a `used_percentage` ever
   appears in the payload (the tap captures `rate_limits` verbatim), that value is used as-is and
   `detail.fableWeekly.exact` is `true` — nothing else needs to change.
 - **Exposure**: `fableWeeklyEstimatePct` + `fableWeeklySamples` on every Claude `accounts[]` row and, for
   the active account, on the claude `ProviderLimit`; `detail.fableWeekly = {fablePct, otherPct,
-  unknownPct, samples, exact, minSamples, windowResetsAt, lastCapturedAt, updatedAt}`. The drawer's bar
+  unknownPct, samples, exact, minSamples, coverage, minCoverage, windowResetsAt, lastCapturedAt,
+  updatedAt}` (`coverage`/`minCoverage` added in HED-136 so a consumer can tell an unmeasured window
+  from a genuinely low one). The drawer's bar
   ("Fable ≈NN% of weekly (est.)", soft-limit tick at 50%) is Agent R's; it should render only when the
   estimate is non-null.
 
