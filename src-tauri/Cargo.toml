@@ -30,6 +30,9 @@ gui = [
     # Pure-Rust russh transport required only by the GUI SSH client.
     "dep:russh",
     "dep:russh-sftp",
+    # Fleet chatroom composer (HED-74c, comms::operator): GUI-only, like the other desktop-only
+    # deps above — the minimal --no-default-features server has no composer to run.
+    "dep:rmcp",
 ]
 
 [profile.release]
@@ -114,6 +117,10 @@ base64 = "0.22"
 # Cross-platform process-tree CPU/memory sampling uses sysinfo native APIs rather than external ps. Enable
 # only `system`, pin the version for reproducibility, and omit unrelated disk/network/component/user features.
 sysinfo = { version = "=0.33.1", default-features = false, features = ["system"] }
+# Fleet chatroom composer (HED-74c): the official MCP Rust SDK (client + stdio child-process
+# transport only) for talking to the heddle-comms broker as the OPERATOR role. Never hand-roll
+# JSON-RPC for this — see comms/operator.rs for the security contract this crate is spawned under.
+rmcp = { version = "3", features = ["client", "transport-child-process"], optional = true }
 
 # Unix-only rlimit support raises open-file soft limits for inherited agent sessions, avoiding macOS's
 # default 256-descriptor failures. Windows has no equivalent.
