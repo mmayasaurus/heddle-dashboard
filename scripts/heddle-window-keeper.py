@@ -230,9 +230,13 @@ def pct(v):
     goal is to remove noise, not to add a decimal nobody asked for."""
     try:
         rounded = round(float(v), 1)
-    except (TypeError, ValueError):
+        # int() must stay INSIDE the guard: json.load decodes the literals NaN/Infinity into floats,
+        # and int(nan) raises ValueError while int(inf) raises OverflowError. Outside the try, a single
+        # such value in a usage file would abort the whole keeper before any ping — for a cosmetic
+        # rounding helper. Anything unrepresentable degrades to None, like any other missing number.
+        return int(rounded) if rounded == int(rounded) else rounded
+    except (TypeError, ValueError, OverflowError):
         return None
-    return int(rounded) if rounded == int(rounded) else rounded
 
 
 def advise_rotation(accts, state, now):
