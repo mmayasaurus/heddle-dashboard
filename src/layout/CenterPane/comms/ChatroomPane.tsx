@@ -7,6 +7,7 @@
 //! and its siblings under comms/ do not depend on or modify any existing component.
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useSuspendNativeViews } from "../../../hooks/nativeViewSuspend";
 import { isTauri } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import "./comms.css";
@@ -188,6 +189,12 @@ function bindChatroomActions(
 
 export function ChatroomPane() {
   const [open, setOpen] = useState(() => lsGet(OPEN_KEY) === "1");
+  // A native child webview (a browser tab) is a real OS view that punches through the parent and
+  // ignores z-index entirely — nothing in the DOM can ever paint above it. This app already solves
+  // that with a ref-counted suspension hook used by Backdrop, ContextMenu and every modal; the
+  // overlay just has to opt in. Suspension HIDES the browser view, so the tab goes blank behind
+  // the chat — the right trade for a full-stage surface you read and type into (HED-111).
+  useSuspendNativeViews(open);
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
   // True once a needs-human row click has set activeTarget to an address that may not be in

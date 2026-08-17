@@ -423,6 +423,18 @@
   white-space: pre-wrap;
 }
 
+/* @mention highlight inside a message body (HED-130) — bold weight + accent wash together, not
+   colour alone, so it stays legible for colour-blind readers and in both light/dark themes. Sets
+   its own color/background rather than relying on inheritance, so it still stands out inside the
+   dimmed peer bubble variant below. */
+.comms-mention {
+  font-weight: 650;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
 /* Operator — right-aligned, accent, verified seal. */
 .comms-msg-operator {
   align-self: flex-end;

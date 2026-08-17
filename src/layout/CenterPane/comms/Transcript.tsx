@@ -3,11 +3,14 @@
 //! unverified row can never render privileged (operator/directive) styling even if its tier
 //! field claims to be one — defense in depth on top of the DB CHECK constraint. `fromNameClaim`
 //! is surfaced as a suffix on the sender line and can never replace or restyle the sender.
-//! Message bodies are plain text: they are interpolated as JSX children (React escapes text
-//! content automatically), never through dangerouslySetInnerHTML or a markdown renderer.
+//! Message bodies are plain text: `MentionText` (mentions.tsx) splits them into plain-text
+//! segments and interpolates every one as a JSX child (React escapes text content automatically),
+//! never through dangerouslySetInnerHTML or a markdown renderer — @mention segments get a
+//! `.comms-mention` span, everything else stays untouched text.
 
 import { useEffect, useRef } from "react";
 import { dateLocale, useT } from "../../../i18n";
+import { MentionText } from "./mentions";
 import { agentColor, type CommsDeliveries, type CommsMessage } from "./useCommsPoll";
 
 type TrustStyle = "operator" | "directive" | "peer";
@@ -85,7 +88,7 @@ function MessageRow({ m, highlighted }: { m: CommsMessage; highlighted: boolean 
           <span className="comms-msg-ts">{formatTs(m.ts)}</span>
         </div>
         <div className="comms-bubble" data-testid={`comms-body-${m.id}`}>
-          {m.body}
+          <MentionText body={m.body} />
         </div>
         {style === "directive" && m.deliveries && <DeliveryChips d={m.deliveries} />}
       </div>
