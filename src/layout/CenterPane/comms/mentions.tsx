@@ -18,12 +18,12 @@
 //!     `@orchestrator` is a comms-protocol convention for "reach my dispatcher" used constantly in
 //!     fleet chat, so it is highlighted here on explicit request, but it does not round-trip
 //!     through address.ts's parseAddress().
-//!   AGENT_RE  = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/  — real broker agent ids are far more
-//!     permissive than what this file highlights: mixed case, digit-only, and hyphenated ids are
-//!     all valid ("codex-B" and "3" are address.ts's own docstring examples). This file only
-//!     highlights uppercase-FIRST single-letter tokens (`@T`, not `@t`, not `@codex-B`) because
-//!     that matches this fleet's actual identity convention and avoids turning an ordinary
-//!     capitalised word after a stray "@" into a highlighted mention.
+//!   AGENT_RE  = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/  — real broker agent ids allow mixed case,
+//!     digit-only, and hyphenated ids ("codex-B" and "3" are address.ts's own docstring examples).
+//!     This file highlights uppercase-FIRST single letters (`@T`, not `@t`), hyphenated ids
+//!     (`@codex-B`, this fleet runs codex-A..E) and numeric ids (`@3`). It does NOT highlight a
+//!     bare lowercase word after a stray "@" (`@Kubernetes`) — a hyphen or digit is what marks an
+//!     identifier — and a left boundary keeps it out of email addresses (`user@codex-B.com`).
 //!   CHILD_RE  = /^([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.([1-9][0-9]{0,8})$/ — a child's sequence
 //!     number is a positive integer with no leading zero, one level deep only (`K.1.1` is not an
 //!     address). The mention regex mirrors that digit grammar exactly, not a loose `\d+`.
@@ -43,9 +43,14 @@ import { Fragment } from "react";
  *     agent ids, and this fleet runs codex-A..codex-E. A hyphen or digit is what separates an
  *     identifier from ordinary prose, which is why the bare-word case stays excluded.
  *
- *  Child sequence numbers mirror CHILD_RE exactly (positive, no leading zero), not a loose `\d+`. */
+ *  The LEFT lookbehind `(?<![A-Za-z0-9._%+-])` is load-bearing: without it the `@` in an email
+ *  address (`user@codex-B.com`, `a@3.com`) would match, since widening to hyphenated/numeric ids
+ *  removed the accidental protection the old single-letter grammar had. The `-` in the hyphenated
+ *  branch is a hard anchor between two length-BOUNDED alnum runs (`{1,32}`), so the pattern cannot
+ *  backtrack pathologically — the ReDoS shape Codacy flagged. Child sequence numbers mirror
+ *  CHILD_RE (positive, no leading zero), not a loose `\d+`. */
 const MENTION_RE =
-  /@(?:all|operator|orchestrator|[A-Z](?:\.[1-9][0-9]{0,8})?|[A-Za-z0-9]+-[A-Za-z0-9]+(?:\.[1-9][0-9]{0,8})?|[0-9]+(?:\.[1-9][0-9]{0,8})?)\b/g;
+  /(?<![A-Za-z0-9._%+-])@(?:all|operator|orchestrator|[A-Z](?:\.[1-9][0-9]{0,8})?|[A-Za-z0-9]{1,32}-[A-Za-z0-9]{1,32}(?:\.[1-9][0-9]{0,8})?|[0-9]{1,20}(?:\.[1-9][0-9]{0,8})?)\b/g;
 
 export interface MentionSegment {
   text: string;

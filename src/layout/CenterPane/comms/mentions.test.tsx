@@ -127,3 +127,32 @@ describe("splitMentions — addresses this fleet actually uses", () => {
     }
   });
 });
+
+
+describe("splitMentions — email addresses must never highlight (left boundary, #40)", () => {
+  const mentions = (body: string) =>
+    splitMentions(body).filter((seg) => seg.mention).map((seg) => seg.text);
+
+  it("does not highlight an @ that is preceded by identifier characters", () => {
+    // Widening the grammar to hyphenated/numeric ids removed the accidental protection the old
+    // single-letter pattern had; the left lookbehind restores it explicitly.
+    expect(mentions("user@codex-B.com")).toEqual([]);
+    expect(mentions("a@3.com")).toEqual([]);
+    expect(mentions("foo@T")).toEqual([]);
+    expect(mentions("mail me at a@b.com")).toEqual([]);
+    expect(mentions("x@K.1y")).toEqual([]);
+  });
+
+  it("still highlights real mentions at string start and after whitespace/punctuation", () => {
+    expect(mentions("@operator please look")).toEqual(["@operator"]);
+    expect(mentions("handing to @codex-B and @3")).toEqual(["@codex-B", "@3"]);
+    expect(mentions("(@K.1) and @all")).toEqual(["@K.1", "@all"]);
+    expect(mentions("@codex-B.2")).toEqual(["@codex-B.2"]);
+  });
+
+  it("round-trips exactly for every email/mention-mixed input", () => {
+    for (const body of ["user@codex-B.com", "a@3.com ping @T", "@all then a@b.com", "x@K.1y"]) {
+      expect(splitMentions(body).map((seg) => seg.text).join("")).toBe(body);
+    }
+  });
+});

@@ -194,7 +194,11 @@ export function ChatroomPane() {
   // that with a ref-counted suspension hook used by Backdrop, ContextMenu and every modal; the
   // overlay just has to opt in. Suspension HIDES the browser view, so the tab goes blank behind
   // the chat — the right trade for a full-stage surface you read and type into (HED-111).
-  useSuspendNativeViews(open);
+  // isTauri && open, not just open: the hook must stay unconditional (hooks can't be gated by an
+  // early return), but a non-Tauri/web mount with `open` persisted to "1" in localStorage would
+  // otherwise increment the process-wide suspension counter for a component that renders null and
+  // has no native views to suspend (4 reviewers, #40).
+  useSuspendNativeViews(isTauri && open);
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
   // True once a needs-human row click has set activeTarget to an address that may not be in
