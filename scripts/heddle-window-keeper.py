@@ -32,6 +32,8 @@ USAGE = os.path.join(HOME, ".heddle", "usage")
 STATE = os.path.join(HOME, ".heddle", "window-keeper.state.json")
 LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
+TRANSCRIPT_OFFSETS = os.path.join(HOME, ".heddle", "transcript-offsets.json")
+TRANSCRIPT_STATE = os.path.join(HOME, ".heddle", "transcript-usage-state.json")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
 # The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
@@ -314,6 +316,242 @@ def advise_rotation(accts, state, now):
         log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
 
 
+def account_uuid_map():
+    """Map transcript owner UUIDs to Heddle ids without retaining config credentials.
+
+    The projects directories are commonly shared symlinks, so a config directory cannot establish
+    ownership.  Only the deliberately small `accountUuid` field is read from each config file."""
+    owners = {}
+    for acct in (load(REG, {}) or {}).get("claude", []):
+        try:
+            config_dir = os.path.expanduser(acct.get("configDir") or "~/.claude")
+            config = load(os.path.join(config_dir, ".claude.json"), {})
+            owner_uuid = config.get("accountUuid") if isinstance(config, dict) else None
+            acct_id = acct.get("id")
+            if isinstance(owner_uuid, str) and isinstance(acct_id, str):
+                owners[owner_uuid] = acct_id
+        except Exception:
+            # A missing or unavailable config is not worth delaying the five-minute keeper.
+            continue
+    return owners
+
+
+def transcript_projects(accts):
+    """Return each real projects directory once, even when account configs symlink to it."""
+    projects = []
+    seen = set()
+    for acct in accts:
+        try:
+            config_dir = os.path.expanduser(acct.get("configDir") or "~/.claude")
+            project_dir = os.path.realpath(os.path.join(config_dir, "projects"))
+            if project_dir not in seen and os.path.isdir(project_dir):
+                seen.add(project_dir)
+                projects.append(project_dir)
+        except OSError:
+            continue
+    return projects
+
+
+def transcript_files(accts):
+    """Find transcript files under deduplicated project roots, tolerating unreadable trees."""
+    files, seen = [], set()
+    for project_dir in transcript_projects(accts):
+        try:
+            for root, _, names in os.walk(project_dir, onerror=lambda _error: None):
+                for name in names:
+                    if not name.endswith(".jsonl"):
+                        continue
+                    try:
+                        path = os.path.realpath(os.path.join(root, name))
+                        if path not in seen:
+                            seen.add(path)
+                            files.append(path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return sorted(files)
+
+
+def weekly_windows(accts):
+    """Return only windows proved by seven-day tap captures; keeper anchors are five-hour only."""
+    windows = {}
+    for acct in accts:
+        try:
+            tap = load(os.path.join(USAGE, f"claude-{safe_segment(acct['id'])}.json"), None)
+            seven_day = (tap or {}).get("rate_limits", {}).get("seven_day", {})
+            resets_at = seven_day.get("resets_at")
+            if resets_at is not None:
+                resets_at = int(resets_at)
+                windows[acct["id"]] = (resets_at - 7 * 86400, resets_at)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return windows
+
+
+def transcript_offsets():
+    """Load the explicit byte-offset contract, surfacing a broken state path to main's guard."""
+    if not os.path.exists(TRANSCRIPT_OFFSETS):
+        return {}
+    with open(TRANSCRIPT_OFFSETS) as f:
+        offsets = json.load(f)
+    if not isinstance(offsets, dict):
+        raise ValueError("transcript offsets must be an object")
+    return offsets
+
+
+def transcript_state():
+    if not os.path.exists(TRANSCRIPT_STATE):
+        return {"windows": {}, "files": {}}
+    with open(TRANSCRIPT_STATE) as f:
+        state = json.load(f)
+    if not isinstance(state, dict):
+        raise ValueError("transcript usage state must be an object")
+    state.setdefault("windows", {})
+    state.setdefault("files", {})
+    if not isinstance(state["windows"], dict) or not isinstance(state["files"], dict):
+        raise ValueError("transcript usage state has invalid sections")
+    return state
+
+
+def transcript_timestamp(value):
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def transcript_number(value):
+    """Usage counts are integers; malformed or negative provider values carry no usable signal."""
+    try:
+        result = int(value)
+        return result if result >= 0 else 0
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def is_fable(model):
+    # `affable` is not Fable; model names use separators, so match a complete token only.
+    return "fable" in re.split(r"[^a-z0-9]+", model.lower())
+
+
+def add_transcript_turn(file_counts, account, model, usage):
+    account_counts = file_counts.setdefault(account, {})
+    counts = account_counts.setdefault(model, {"input": 0, "output": 0, "cacheCreation": 0,
+                                                "cacheRead": 0, "turns": 0})
+    counts["input"] += transcript_number(usage.get("input_tokens"))
+    counts["output"] += transcript_number(usage.get("output_tokens"))
+    counts["cacheCreation"] += transcript_number(usage.get("cache_creation_input_tokens"))
+    counts["cacheRead"] += transcript_number(usage.get("cache_read_input_tokens"))
+    counts["turns"] += 1
+
+
+def account_summary(acct_id, resets_at, files, now):
+    by_model = {}
+    sessions_seen = 0
+    for file_counts in files.values():
+        models = file_counts.get(acct_id, {}) if isinstance(file_counts, dict) else {}
+        if not models:
+            continue
+        sessions_seen += 1
+        for model, values in models.items():
+            target = by_model.setdefault(model, {"input": 0, "output": 0, "cacheCreation": 0,
+                                                  "cacheRead": 0, "turns": 0})
+            for key in target:
+                target[key] += transcript_number(values.get(key))
+    # Cache reads commonly dominate a turn (for example, a large reused context). Including them
+    # would swamp real request/output work and make long sessions all look alike.
+    weighted_total = sum(values["input"] + values["output"] + values["cacheCreation"]
+                         for values in by_model.values())
+    fable_weighted = sum(values["input"] + values["output"] + values["cacheCreation"]
+                         for model, values in by_model.items() if is_fable(model))
+    cache_read_total = sum(values["cacheRead"] for values in by_model.values())
+    return {"windowResetsAt": resets_at, "updatedAt": int(now), "sessionsSeen": sessions_seen,
+            "byModel": by_model, "weightedTotal": weighted_total, "fableWeighted": fable_weighted,
+            "fableShare": fable_weighted / weighted_total if weighted_total else None,
+            "cacheReadTotal": cache_read_total}
+
+
+def account_transcripts(accts, now):
+    """Incrementally account assistant usage without exposing transcript content anywhere.
+
+    The offset file remains just byte positions.  A separate counts-only accumulator lets a truncated
+    session replace its old contribution instead of double-counting it, while normal five-minute runs
+    only read appended bytes.
+    """
+    offsets = transcript_offsets()
+    state = transcript_state()
+    owners = account_uuid_map()
+    windows = weekly_windows(accts)
+    current_resets = {acct_id: end for acct_id, (_, end) in windows.items()}
+
+    # A new weekly boundary invalidates previous-window aggregates. Rewind intentionally so the new
+    # window is built from transcript timestamps rather than treating old offsets as current facts.
+    if any(state["windows"].get(acct_id) not in (None, resets_at)
+           for acct_id, resets_at in current_resets.items()):
+        state["files"] = {}
+        offsets = {}
+    state["windows"] = current_resets
+
+    budget = int_env("HEDDLE_TRANSCRIPT_BYTES", 32 * 1024 * 1024, 1, 1024 * 1024 * 1024)
+    read_bytes = 0
+    for path in transcript_files(accts):
+        if read_bytes >= budget:
+            break
+        try:
+            size = os.path.getsize(path)
+            saved = offsets.get(path, {})
+            offset = int(saved.get("offset", 0)) if isinstance(saved, dict) else 0
+            if offset < 0:
+                offset = 0
+            if size < offset:
+                # Rotation/truncation means prior bytes no longer describe this session file.
+                offset = 0
+                state["files"].pop(path, None)
+            if size == offset:
+                continue
+            with open(path, "rb") as f:
+                f.seek(offset)
+                data = f.read(min(size - offset, budget - read_bytes))
+        except OSError:
+            continue
+        read_bytes += len(data)
+        newline = data.rfind(b"\n")
+        if newline < 0:
+            # The writer may be mid-line. Leave its bytes for the next run, rather than inventing a
+            # malformed record or permanently consuming something that was not complete yet.
+            offsets[path] = {"offset": offset, "size": size}
+            continue
+        complete = data[:newline + 1]
+        file_counts = state["files"].setdefault(path, {})
+        for raw_line in complete.splitlines():
+            try:
+                turn = json.loads(raw_line.decode("utf-8"))
+                if turn.get("type") != "assistant":
+                    continue
+                acct_id = owners.get(turn.get("ownerAccountUuid"))
+                if acct_id not in windows:
+                    continue
+                timestamp = transcript_timestamp(turn.get("timestamp"))
+                start, end = windows[acct_id]
+                if timestamp is None or timestamp < start or timestamp > end:
+                    continue
+                message = turn.get("message") or {}
+                model, usage = message.get("model"), message.get("usage")
+                if isinstance(model, str) and isinstance(usage, dict):
+                    add_transcript_turn(file_counts, acct_id, model, usage)
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
+                # Invalid complete records are skipped silently: logging a transcript line could leak it.
+                continue
+        offsets[path] = {"offset": offset + len(complete), "size": size}
+
+    write_json_atomic(TRANSCRIPT_OFFSETS, offsets)
+    write_json_atomic(TRANSCRIPT_STATE, state)
+    for acct_id, (_, resets_at) in windows.items():
+        write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.turns.json"),
+                          account_summary(acct_id, resets_at, state["files"], now))
+
+
 def main():
     dry = "--dry-run" in sys.argv
     verify = None
@@ -365,6 +603,12 @@ def main():
             advise_rotation(accts, state, now)
         except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
             log(f"[rotate] advisor failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
+        # Transcript summaries improve weekly routing, but the staggered pings remain this job's
+        # primary responsibility. A damaged transcript state file must therefore never block a ping.
+        try:
+            account_transcripts(accts, now)
+        except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
+            log(f"[transcripts] accounting failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
 
     for a in accts:
         w = window(a["id"])
