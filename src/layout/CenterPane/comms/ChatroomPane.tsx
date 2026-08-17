@@ -178,7 +178,11 @@ function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClea
     <div className="comms-chat">
       <div className="comms-chat-head">
         <span className="comms-chat-name">{activeTarget ?? ""}</span>
-        {activeRoom && !activeRoom.open && <RoomMemberControls room={activeRoom.target} opDisabled={!opStatus.available} hint={hint} />}
+        {activeRoom && !activeRoom.open && (
+          // Keyed on the room target so React remounts (not reuses) this on a room switch — its
+          // address input and last result are per-room local state that must not survive one (B5).
+          <RoomMemberControls key={activeRoom.target} room={activeRoom.target} opDisabled={!opStatus.available} hint={hint} />
+        )}
       </div>
       <NeedsHumanStrip rows={needsHuman} onRowClick={onNeedsHumanRowClick} />
       <FloorBanner floor={floor} />

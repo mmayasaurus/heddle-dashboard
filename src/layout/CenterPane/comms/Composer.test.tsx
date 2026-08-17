@@ -206,6 +206,38 @@ describe("Composer — @all toggle", () => {
   });
 });
 
+describe("Composer — resets draft state when the active target changes (B4)", () => {
+  it("clears the typed body, the @all toggle, and a refusal banner when target changes", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "refused", code: "floor-held", reason: "floor-held" });
+    const { rerender } = render(<Composer target="#fleet" status={AVAILABLE} floorHolder="V" replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    const toggle = () => within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox") as HTMLInputElement;
+    fireEvent.click(toggle());
+    fireEvent.change(input(), { target: { value: "half-written for #fleet" } });
+    fireEvent.click(sendBtn());
+
+    expect(await screen.findByTestId("comms-refusal")).toBeTruthy();
+    expect(toggle().checked).toBe(true);
+    expect(input().value).toBe("half-written for #fleet");
+
+    rerender(<Composer target="T" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    await waitFor(() => expect(input().value).toBe(""));
+    expect(screen.queryByTestId("comms-refusal")).toBeNull();
+    expect(toggle().checked).toBe(false);
+  });
+
+  it("does NOT clear the typed body when only the @all toggle changes (no target switch)", () => {
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+    fireEvent.change(input(), { target: { value: "still typing" } });
+
+    const toggle = within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox");
+    fireEvent.click(toggle);
+
+    expect(input().value).toBe("still typing");
+  });
+});
+
 describe("Composer — reply context", () => {
   it("renders the reply-to sender and body when replyTo is set", () => {
     render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={mkReplyTo({ sender: "U.2" })} onClearReplyTo={vi.fn()} />);

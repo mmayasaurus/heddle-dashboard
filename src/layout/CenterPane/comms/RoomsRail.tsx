@@ -124,7 +124,15 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
         <NewRoomButton onClick={onNewRoom} disabled={newRoomDisabled} hint={newRoomHint} />
       </h3>
       {rooms.map((r) => (
-        <RoomRow key={r.target} room={r} active={r.target === activeTarget} unread={!!unreadByTarget[r.target]} onSelect={() => onSelectRoom(r.target)} />
+        <RoomRow
+          key={r.target}
+          room={r}
+          active={r.target === activeTarget}
+          unread={!!unreadByTarget[r.target]}
+          onSelect={() => {
+            onSelectRoom(r.target);
+          }}
+        />
       ))}
 
       <h3 className="comms-rail-h">{t("fleet.comms.fleetPresence")}</h3>

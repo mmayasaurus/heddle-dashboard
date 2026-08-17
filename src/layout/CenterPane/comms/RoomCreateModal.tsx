@@ -46,7 +46,9 @@ function useCreateRoomSubmit(onClose: () => void) {
 
   const submit = async (name: string, topic: string, open: boolean, members: string[]) => {
     setState({ submitting: true, error: null, failedMembers: [] });
-    const room = `#${name}`;
+    // The form already shows a static "#" beside the input (RoomCreateFields) — a user who also
+    // types their own leading "#" (out of habit) must not end up with "##name" (B3).
+    const room = `#${name.replace(/^#+/, "")}`;
     try {
       const raw = await invoke<unknown>("heddle_comms_create_room", { name: room, topic: topic || null, open });
       const result = parseOperatorResult(raw);
@@ -123,6 +125,7 @@ function RoomCreateFields({ name, setName, topic, setTopic, open, setOpen, nameE
             data-testid="comms-modal-name"
             value={name}
             placeholder={t("fleet.comms.roomNamePlaceholder")}
+            aria-label={t("fleet.comms.roomNameLabel")}
             onChange={(e) => {
               setName(e.target.value);
             }}
@@ -140,6 +143,7 @@ function RoomCreateFields({ name, setName, topic, setTopic, open, setOpen, nameE
           className="comms-modal-input"
           data-testid="comms-modal-topic"
           value={topic}
+          aria-label={t("fleet.comms.roomTopicLabel")}
           onChange={(e) => {
             setTopic(e.target.value);
           }}
@@ -195,7 +199,7 @@ export function RoomCreateModal({ roster, onClose }: RoomCreateModalProps) {
 
   return (
     <div className="comms-modal-backdrop" data-testid="comms-room-modal">
-      <div className="comms-modal" role="dialog" aria-label={t("fleet.comms.newRoomModalTitle")}>
+      <div className="comms-modal" role="dialog" aria-modal="true" aria-label={t("fleet.comms.newRoomModalTitle")}>
         <div className="comms-modal-head">
           <span className="comms-modal-title">{t("fleet.comms.newRoomModalTitle")}</span>
           <button

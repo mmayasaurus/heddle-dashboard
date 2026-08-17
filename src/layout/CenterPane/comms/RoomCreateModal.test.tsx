@@ -70,6 +70,25 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_create_room", { name: "#town-hall", topic: null, open: true }));
   });
 
+  it("B3: a name typed without a leading # gets exactly one prefixed", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
+    fireEvent.change(nameInput(), { target: { value: "ops" } });
+    fireEvent.click(submitBtn());
+
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_create_room", { name: "#ops", topic: null, open: false }));
+  });
+
+  it("B3: a name typed WITH a leading # is not double-hashed (the form already shows one)", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
+    fireEvent.change(nameInput(), { target: { value: "#ops" } });
+    fireEvent.click(submitBtn());
+
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_create_room", { name: "#ops", topic: null, open: false }));
+    expect(mockInvoke).not.toHaveBeenCalledWith("heddle_comms_create_room", expect.objectContaining({ name: "##ops" }));
+  });
+
   it("prefixes the name with # and forwards a non-empty topic", async () => {
     mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);

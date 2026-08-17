@@ -7,7 +7,7 @@
 //! so the operator can retry without retyping. The @all toggle re-ADDRESSES the send to the
 //! broker's broadcast address; it never decorates the body.
 
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { invoke } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import type { CommsNeedsHumanRow } from "./useCommsPoll";
@@ -50,7 +50,7 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
     }
   };
 
-  return { sending, refusal, send };
+  return { sending, refusal, setRefusal, send };
 }
 
 interface ReplyContextProps {
@@ -151,10 +151,21 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo 
   // not a body prefix. Prefixing the text would post an ordinary room message that merely STARTS
   // with "@all" — it would look sent and reach nobody extra. The toggle changes the destination.
   const effectiveTarget = atAll ? "@all" : target;
-  const { sending, refusal, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
+  const { sending, refusal, setRefusal, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
     setText("");
     onClearReplyTo();
   });
+
+  // Composer state is per-TARGET, not global: a half-typed body, the @all toggle, and a stale
+  // refusal banner all belong to the room/DM they were composed for. Switching the active target
+  // must clear them, or a draft (or an old refusal) from one room could bleed into whichever
+  // target is active next (HED-74c review round 1, B4). Deliberately keyed on the raw `target`
+  // prop, not `effectiveTarget` — toggling @all is not a room switch and must not clear a draft.
+  useEffect(() => {
+    setText("");
+    setAtAll(false);
+    setRefusal(null);
+  }, [target, setRefusal]);
 
   const hint = operatorHint(t, status.reason);
   const disabled = !status.available || target == null || sending;

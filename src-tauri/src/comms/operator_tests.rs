@@ -159,8 +159,16 @@ fn operator_token_never_appears_in_argv_or_error_strings() {
         .get_envs()
         .any(|(k, v)| k == "HEDDLE_COMMS_OPERATOR_TOKEN" && v == Some(std::ffi::OsStr::new(token)));
     assert!(has_token_env, "token must reach the child via env");
-    let has_push_env = std_cmd.get_envs().any(|(k, _)| k == "HEDDLE_COMMS_PUSH");
-    assert!(!has_push_env, "HEDDLE_COMMS_PUSH must never be set by this module");
+    // A3: HEDDLE_COMMS_PUSH must be explicitly marked for REMOVAL (`(key, None)` in `get_envs()`),
+    // not merely absent from this list — absent would still let the child inherit it from
+    // whatever this process's own environment happens to contain. See the dedicated A3 tests below
+    // for the removal-under-parent-inheritance property this distinction exists for.
+    let push_entry = std_cmd.get_envs().find(|(k, _)| *k == "HEDDLE_COMMS_PUSH");
+    assert_eq!(
+        push_entry,
+        Some((std::ffi::OsStr::new("HEDDLE_COMMS_PUSH"), None)),
+        "HEDDLE_COMMS_PUSH must be explicitly removed, not merely left unset"
+    );
 
     // Every error string this module can construct is passed through `redact`.
     let leaked = format!("spawn failed: saw token {token} in a hypothetical error");
@@ -169,6 +177,97 @@ fn operator_token_never_appears_in_argv_or_error_strings() {
         "spawn failed: saw token [REDACTED] in a hypothetical error"
     );
     assert_eq!(redact("no token in play".to_string(), None), "no token in play");
+}
+
+// ──────────────────────── Test 1b: redaction correctness (A1, A2) ────────────────────────────
+
+/// A2: the token's JSON-ESCAPED rendering must be scrubbed too, not just its raw form. A token
+/// containing a character JSON escapes (here, a `"`) never appears byte-for-byte inside a
+/// serialized JSON string that embeds it — only its escaped form does (`sek\"ret`, not
+/// `sek"ret`) — so a raw substring replace alone misses it.
+#[test]
+fn redact_covers_the_tokens_json_escaped_form_too() {
+    let token = "sek\"ret";
+    // What `v.to_string()` looks like when this token is embedded inside a JSON string value —
+    // the embedded `"` comes out backslash-escaped in the serialized text.
+    let escaped_in_json = r#""prefix sek\"ret suffix""#;
+    assert_eq!(redact(escaped_in_json.to_string(), Some(token)), r#""prefix [REDACTED] suffix""#);
+}
+
+/// Same property as above, exercised end-to-end through `redact_value` (the ~426 call site A2
+/// names) with a real `Value`, confirming the scrubbed JSON still re-parses cleanly (this test is
+/// deliberately NOT the fail-closed case below — the token here doesn't corrupt JSON structure).
+#[test]
+fn redact_value_scrubs_a_token_containing_a_quote_from_inside_a_json_string() {
+    let token = "sek\"ret";
+    let v = Value::String(format!("prefix {token} suffix"));
+    let redacted = redact_value(v, Some(token));
+    let Value::String(s) = &redacted else {
+        panic!("expected a redacted string value, got {redacted:?}")
+    };
+    assert!(!s.contains(token), "the raw token must not survive redaction: {s}");
+    assert_eq!(s, "prefix [REDACTED] suffix");
+}
+
+/// A1: `redact_value` must FAIL CLOSED. Chooses a token that coincides with ordinary JSON
+/// structure (not inside any string) so the raw substring replace corrupts the syntax around it —
+/// the scrubbed text can no longer be re-parsed. Before the A1 fix this fell back to
+/// `unwrap_or(v)`, returning the ORIGINAL unredacted value: exactly the path where something has
+/// already gone wrong. It must never do that — it must return the fixed placeholder instead.
+#[test]
+fn redact_value_fails_closed_when_the_scrubbed_text_cannot_be_reparsed() {
+    let token = ":5,";
+    let v = serde_json::json!({"a": 5, "b": 1});
+    // Sanity-check the premise itself, so this test can't silently stop exercising the fail-closed
+    // path if `serde_json`'s compact-object formatting ever changes.
+    assert!(v.to_string().contains(token), "premise: the token must appear in the stringified value");
+    assert!(
+        serde_json::from_str::<Value>(&v.to_string().replace(token, "[REDACTED]")).is_err(),
+        "premise: substituting the token must actually break JSON syntax"
+    );
+
+    let redacted = redact_value(v.clone(), Some(token));
+
+    assert_ne!(redacted, v, "must never return the original unredacted value on re-encode failure");
+    assert_eq!(
+        redacted,
+        Value::String("[redacted: payload could not be safely re-encoded]".to_string())
+    );
+}
+
+// ──────────────────────── env hygiene at spawn (A3, A4) ───────────────────────────────────────
+
+/// A3: HEDDLE_COMMS_PUSH must be explicitly removed — the property this exists for is that the
+/// child never receives it EVEN IF the parent process (this app) has it set in its own
+/// environment. `env_remove` is what guarantees that: unlike a var this module simply never calls
+/// `.env()` for (which would still be inherited from the parent), an explicit removal excludes it
+/// regardless of what the parent's environment contains at spawn time — see the `get_envs()`
+/// removal marker asserted here, and in `operator_token_never_appears_in_argv_or_error_strings`.
+#[test]
+fn build_command_removes_heddle_comms_push_regardless_of_the_parent_environment() {
+    let cmd = build_command("heddle-comms", &[], "irrelevant-token-for-this-test");
+    let envs: Vec<_> = cmd.as_std().get_envs().collect();
+    assert_eq!(
+        envs.iter().find(|(k, _)| *k == "HEDDLE_COMMS_PUSH"),
+        Some(&(std::ffi::OsStr::new("HEDDLE_COMMS_PUSH"), None)),
+        "HEDDLE_COMMS_PUSH must be an explicit removal marker, not merely absent from the env list"
+    );
+}
+
+/// A4: every var in `SCRUBBED_LOADER_ENV_VARS` must be explicitly removed the same way, so a
+/// packaged Linux build's own loader/interpreter env (LD_PRELOAD etc.) can never leak into the
+/// spawned `node`/`heddle-comms` child.
+#[test]
+fn build_command_removes_every_scrubbed_loader_env_var() {
+    let cmd = build_command("heddle-comms", &[], "irrelevant-token-for-this-test");
+    let envs: Vec<_> = cmd.as_std().get_envs().collect();
+    for var in SCRUBBED_LOADER_ENV_VARS {
+        assert_eq!(
+            envs.iter().find(|(k, _)| *k == std::ffi::OsStr::new(var)),
+            Some(&(std::ffi::OsStr::new(var), None)),
+            "{var} must be an explicit removal marker"
+        );
+    }
 }
 
 // ─────────────────────────────── Test 4a (pure half): closed by default ──────────────────────
@@ -281,6 +380,60 @@ async fn status_spawn_failed_is_cached_after_a_failed_spawn_attempt() {
     // Cached: a status poll right after replays the same reason without a fresh spawn attempt.
     let status = static_status(&ctx).await;
     assert_eq!(status.reason, Some("spawn-failed"));
+}
+
+/// B1: the cached `spawn-failed` state must expire after `SPAWN_BACKOFF`, not latch the composer
+/// disabled until app restart. Simulates a failure, backdates the recorded `Instant` past the
+/// backoff window (no real sleep needed), and checks BOTH halves of the fix: the STATUS stops
+/// replaying the stale reason, and the NEXT call actually attempts a fresh respawn rather than
+/// just flipping a status field.
+#[cfg(unix)]
+#[tokio::test]
+async fn spawn_failure_backoff_expires_so_status_recovers_and_the_next_call_retries() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+
+    // Same setup as `status_spawn_failed_is_cached_after_a_failed_spawn_attempt`: a real,
+    // non-executable file so the OS-level spawn fails and the failure gets cached.
+    use std::os::unix::fs::PermissionsExt;
+    let not_executable = dir.path().join("heddle-comms");
+    std::fs::write(&not_executable, "not a program").unwrap();
+    std::fs::set_permissions(&not_executable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let token_path = dir.path().join("token");
+    std::fs::write(&token_path, "fixture-token-not-real").unwrap();
+    put_settings(
+        &ctx,
+        &serde_json::json!({"comms": {
+            "operatorBinPath": not_executable.to_string_lossy(),
+            "operatorTokenPath": token_path.to_string_lossy(),
+        }}),
+    );
+
+    ensure_client(&ctx).await.expect_err("non-executable file must fail to spawn");
+    assert_eq!(static_status(&ctx).await.reason, Some("spawn-failed"));
+
+    // Still within SPAWN_BACKOFF: both the write path and the status poll replay the cached
+    // failure rather than retrying.
+    let err = ensure_client(&ctx).await.expect_err("within backoff, must not retry yet");
+    assert_eq!(err, "spawn-failed");
+
+    // Advance past the window by backdating the recorded failure — a real 10s sleep would slow
+    // the suite down for the same signal.
+    state().lock().await.last_spawn_failure = Some(Instant::now() - SPAWN_BACKOFF - Duration::from_millis(1));
+
+    // The status must stop replaying the stale failure once the backoff window has elapsed —
+    // before this fix it latched "unavailable" until app restart.
+    let status = static_status(&ctx).await;
+    assert!(status.available, "status must recover once the backoff window elapses");
+    assert_eq!(status.reason, None);
+
+    // Swap in a working fake child and prove the NEXT call actually attempts a fresh spawn (not
+    // just a status-field flip) — this is the "next call attempts a respawn" half of the fix.
+    configure_fake_child(&ctx, dir.path(), "whoami_revoked");
+    ensure_client(&ctx).await.expect("the next call after the window must attempt a fresh respawn");
+    shutdown().await;
 }
 
 #[cfg(unix)]

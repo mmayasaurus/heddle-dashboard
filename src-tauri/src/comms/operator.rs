@@ -9,8 +9,11 @@
 //! SECURITY CONTRACT (non-negotiable — this is the point of the module): the operator token
 //! (`~/.heddle/operator.token`) reaches the child ONLY via its environment
 //! (`HEDDLE_COMMS_OPERATOR_TOKEN`) — never argv, never a log line, never a string returned to the
-//! frontend, never inside an error. [`redact`] scrubs it from every `Err` this module returns.
-//! `HEDDLE_COMMS_PUSH` is never set (the operator stays pull-only; see the fleet comms contract).
+//! frontend, never inside an error. [`redact`] scrubs it — both its raw and JSON-escaped form —
+//! from every `Err` this module returns. `HEDDLE_COMMS_PUSH` is explicitly removed from the
+//! child's environment (not merely left unset), so it can never leak in from this process's own
+//! environment (the operator stays pull-only; see the fleet comms contract); the standard AppImage/
+//! loader env vars (`SCRUBBED_LOADER_ENV_VARS`) are removed the same way — see `build_command`.
 //!
 //! BINARY RESOLUTION, in order (see `resolve_binary`): (1) an explicit override at
 //! `vlx-settings.comms.operatorBinPath` — the same `app_settings` blob and shape
@@ -21,17 +24,16 @@
 //! (3) `vlx-settings.comms.heddleCoreRoot` → `node <root>/dist/comms/channel-server.js`, only when
 //! that file actually exists; (4) none of the above → `"no-binary"`.
 //!
-//! KNOWN GAP — "kill on app exit": [`shutdown`] is exposed for the app's exit path to call, but
-//! nothing calls it yet. `RunningService`'s own `Drop` cancels its task, and `TokioChildProcess`'s
-//! `Drop` kills the OS child — both fire if this module's state is ever dropped — but a `'static`
-//! `OnceLock` is never dropped at normal process exit (Rust does not run destructors for statics),
-//! so relying on that alone is not enough. Wiring `shutdown()` into `tauri::RunEvent::Exit` needs
-//! one line in `lib.rs` outside this dispatch's file scope (command registration only); until that
-//! lands, an app quit can leave an orphaned `heddle-comms` child behind. Flagged, not silently
-//! skipped — see the PR report.
+//! "KILL ON APP EXIT" is wired: [`shutdown`] is called from `tauri::RunEvent::Exit` in `lib.rs`
+//! (outside this dispatch's file scope — command registration only), so a quitting app cancels the
+//! live child instead of relying solely on `Drop`. `RunningService`'s own `Drop` cancels its task
+//! and `TokioChildProcess`'s `Drop` kills the OS child — both still fire as a fallback net if this
+//! module's state is ever dropped some other way — but a `'static` `OnceLock` is never dropped at
+//! normal process exit (Rust does not run destructors for statics), which is exactly why the
+//! explicit `RunEvent::Exit` call is the one that matters.
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use rmcp::model::{CallToolRequestParams, CallToolResult};
@@ -50,6 +52,11 @@ use crate::host::AppCtx;
 /// This does NOT throttle recovery from a crash of a previously-*working* child — see `ensure_client`.
 const SPAWN_BACKOFF: Duration = Duration::from_secs(10);
 
+/// Bounds a single broker round-trip (`call_tool`) and the spawn/handshake (`ensure_client`) alike
+/// — a hung child must surface as an ordinary `"spawn-failed"` result, never block its caller (or,
+/// before this fix, every OTHER caller sharing the state lock) forever.
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// `{available, revoked, reason}` — see the module doc for the resolution/backoff this reflects.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +68,10 @@ pub struct OperatorStatus {
 
 /// The lazily-spawned operator child and its retry bookkeeping, held for the app's lifetime.
 struct OperatorState {
-    client: Option<RunningService<RoleClient, ()>>,
+    /// `Arc`-wrapped so `call_tool` can clone the handle out and release this struct's lock BEFORE
+    /// awaiting the broker round-trip (see `call_tool`/`ensure_client`) — the lock must never be
+    /// held across an unbounded `.await`.
+    client: Option<Arc<RunningService<RoleClient, ()>>>,
     /// The token last handed to a live (or most recently attempted) child — kept only so any
     /// error string this module returns can be scrubbed of it; never logged, never exposed.
     token: Option<String>,
@@ -86,15 +96,44 @@ fn state() -> &'static AsyncMutex<OperatorState> {
     STATE.get_or_init(|| AsyncMutex::new(OperatorState::new()))
 }
 
+/// Serializes actual spawn ATTEMPTS only — deliberately a DIFFERENT lock than `state()`'s, so an
+/// in-flight spawn/handshake (bounded by `CALL_TIMEOUT`) never blocks a concurrent status poll or
+/// another caller's fast "is a client already live?" check (see `ensure_client`). Without this,
+/// releasing `state()`'s lock across the spawn/handshake — required to fix B2 — would let two
+/// concurrent callers race into spawning two children for one operator token; this makes the
+/// second one queue behind the first instead.
+static SPAWN_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+
+fn spawn_lock() -> &'static AsyncMutex<()> {
+    SPAWN_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
 /// Every string this module hands back — Ok payload text or Err — is passed through this once a
 /// token has been read this session, so a token that leaked into a spawn/IO/protocol error message
 /// (never expected, but not something every current and future error `Display` impl can be proven
-/// to avoid) can never reach the frontend.
+/// to avoid) can never reach the frontend. Replaces BOTH the raw token AND its JSON-escaped
+/// rendering: a value serialized via `serde_json` (see `redact_value`, which routes through here)
+/// differs from the raw token whenever the token contains a character JSON escapes (`"`, `\`, a
+/// control char), so a raw-substring replace alone would miss it there.
 fn redact(s: String, token: Option<&str>) -> String {
     match token {
-        Some(t) if !t.is_empty() => s.replace(t, "[REDACTED]"),
+        Some(t) if !t.is_empty() => {
+            let s = s.replace(t, "[REDACTED]");
+            match json_escaped(t) {
+                Some(escaped) if escaped != t => s.replace(&escaped, "[REDACTED]"),
+                _ => s,
+            }
+        }
         _ => s,
     }
+}
+
+/// `token`'s JSON string-escaped rendering, WITHOUT the surrounding quotes — e.g. `a"b` becomes
+/// `a\"b`. `serde_json::to_string` on a `&str` cannot fail; the opening/closing `"` are always
+/// exactly one ASCII byte each, so slicing them off is always on a valid char boundary.
+fn json_escaped(token: &str) -> Option<String> {
+    let quoted = serde_json::to_string(token).ok()?;
+    quoted.get(1..quoted.len() - 1).map(str::to_string)
 }
 
 /// Run a blocking read (settings DB + token file) on the blocking pool — same rationale as
@@ -235,16 +274,28 @@ async fn resolve_spawn_plan(ctx: &AppCtx) -> Result<(String, Vec<String>, String
     Ok((program, args, token))
 }
 
+/// Loader/interpreter env vars a packaged Linux app (e.g. an AppImage) can have set in ITS OWN
+/// process — inherited by a spawned child by default — which could redirect the `node`/
+/// `heddle-comms` child's dynamic linker, Python interpreter, or GTK module search path and break
+/// or subvert it. Scrubbed unconditionally before every spawn: removing an already-unset var is a
+/// no-op, so this is harmless on every other platform/packaging.
+const SCRUBBED_LOADER_ENV_VARS: &[&str] = &["LD_LIBRARY_PATH", "LD_PRELOAD", "APPDIR", "PYTHONHOME", "GTK_PATH"];
+
 /// Builds the child's `Command`: `PATH` augmented the same way `ccusage`/`agy` launches are (a
 /// Dock/Finder-launched GUI app does not inherit a shell `PATH`), plus EXACTLY the two mandated
-/// env vars — nothing else is ever added here, and neither is ever passed as an argument.
-/// `HEDDLE_COMMS_PUSH` is deliberately never touched (the operator stays pull-only).
+/// env vars — nothing else is ever ADDED here, and neither is ever passed as an argument.
+/// `HEDDLE_COMMS_PUSH` and `SCRUBBED_LOADER_ENV_VARS` are explicitly REMOVED (not merely left
+/// unset), so neither can leak in from this process's own environment — see the module doc.
 fn build_command(program: &str, args: &[String], token: &str) -> tokio::process::Command {
     tokio::process::Command::new(program).configure(|cmd| {
         cmd.args(args)
             .env("PATH", augmented_path())
             .env("HEDDLE_COMMS_ROLE", "operator")
-            .env("HEDDLE_COMMS_OPERATOR_TOKEN", token);
+            .env("HEDDLE_COMMS_OPERATOR_TOKEN", token)
+            .env_remove("HEDDLE_COMMS_PUSH");
+        for var in SCRUBBED_LOADER_ENV_VARS {
+            cmd.env_remove(var);
+        }
     })
 }
 
@@ -267,61 +318,103 @@ async fn spawn_and_serve(
 /// then died (crash) is retried on the very next call, unthrottled: the fleet contract's "restart
 /// with backoff on crash" is about not hammering a persistently broken binary, not about delaying
 /// recovery from a transient crash of a previously-working one.
+///
+/// B2 fix: `state()`'s lock is only ever held for short, non-blocking checks/writes — never across
+/// `resolve_spawn_plan`'s blocking-pool read or `spawn_and_serve`'s handshake, both bounded by
+/// `CALL_TIMEOUT` below, so a hung child can no longer freeze every other caller of `state()` (a
+/// status poll, or another write racing this one). `spawn_lock()` — a SEPARATE lock, held across
+/// that same window — serializes the actual spawn attempt so two concurrent callers can't race
+/// into spawning two children for one operator token.
 async fn ensure_client(ctx: &AppCtx) -> Result<(), &'static str> {
-    let mut guard = state().lock().await;
-    if guard.client.is_some() {
-        return Ok(());
-    }
-    if let (Some(last), Some(reason)) = (guard.last_spawn_failure, guard.last_reason) {
-        if last.elapsed() < SPAWN_BACKOFF {
-            return Err(reason);
+    {
+        let guard = state().lock().await;
+        if guard.client.is_some() {
+            return Ok(());
+        }
+        if let (Some(last), Some(reason)) = (guard.last_spawn_failure, guard.last_reason) {
+            if last.elapsed() < SPAWN_BACKOFF {
+                return Err(reason);
+            }
         }
     }
+
+    let _spawn_guard = spawn_lock().lock().await;
+    // Another caller may have already finished spawning while this one waited for the spawn lock.
+    if state().lock().await.client.is_some() {
+        return Ok(());
+    }
+
     let (program, args, token) = match resolve_spawn_plan(ctx).await {
         Ok(plan) => plan,
         Err(reason) => {
+            let mut guard = state().lock().await;
             guard.last_spawn_failure = Some(Instant::now());
             guard.last_reason = Some(reason);
             return Err(reason);
         }
     };
-    guard.token = Some(token.clone());
-    match spawn_and_serve(&program, &args, &token).await {
-        Ok(client) => {
-            guard.client = Some(client);
+    {
+        let mut guard = state().lock().await;
+        guard.token = Some(token.clone());
+    }
+    let spawned = tokio::time::timeout(CALL_TIMEOUT, spawn_and_serve(&program, &args, &token)).await;
+    let mut guard = state().lock().await;
+    match spawned {
+        Ok(Ok(client)) => {
+            guard.client = Some(Arc::new(client));
             guard.last_spawn_failure = None;
             guard.last_reason = None;
             Ok(())
         }
-        Err(reason) => {
+        Ok(Err(reason)) => {
             guard.last_spawn_failure = Some(Instant::now());
             guard.last_reason = Some(reason);
             Err(reason)
         }
+        Err(_elapsed) => {
+            // The spawn/handshake itself never returned within CALL_TIMEOUT — a hung child, not a
+            // panic and not an indefinite hang for the caller. Reported as the existing
+            // "spawn-failed" reason: callers already handle it, and nothing token-shaped is in it.
+            guard.last_spawn_failure = Some(Instant::now());
+            guard.last_reason = Some("spawn-failed");
+            Err("spawn-failed")
+        }
     }
 }
 
-/// Ensures a live client, calls `name` with `args`, and on ANY transport/service-level failure
-/// clears the cached client so the NEXT call respawns rather than replaying a dead pipe forever
-/// (fleet contract). This function's own `Err` is always one of the four status-reason strings —
-/// never a raw protocol error string — so nothing token-shaped can leak through it.
+/// Ensures a live client, calls `name` with `args`, and on ANY transport/service-level failure (or
+/// a timeout) clears the cached client so the NEXT call respawns rather than replaying a dead pipe
+/// forever (fleet contract). This function's own `Err` is always one of the four status-reason
+/// strings — never a raw protocol error string — so nothing token-shaped can leak through it.
+///
+/// B2 fix: the state lock is held only long enough to clone the `Arc<RunningService>` handle out,
+/// then released BEFORE the broker round-trip — never across it — and that round-trip is bounded
+/// by `CALL_TIMEOUT` so a hung broker surfaces as an ordinary failure instead of hanging this call
+/// (or blocking every other caller of `state()`, e.g. the status command) forever.
 async fn call_tool(
     ctx: &AppCtx,
     name: &'static str,
     args: Option<Map<String, Value>>,
 ) -> Result<CallToolResult, &'static str> {
     ensure_client(ctx).await?;
-    let mut guard = state().lock().await;
-    let client = guard.client.as_ref().ok_or("spawn-failed")?;
+    let client = state().lock().await.client.clone().ok_or("spawn-failed")?;
     let req = match args {
         Some(map) => CallToolRequestParams::new(name).with_arguments(map),
         None => CallToolRequestParams::new(name),
     };
-    match client.call_tool(req).await {
-        Ok(result) => Ok(result),
-        Err(_) => {
-            guard.client = None; // dropped here: RunningService's DropGuard + TokioChildProcess's
-            Err("spawn-failed") // own Drop tear the dead child down; next call respawns fresh.
+    match tokio::time::timeout(CALL_TIMEOUT, client.call_tool(req)).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) | Err(_) => {
+            // Only clear the cache if it's still the SAME client this call used — a concurrent
+            // caller may have already respawned a fresh one while this call was in flight (or
+            // timing out), and this must never clobber that. Dropped here when cleared:
+            // RunningService's DropGuard + TokioChildProcess's own Drop tear the dead child down;
+            // the next call respawns fresh.
+            let mut guard = state().lock().await;
+            if guard.client.as_ref().is_some_and(|c| Arc::ptr_eq(c, &client)) {
+                guard.client = None;
+            }
+            Err("spawn-failed")
         }
     }
 }
@@ -349,8 +442,12 @@ async fn whoami_revoked(ctx: &AppCtx) -> Result<bool, &'static str> {
 }
 
 /// Precondition-only status for when no session is live yet: never spawns. A cached
-/// `"spawn-failed"` is only ever replayed from the LAST write call's attempt — nothing here
-/// retries a spawn just to answer a status poll.
+/// `"spawn-failed"` is only ever replayed from the LAST write call's attempt, and only while still
+/// within `SPAWN_BACKOFF` of it (B1 fix) — once that window elapses this reports available again,
+/// since the next write call is free to retry the spawn. Without this check, one transient failure
+/// would latch the REPORTED status as unavailable until app restart, even though writes themselves
+/// already recover once the backoff window passes (see `ensure_client`). Nothing here retries a
+/// spawn just to answer a status poll.
 async fn static_status(ctx: &AppCtx) -> OperatorStatus {
     let ctx = ctx.clone();
     let (has_binary, has_token) = blocking(move || {
@@ -370,7 +467,7 @@ async fn static_status(ctx: &AppCtx) -> OperatorStatus {
     }
     let guard = state().lock().await;
     match (guard.last_reason, guard.last_spawn_failure) {
-        (Some(reason), Some(_)) => unavailable(reason),
+        (Some(reason), Some(failed_at)) if failed_at.elapsed() < SPAWN_BACKOFF => unavailable(reason),
         _ => OperatorStatus {
             available: true,
             revoked: false,
@@ -417,12 +514,18 @@ async fn passthrough(
 /// Defense-in-depth for the `Ok` path: the broker never legitimately echoes the token back, but
 /// nothing returned to the frontend is exempt from the "never any string returned to the
 /// frontend" rule, so a would-be leak is scrubbed here too, not just from `Err`s.
+///
+/// FAILS CLOSED (A1): if the redacted JSON text can't be re-parsed, this returns a fixed
+/// placeholder — NEVER the original `v`. The old `unwrap_or(v)` fallback defeated the entire
+/// function on exactly the path where something had already gone wrong (a redaction that broke
+/// the JSON), handing back the unredacted payload right when redaction mattered most.
 fn redact_value(v: Value, token: Option<&str>) -> Value {
     let Some(t) = token.filter(|t| !t.is_empty()) else {
         return v;
     };
     let scrubbed = redact(v.to_string(), Some(t));
-    serde_json::from_str(&scrubbed).unwrap_or(v)
+    serde_json::from_str(&scrubbed)
+        .unwrap_or_else(|_| Value::String("[redacted: payload could not be safely re-encoded]".into()))
 }
 
 /// `{available, revoked, reason}` — never spawns a child on its own (poll-safe for C2's 30s
@@ -516,14 +619,26 @@ async fn member_call(
     passthrough(&AppCtx::Tauri(app), tool, Some(args)).await
 }
 
-/// Cancels the live child (if any) so its process is killed rather than merely dropped. Exposed
-/// for the app's exit path to call — see the module doc's "kill on app exit" gap: nothing calls
-/// this yet, since wiring `tauri::RunEvent::Exit` is outside this dispatch's file scope (`comms`
-/// is a private module, so `pub` alone does not silence rustc's dead-code lint here). Called
-/// from `RunEvent::Exit` in lib.rs and exercised directly by `operator_tests.rs`.
+/// Cancels the live child (if any) so its process is killed rather than merely dropped. `pub`
+/// because it's called from `RunEvent::Exit` in `lib.rs`, outside this dispatch's file scope
+/// (`comms` is a private module, so `pub` alone does not silence rustc's dead-code lint here) —
+/// see the module doc's "kill on app exit" section. Also exercised directly by `operator_tests.rs`.
 pub async fn shutdown() {
-    if let Some(client) = state().lock().await.client.take() {
-        let _ = client.cancel().await;
+    let Some(client) = state().lock().await.client.take() else {
+        return;
+    };
+    match Arc::try_unwrap(client) {
+        Ok(client) => {
+            let _ = client.cancel().await;
+        }
+        Err(_still_shared) => {
+            // A call is still in flight and holds its own clone of the SAME Arc (see call_tool's
+            // B2 fix), bounded by CALL_TIMEOUT. `cancel(self)` needs exclusive ownership, which we
+            // don't have here, so this reference is simply dropped: the child is still torn down
+            // once the in-flight call finishes (or times out) and drops its own clone, via
+            // TokioChildProcess's own Drop (see the module doc) — an acceptable narrow tradeoff at
+            // exactly the moment the process is exiting anyway.
+        }
     }
 }
 

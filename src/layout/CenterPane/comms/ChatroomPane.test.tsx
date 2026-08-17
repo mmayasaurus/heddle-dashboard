@@ -342,6 +342,24 @@ describe("ChatroomPane — HED-74c operator composer + room management wiring", 
     expect(await screen.findByTestId("comms-member-controls")).toBeTruthy();
   });
 
+  it("B5: RoomMemberControls resets its address input when switching between two closed rooms", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.rooms = [
+      mkRoom({ target: "#heddle-build", open: false, memberCount: 3 }),
+      mkRoom({ target: "#heddle-ops", open: false, memberCount: 1 }),
+    ];
+    render(<ChatroomPane />);
+    await screen.findByTestId("comms-rail");
+
+    // Neither room is #fleet/open, so #heddle-build (first listed) auto-activates.
+    await screen.findByTestId("comms-member-controls");
+    fireEvent.change(screen.getByTestId("comms-member-ctl-input"), { target: { value: "half-typed-address" } });
+    expect((screen.getByTestId("comms-member-ctl-input") as HTMLInputElement).value).toBe("half-typed-address");
+
+    fireEvent.click(screen.getByTestId("comms-room-#heddle-ops"));
+    await waitFor(() => expect((screen.getByTestId("comms-member-ctl-input") as HTMLInputElement).value).toBe(""));
+  });
+
   it("clicking a needs-human row sets the composer's reply-to context", async () => {
     localStorage.setItem(OPEN_KEY, "1");
     roomsResponse.needsHuman = [mkNeedsHumanRow(1, { sender: "U.2", body: "may I run cargo update?" })];
