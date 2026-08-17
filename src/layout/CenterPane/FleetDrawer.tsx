@@ -462,7 +462,7 @@ function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: 
       <span className="fleet-capline-lbl fleet-provcap-fable-label" title={label}>Fable</span>
       <SegBar pct={pct} color={color} softCapTick />
       <span className="fleet-capline-pct fleet-provcap-fable-est" title={label}>{`${roundedPct}%`}</span>
-      <span className="fleet-dim fleet-capline-reset" title={label}>{detail?.exact ? "" : "est."}</span>
+      <span className="fleet-dim fleet-capline-reset" title={label}>{detail?.exact ? "" : t("fleet.fableWeeklyEstMark")}</span>
     </div>
   );
 }
@@ -482,16 +482,13 @@ function CapLine({
 }) {
   const t = useT();
   const pct = win.usedPercentage;
-  const resetLabel = pct == null
-    ? t("fleet.noActiveWindow")
-    : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, Date.now(), t("fleet.resetting"))}` : "";
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
       <span className="fleet-capline-lbl" title={label}>{label}</span>
       <SegBar pct={pct} color={color} />
       <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
       <LiveClock render={(now) => (
-        <span className="fleet-dim fleet-capline-reset" title={pct == null ? [resetLabel, note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
+        <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
           {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
         </span>
       )} />
@@ -654,23 +651,29 @@ function ProviderCapBlock({
           >
             {accounts.length} accounts {accountsExpanded ? "▾" : "▸"}
           </button>
-          {accountsExpanded && accounts.map((account, index) => (
-            <div className="fleet-provcap-account" key={`${account.label ?? "account"}-${index}`}>
-              <span className="fleet-provcap-account-label" title={account.label ?? "account"}>{account.label ?? "account"}</span>
-              {account.plan && <span className="fleet-provcap-account-plan" title={`· ${account.plan}`}>· {account.plan}</span>}
-              <span className="fleet-provcap-account-caps" title={`${account.sevenDay?.usedPercentage == null ? "" : `${Math.round(account.sevenDay.usedPercentage)}%`}${account.fiveHour?.usedPercentage != null ? ` · ${Math.round(account.fiveHour.usedPercentage)}%` : ""}`}>
-                <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
-                {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
-                {account.fiveHour?.usedPercentage != null && (
-                  <>
-                    <span className="fleet-provcap-account-separator">·</span>
-                    <SegBar pct={account.fiveHour.usedPercentage} color={color} segments={6} /> {Math.round(account.fiveHour.usedPercentage)}%
-                  </>
-                )}
-              </span>
-              {account.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
-            </div>
-          ))}
+          {accountsExpanded && accounts.map((account, index) => {
+            const capsTitle = [account.sevenDay?.usedPercentage, account.fiveHour?.usedPercentage]
+              .filter((pct): pct is number => pct != null)
+              .map((pct) => `${Math.round(pct)}%`)
+              .join(" · ");
+            return (
+              <div className="fleet-provcap-account" key={`${account.label}-${index}`}>
+                <span className="fleet-provcap-account-label" title={account.label}>{account.label}</span>
+                {account.plan && <span className="fleet-provcap-account-plan" title={`· ${account.plan}`}>· {account.plan}</span>}
+                <span className="fleet-provcap-account-caps" title={capsTitle}>
+                  <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
+                  {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}
+                  {account.fiveHour?.usedPercentage != null && (
+                    <>
+                      <span className="fleet-provcap-account-separator">·</span>
+                      <SegBar pct={account.fiveHour.usedPercentage} color={color} segments={6} /> {Math.round(account.fiveHour.usedPercentage)}%
+                    </>
+                  )}
+                </span>
+                {account.limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
+              </div>
+            );
+          })}
         </div>
       )}
       {extraWindows.map((win, index) => (
