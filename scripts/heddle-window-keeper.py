@@ -587,13 +587,20 @@ def account_transcripts(accts, now):
             read_bytes += len(data)
             newline = data.rfind(b"\n")
             if newline < 0:
-                if offset + len(data) < size:
-                    # A complete record exceeds this run's read budget. Skip this fragment so one
+                if offset + len(data) == size:
+                    # Reached EOF without a newline: a genuinely incomplete trailing write; wait for it.
+                    file_state.update({"offset": offset, "size": size})
+                elif len(data) >= budget:
+                    # We consumed a WHOLE run budget from this position and still found no newline, so a
+                    # single record is at least a full budget long — genuinely oversized. Skip it so one
                     # pathological line cannot starve every later file; never log transcript data.
                     file_state.update({"offset": offset + len(data), "size": size, "oversized": True})
                     log("[transcripts] skipped oversized JSONL record")
                 else:
-                    # EOF without a newline is a genuinely incomplete trailing write; wait for it.
+                    # No newline only because EARLIER files already spent part of this run's budget, so
+                    # a normal record's newline sits just past our partial allowance. Leave the offset
+                    # untouched — a later run with a fresh full budget reads past it. Advancing here would
+                    # split a normal record and silently drop its turn (gitar-bot's budget-boundary case).
                     file_state.update({"offset": offset, "size": size})
                 continue
             complete = data[:newline + 1]

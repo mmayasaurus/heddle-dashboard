@@ -678,6 +678,29 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(transcriptSummary(home, "acct1").weightedTotal).toBe(7);
   });
 
+  it("counts a normal record left partial by an earlier file's budget, not dropped as oversized", () => {
+    // gitar-bot's budget-boundary case: a short read caused by an EARLIER file consuming the run
+    // budget must NOT be misread as an oversized record — advancing the offset there would split a
+    // normal record and silently drop its turn. It must be left and read whole on a later run.
+    const home = mkHome();
+    const { sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeTranscriptWindow(home, "acct1", now + 6 * 86400);
+    writeTranscriptWindow(home, "acct2", now + 6 * 86400);
+    const firstLine = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 5 });
+    const secondLine = transcriptLine({ ownerAccountUuid: "uuid-acct1", timestamp: new Date(now * 1000).toISOString(), model: "claude-fable-5", input: 9, prompt: "x".repeat(1000) });
+    fs.writeFileSync(path.join(sharedProjects, "a-first.jsonl"), `${firstLine}\n`);
+    fs.writeFileSync(path.join(sharedProjects, "b-second.jsonl"), `${secondLine}\n`);
+    // Budget leaves the whole first file plus only a PARTIAL second record — its newline sits just past.
+    const budget = Buffer.byteLength(firstLine) + 1 + (Buffer.byteLength(secondLine) - 5);
+    expect(Buffer.byteLength(secondLine) < budget).toBe(true); // second record is normal, not oversized
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(budget) }).status).toBe(0);
+    expect(runKeeper([], home, { HEDDLE_TRANSCRIPT_BYTES: String(budget) }).status).toBe(0);
+    // Both turns counted: 5 (first) + 9 (second, read whole on the second run) = 14. Under the old
+    // misclassification the second was split and dropped, leaving 5.
+    expect(transcriptSummary(home, "acct1").weightedTotal).toBe(14);
+  });
+
   it("restarts at zero when a truncated transcript regrows past a stale offset", () => {
     const home = mkHome();
     const { sharedProjects } = setupTranscriptAccounts(home);
