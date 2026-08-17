@@ -33,7 +33,9 @@ export function NeedsHumanStrip({ rows, onRowClick }: NeedsHumanStripProps) {
           role="listitem"
           tabIndex={0}
           data-testid={`comms-needs-row-${row.id}`}
-          onClick={() => onRowClick(row)}
+          onClick={() => {
+            onRowClick(row);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();

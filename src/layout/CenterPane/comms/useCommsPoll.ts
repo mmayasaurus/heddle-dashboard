@@ -114,18 +114,18 @@ const ROSTER_POLL_MS = 10_000;
 const LAST_SEEN_PREFIX = "heddle.comms.lastSeen.";
 
 /** Per-agent letter color from the approved mock palette (HED-74 card 06). */
-export const AGENT_COLORS: Record<string, string> = {
-  R: "#7fb2ff",
-  S: "#4fc08d",
-  T: "#e3a857",
-  U: "#5ec8d8",
-  V: "#ef8fb6",
-  W: "#b9c46a",
-};
+export const AGENT_COLORS: Map<string, string> = new Map([
+  ["R", "#7fb2ff"],
+  ["S", "#4fc08d"],
+  ["T", "#e3a857"],
+  ["U", "#5ec8d8"],
+  ["V", "#ef8fb6"],
+  ["W", "#b9c46a"],
+]);
 
 export function agentColor(name: string): string | undefined {
   const key = name?.trim()[0]?.toUpperCase();
-  return key ? AGENT_COLORS[key] : undefined;
+  return key ? AGENT_COLORS.get(key) : undefined;
 }
 
 /** Read localStorage, returning null on any failure (disabled/full/unavailable storage) instead
@@ -191,7 +191,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   const [recentRefusals, setRecentRefusals] = useState(0);
   const [roomsError, setRoomsError] = useState<string | null>(null);
 
-  const [messagesByRoom, setMessagesByRoom] = useState<Record<string, CommsMessage[]>>({});
+  const [messagesByRoom, setMessagesByRoom] = useState<Map<string, CommsMessage[]>>(new Map());
   const [floor, setFloor] = useState<CommsFloor | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
@@ -247,7 +247,11 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
     setFloor(null);
 
     const applyFresh = (t: TranscriptPayload) => {
-      setMessagesByRoom((prev) => ({ ...prev, [target]: t.messages }));
+      setMessagesByRoom((prev) => {
+        const next = new Map(prev);
+        next.set(target, t.messages);
+        return next;
+      });
       const maxId = t.messages.reduce((m, x) => Math.max(m, x.id), 0);
       cursorsRef.current.set(target, maxId);
       setFloor(t.floor);
@@ -258,10 +262,11 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
       const cur = cursorsRef.current.get(target) ?? 0;
       const fresh = t.messages.filter((m) => m.id > cur);
       if (fresh.length > 0) {
-        setMessagesByRoom((prev) => ({
-          ...prev,
-          [target]: [...(prev[target] ?? []), ...fresh].slice(-MAX_ROOM_MESSAGES),
-        }));
+        setMessagesByRoom((prev) => {
+          const next = new Map(prev);
+          next.set(target, [...(prev.get(target) ?? []), ...fresh].slice(-MAX_ROOM_MESSAGES));
+          return next;
+        });
         const maxId = fresh.reduce((m, x) => Math.max(m, x.id), cur);
         cursorsRef.current.set(target, maxId);
       }
@@ -340,7 +345,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   // Viewing a room while expanded advances its lastSeen cursor to the max visible id.
   useEffect(() => {
     if (!expanded || !activeTarget) return;
-    const msgs = messagesByRoom[activeTarget];
+    const msgs = messagesByRoom.get(activeTarget);
     if (!msgs || msgs.length === 0) return;
     const maxId = msgs.reduce((m, x) => Math.max(m, x.id), 0);
     const key = LAST_SEEN_PREFIX + activeTarget;
@@ -351,7 +356,9 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   }, [expanded, activeTarget, messagesByRoom]);
 
   const unreadByTarget = useMemo(() => {
-    const map: Record<string, boolean> = {};
+    // Object.create(null): rooms[].target is externally-derived (backend-controlled string
+    // keys), so the map is built with no prototype chain rather than a {} literal.
+    const map: Record<string, boolean> = Object.create(null) as Record<string, boolean>;
     for (const r of rooms) map[r.target] = r.latestId > getLastSeen(r.target);
     return map;
     // lastSeenTick is a deliberate dependency: it has no direct field here, but its change is the
@@ -367,7 +374,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
     needsHuman,
     recentRefusals,
     roomsError,
-    messages: activeTarget ? messagesByRoom[activeTarget] ?? [] : [],
+    messages: activeTarget ? (messagesByRoom.get(activeTarget) ?? []) : [],
     floor,
     transcriptError,
     roster,

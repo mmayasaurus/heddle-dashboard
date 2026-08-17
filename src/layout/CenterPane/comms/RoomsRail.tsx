@@ -75,7 +75,9 @@ export function RoomsRail({ rooms, activeTarget, unreadByTarget, onSelectRoom, r
             role="button"
             tabIndex={0}
             data-testid={`comms-room-${r.target}`}
-            onClick={() => onSelectRoom(r.target)}
+            onClick={() => {
+              onSelectRoom(r.target);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
