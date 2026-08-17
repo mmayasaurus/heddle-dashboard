@@ -26,6 +26,11 @@ Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never use
 """
 import json, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
 
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl; accounting remains available without this optimization.
+    fcntl = None
+
 HOME = os.path.expanduser("~")
 REG = os.path.join(HOME, ".heddle", "accounts.json")
 USAGE = os.path.join(HOME, ".heddle", "usage")
@@ -34,6 +39,7 @@ LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
 TRANSCRIPT_OFFSETS = os.path.join(HOME, ".heddle", "transcript-offsets.json")
 TRANSCRIPT_STATE = os.path.join(HOME, ".heddle", "transcript-usage-state.json")
+TRANSCRIPT_LOCK = os.path.join(HOME, ".heddle", "transcript-accounting.lock")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
 # The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
@@ -325,12 +331,13 @@ def account_uuid_map():
     for acct in (load(REG, {}) or {}).get("claude", []):
         try:
             config_dir = os.path.expanduser(acct.get("configDir") or "~/.claude")
-            config = load(os.path.join(config_dir, ".claude.json"), {})
+            with open(os.path.join(config_dir, ".claude.json")) as f:
+                config = json.load(f)
             owner_uuid = config.get("accountUuid") if isinstance(config, dict) else None
             acct_id = acct.get("id")
             if isinstance(owner_uuid, str) and isinstance(acct_id, str):
                 owners[owner_uuid] = acct_id
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
             # A missing or unavailable config is not worth delaying the five-minute keeper.
             continue
     return owners
@@ -373,7 +380,7 @@ def transcript_files(accts):
     return sorted(files)
 
 
-def weekly_windows(accts):
+def weekly_windows(accts, now):
     """Return only windows proved by seven-day tap captures; keeper anchors are five-hour only."""
     windows = {}
     for acct in accts:
@@ -383,7 +390,8 @@ def weekly_windows(accts):
             resets_at = seven_day.get("resets_at")
             if resets_at is not None:
                 resets_at = int(resets_at)
-                windows[acct["id"]] = (resets_at - 7 * 86400, resets_at)
+                if resets_at > now:
+                    windows[acct["id"]] = (resets_at - 7 * 86400, resets_at)
         except (KeyError, TypeError, ValueError, OverflowError):
             continue
     return windows
@@ -401,16 +409,36 @@ def transcript_offsets():
 
 
 def transcript_state():
+    """Load the combined transaction, merging the previous two-file state once if present."""
     if not os.path.exists(TRANSCRIPT_STATE):
-        return {"windows": {}, "files": {}}
-    with open(TRANSCRIPT_STATE) as f:
-        state = json.load(f)
-    if not isinstance(state, dict):
-        raise ValueError("transcript usage state must be an object")
+        state = {"windows": {}, "files": {}}
+    else:
+        with open(TRANSCRIPT_STATE) as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("transcript usage state must be an object")
     state.setdefault("windows", {})
     state.setdefault("files", {})
     if not isinstance(state["windows"], dict) or not isinstance(state["files"], dict):
         raise ValueError("transcript usage state has invalid sections")
+    legacy_offsets = transcript_offsets()
+    files = {}
+    for path, value in state["files"].items():
+        if isinstance(value, dict) and isinstance(value.get("accounts"), dict):
+            files[path] = {"offset": transcript_number(value.get("offset")),
+                           "size": transcript_number(value.get("size")),
+                           "accounts": value["accounts"], "oversized": bool(value.get("oversized"))}
+        elif isinstance(value, dict):
+            # The old accumulator stored only per-account counts; merge its matching legacy offset.
+            saved = legacy_offsets.get(path, {})
+            files[path] = {"offset": transcript_number(saved.get("offset")) if isinstance(saved, dict) else 0,
+                           "size": transcript_number(saved.get("size")) if isinstance(saved, dict) else 0,
+                           "accounts": value, "oversized": False}
+    for path, saved in legacy_offsets.items():
+        if path not in files and isinstance(saved, dict):
+            files[path] = {"offset": transcript_number(saved.get("offset")),
+                           "size": transcript_number(saved.get("size")), "accounts": {}, "oversized": False}
+    state["files"] = files
     return state
 
 
@@ -449,8 +477,9 @@ def add_transcript_turn(file_counts, account, model, usage):
 def account_summary(acct_id, resets_at, files, now):
     by_model = {}
     sessions_seen = 0
-    for file_counts in files.values():
-        models = file_counts.get(acct_id, {}) if isinstance(file_counts, dict) else {}
+    for file_state in files.values():
+        accounts = file_state.get("accounts", file_state) if isinstance(file_state, dict) else {}
+        models = accounts.get(acct_id, {}) if isinstance(accounts, dict) else {}
         if not models:
             continue
         sessions_seen += 1
@@ -472,84 +501,131 @@ def account_summary(acct_id, resets_at, files, now):
             "cacheReadTotal": cache_read_total}
 
 
+def remove_account_contributions(files, acct_id):
+    """Forget one expired window without rewinding bytes or disturbing other accounts' totals."""
+    for file_state in files.values():
+        if isinstance(file_state, dict):
+            accounts = file_state.get("accounts", file_state)
+            if isinstance(accounts, dict):
+                accounts.pop(acct_id, None)
+
+
+def transcript_lock():
+    """Acquire a non-blocking lock so overlapping launchd runs never race the transaction."""
+    if fcntl is None:
+        return None
+    os.makedirs(os.path.dirname(TRANSCRIPT_LOCK), exist_ok=True)
+    lock_file = open(TRANSCRIPT_LOCK, "a")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file
+    except BlockingIOError:
+        lock_file.close()
+        log("[transcripts] accounting skipped; another run holds the lock")
+        return False
+    except OSError:
+        lock_file.close()
+        log("[transcripts] accounting skipped; unable to acquire the lock")
+        return False
+
+
 def account_transcripts(accts, now):
     """Incrementally account assistant usage without exposing transcript content anywhere.
 
-    The offset file remains just byte positions.  A separate counts-only accumulator lets a truncated
-    session replace its old contribution instead of double-counting it, while normal five-minute runs
-    only read appended bytes.
+    A single counts-only transaction keeps every file's offset beside its accumulated totals, so a
+    crash cannot retain one without the other. Transcript content is never emitted or retained.
     """
-    offsets = transcript_offsets()
-    state = transcript_state()
-    owners = account_uuid_map()
-    windows = weekly_windows(accts)
-    current_resets = {acct_id: end for acct_id, (_, end) in windows.items()}
+    lock_file = transcript_lock()
+    if lock_file is False:
+        return
+    try:
+        state = transcript_state()
+        owners = account_uuid_map()
+        windows = weekly_windows(accts, now)
+        current_resets = {acct_id: end for acct_id, (_, end) in windows.items()}
 
-    # A new weekly boundary invalidates previous-window aggregates. Rewind intentionally so the new
-    # window is built from transcript timestamps rather than treating old offsets as current facts.
-    if any(state["windows"].get(acct_id) not in (None, resets_at)
-           for acct_id, resets_at in current_resets.items()):
-        state["files"] = {}
-        offsets = {}
-    state["windows"] = current_resets
+        # Each account owns its own weekly aggregate. A rollover drops only that account's old
+        # contribution; byte offsets remain valid and other accounts continue draining normally.
+        for acct_id, resets_at in current_resets.items():
+            previous = state["windows"].get(acct_id)
+            if previous is not None and previous != resets_at:
+                remove_account_contributions(state["files"], acct_id)
+        state["windows"] = current_resets
 
-    budget = int_env("HEDDLE_TRANSCRIPT_BYTES", 32 * 1024 * 1024, 1, 1024 * 1024 * 1024)
-    read_bytes = 0
-    for path in transcript_files(accts):
-        if read_bytes >= budget:
-            break
-        try:
-            size = os.path.getsize(path)
-            saved = offsets.get(path, {})
-            offset = int(saved.get("offset", 0)) if isinstance(saved, dict) else 0
-            if offset < 0:
-                offset = 0
-            if size < offset:
-                # Rotation/truncation means prior bytes no longer describe this session file.
-                offset = 0
-                state["files"].pop(path, None)
-            if size == offset:
-                continue
-            with open(path, "rb") as f:
-                f.seek(offset)
-                data = f.read(min(size - offset, budget - read_bytes))
-        except OSError:
-            continue
-        read_bytes += len(data)
-        newline = data.rfind(b"\n")
-        if newline < 0:
-            # The writer may be mid-line. Leave its bytes for the next run, rather than inventing a
-            # malformed record or permanently consuming something that was not complete yet.
-            offsets[path] = {"offset": offset, "size": size}
-            continue
-        complete = data[:newline + 1]
-        file_counts = state["files"].setdefault(path, {})
-        for raw_line in complete.splitlines():
+        budget = int_env("HEDDLE_TRANSCRIPT_BYTES", 32 * 1024 * 1024, 1, 1024 * 1024 * 1024)
+        read_bytes = 0
+        for path in transcript_files(accts):
+            if read_bytes >= budget:
+                break
             try:
-                turn = json.loads(raw_line.decode("utf-8"))
-                if turn.get("type") != "assistant":
-                    continue
-                acct_id = owners.get(turn.get("ownerAccountUuid"))
-                if acct_id not in windows:
-                    continue
-                timestamp = transcript_timestamp(turn.get("timestamp"))
-                start, end = windows[acct_id]
-                if timestamp is None or timestamp < start or timestamp > end:
-                    continue
-                message = turn.get("message") or {}
-                model, usage = message.get("model"), message.get("usage")
-                if isinstance(model, str) and isinstance(usage, dict):
-                    add_transcript_turn(file_counts, acct_id, model, usage)
-            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
-                # Invalid complete records are skipped silently: logging a transcript line could leak it.
+                size = os.path.getsize(path)
+                file_state = state["files"].setdefault(path, {"offset": 0, "size": 0, "accounts": {}, "oversized": False})
+                offset = transcript_number(file_state.get("offset")) if isinstance(file_state, dict) else 0
+                if size < offset:
+                    offset = 0
+                    file_state["accounts"] = {}
+                    file_state["oversized"] = False
+                with open(path, "rb") as f:
+                    if offset and not file_state.get("oversized"):
+                        # We only persist newline boundaries. Any other byte proves replacement even
+                        # when a truncated file happened to regrow past the stale old offset.
+                        f.seek(offset - 1)
+                        if f.read(1) != b"\n":
+                            offset = 0
+                            file_state["accounts"] = {}
+                            file_state["oversized"] = False
+                    if size == offset:
+                        file_state.update({"offset": offset, "size": size, "oversized": False})
+                        continue
+                    f.seek(offset)
+                    data = f.read(min(size - offset, budget - read_bytes))
+            except OSError:
                 continue
-        offsets[path] = {"offset": offset + len(complete), "size": size}
+            read_bytes += len(data)
+            newline = data.rfind(b"\n")
+            if newline < 0:
+                if offset + len(data) < size:
+                    # A complete record exceeds this run's read budget. Skip this fragment so one
+                    # pathological line cannot starve every later file; never log transcript data.
+                    file_state.update({"offset": offset + len(data), "size": size, "oversized": True})
+                    log("[transcripts] skipped oversized JSONL record")
+                else:
+                    # EOF without a newline is a genuinely incomplete trailing write; wait for it.
+                    file_state.update({"offset": offset, "size": size})
+                continue
+            complete = data[:newline + 1]
+            file_counts = file_state.setdefault("accounts", {})
+            for raw_line in complete.splitlines():
+                try:
+                    turn = json.loads(raw_line.decode("utf-8"))
+                    if turn.get("type") != "assistant" or turn.get("isSidechain"):
+                        continue
+                    acct_id = owners.get(turn.get("ownerAccountUuid"))
+                    if acct_id not in windows:
+                        continue
+                    timestamp = transcript_timestamp(turn.get("timestamp"))
+                    start, _end = windows[acct_id]
+                    if timestamp is None or timestamp < start or timestamp > now:
+                        continue
+                    message = turn.get("message") or {}
+                    model, usage = message.get("model"), message.get("usage")
+                    if isinstance(model, str) and isinstance(usage, dict):
+                        add_transcript_turn(file_counts, acct_id, model, usage)
+                except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
+                    # Invalid complete records are skipped silently: logging a transcript line could leak it.
+                    continue
+            file_state.update({"offset": offset + len(complete), "size": size, "oversized": False})
 
-    write_json_atomic(TRANSCRIPT_OFFSETS, offsets)
-    write_json_atomic(TRANSCRIPT_STATE, state)
-    for acct_id, (_, resets_at) in windows.items():
-        write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.turns.json"),
-                          account_summary(acct_id, resets_at, state["files"], now))
+        write_json_atomic(TRANSCRIPT_STATE, state)
+        for acct_id, (_, resets_at) in windows.items():
+            write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.turns.json"),
+                              account_summary(acct_id, resets_at, state["files"], now))
+    finally:
+        if lock_file is not None:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
 
 
 def main():
