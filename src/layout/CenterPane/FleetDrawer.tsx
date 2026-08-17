@@ -296,9 +296,19 @@ export function FleetDrawer() {
           <span className="fleet-sum">
             {limits.map((p) => {
               // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
-              // the bar answers "how close is each provider to a wall" at a glance.
-              const win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
-              const label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+              // the bar answers "how close is each provider to a wall" at a glance. Providers with
+              // no 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows,
+              // picking the highest-percentage one — closest wall, same question answered (Maya,
+              // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
+              let win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
+              let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+              const promoted = filterExtraWindows(p.windows ?? []);
+              if (shouldPromoteWindows(p.fiveHour, p.sevenDay, promoted)) {
+                const tightest = promoted.reduce((a, b) =>
+                  (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
+                win = tightest;
+                label = shortWindowLabel(tightest);
+              }
               const pct = win.usedPercentage;
               const color = providerColor(p.provider);
               return (
