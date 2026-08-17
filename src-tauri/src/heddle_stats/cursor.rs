@@ -51,8 +51,7 @@ use super::cursor_fetch::fetch_and_write;
 // Re-imported only so `cursor_tests.rs` reaches them via `super::*`.
 #[cfg(test)]
 use super::cursor_fetch::{
-    jwt_claims, jwt_exp, jwt_user_id, keychain_backing_off, keychain_cli_enabled,
-    note_keychain_failure,
+    jwt_exp, jwt_user_id, keychain_backing_off, keychain_cli_enabled, note_keychain_failure,
 };
 use super::{
     binding_named, is_stale, tap_limit, usage_dir, AccountLimit, LimitWindow, NamedWindow,

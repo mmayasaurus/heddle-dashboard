@@ -938,6 +938,26 @@ const en = {
   "statusbar.updateReady": "Restart to update",
   "statusbar.updateFailed": "Update failed",
   "statusbar.updateTooltip": "Click for details",
+
+  // Fleet drawer — route-mix scoreboard (HED-69).
+  "fleet.routeMix.title": "Route mix \u00b7 worker tokens per hour",
+  "fleet.routeMix.empty": "No dispatches in the window.",
+  "fleet.routeMix.provTooltip": (provider: string, dispatches: number) =>
+    `${provider}: ${dispatches} dispatch${dispatches === 1 ? "" : "es"} this hour`,
+  "fleet.routeMix.capDelta": (points: number) => `claude 5h +${points}pt`,
+  "fleet.routeMix.capDeltaAfterReset": (points: number) => `claude 5h \u21bb +${points}pt`,
+  "fleet.routeMix.capReset": "claude 5h \u21bb reset",
+  "fleet.routeMix.capPending": "claude 5h \u0394 \u2014",
+  "fleet.routeMix.byOrchestrator": (hours: number) => `dispatches by agent (${hours}h)`,
+
+  // Fleet drawer — discipline telemetry (HED-85).
+  "fleet.discipline.title": "Discipline \u00b7 memory-layer usage (24h)",
+  "fleet.discipline.empty": "No memory-layer calls recorded in the window.",
+  "fleet.discipline.zeroCalls": (agent: string) => `\u26a0 ${agent}: live, 0 memtrace/serena calls in 24h`,
+  "fleet.discipline.denied": (n: number) => `denied \u00d7${n}`,
+  "fleet.discipline.gateOn": "gate on",
+  "fleet.discipline.gateOff": "gate OFF",
+  "fleet.discipline.legacy": (n: number) => `+${n} unattributed memtrace calls (vendor telemetry)`,
 };
 
 export default en;

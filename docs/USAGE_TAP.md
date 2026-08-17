@@ -107,6 +107,39 @@ backend for per-provider refresh buttons.
   `windows[]` with ids `3p-5h` / `3p-weekly`). `usedPercentage` = `(1 − remaining_fraction) × 100`;
   `resetsAt` = `reset_time` as epoch seconds. A bucket without `remaining_fraction` (agy shows those
   as "Disabled") is an empty window.
+- **Never starts a sign-in (HED-114)**: this refresh is a detached, headless child with piped stdio on
+  a 180s timer, so it can never *complete* an interactive login — therefore it must never *start* one.
+  `agy` begins an OAuth flow (opening a browser, asking for a paste-back code) whenever the HOME it
+  inherits has no Antigravity profile; that happened live when the app ran with `HOME` pointed at a
+  test fixture, and the unanswerable prompt hung to the 45s budget, backed off, and repeated — asking
+  the operator to sign in over and over into a flow that structurally could not finish. Two layers:
+  1. **Profile precondition** — no spawn at all unless `$HOME/.gemini/antigravity-cli` already exists
+     (agy *creates* that directory as part of first-run sign-in, so its absence means "a refresh would
+     prompt"). Blocked with `gemini.noProfile`, which names the HOME and says to run `agy` once in a
+     terminal. This one is refused even for the drawer's refresh button.
+  2. **Sticky auth block** — any attempt whose failure looks like it needed a human (the run timing
+     out, or an error naming sign-in/OAuth/credentials/browser) sets `authBlocked` in the snapshot and
+     stops *automatic* refreshes (`gemini.authBlocked`, with the original error). The drawer's refresh
+     button may retry once (an explicit human action, at most one prompt); a successful run clears it.
+  Being wrong here costs a stale gauge; being wrong the other way hijacks the operator's browser on a
+  timer, so both layers fail toward "don't run".
+
+  **Known limit — layer 1 is necessary, not sufficient.** A profile directory proves `agy` *started*
+  once, never that a human *finished* signing in, so a HOME whose sign-in was abandoned still passes
+  layer 1 and the first refresh there can raise one prompt. This is measured, not assumed: on the
+  fixture HOME from the live incident (Agent T, 2026-08-16), every file `agy` writes — `installation_id`,
+  `jetski_state.pbtxt`, `conversation_summaries.db`, the whole `antigravity-cli/` tree — was created in
+  the first seconds of the *aborted* flow, and is therefore also present in a signed-in HOME. There is
+  no known artifact that separates the two states. (`~/.gemini/gemini-credentials.json` looks like the
+  discriminator and is not: it belongs to the older `gemini` CLI — on this machine it predates the `agy`
+  install by a month.) Two other candidates were measured and rejected: `jetski_state.pbtxt` is
+  write-once, so its mtime is a "first init" stamp rather than a "last attempt" clock; and after the
+  first ~15 minutes the failing loop stopped touching the HOME **entirely** while still prompting, so
+  any mtime-derived backoff would read "last attempt hours ago, safe to retry" in the middle of an
+  active prompt loop. `agy` also exposes no documented non-interactive-auth flag (`agy --help`,
+  v1.1.11) to probe with instead. So layer 2 is what actually bounds the damage: **at most one prompt
+  per HOME state, then automatic refresh is paused until a human clicks the refresh button.** The
+  incident being closed is the *repeat* — a prompt every 180s, forever — not the first one.
 - **Cost / cadence**: ~3s wall clock and a few Google round trips per run, so it never runs inline.
   `heddle_provider_limits` reads the snapshot and, when it is older than 180s, kicks ONE detached
   refresh thread (`agy … --log-file /dev/null`, so no log file per run under `~/.gemini/…/log/`; 45s
