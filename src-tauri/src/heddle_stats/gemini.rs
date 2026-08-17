@@ -12,6 +12,17 @@
 //! `windows`). Live-verified 2026-08-15 (agy 1.1.13). A bucket without `remaining_fraction`
 //! (agy shows such buckets as "Disabled") yields an empty window.
 //!
+//! SAFETY (HED-114): this refresh is a DETACHED, headless child with piped stdio on a 180s timer —
+//! it can never complete an interactive login, so it must never start one. `agy` will begin an OAuth
+//! flow (opening a browser at the user, asking for a paste-back code) whenever the HOME it inherits
+//! has no Antigravity profile — which happened live when the app ran with HOME pointed at a test
+//! fixture: the prompt could not be answered, the run hung to its budget, backed off, and repeated,
+//! so the user was asked to sign in over and over into a flow that structurally could not finish.
+//! Two layers prevent that: (a) we never spawn unless the effective HOME already has an agy profile,
+//! and (b) any attempt that looks like it needed a human (timeout, or an auth-shaped error) sets a
+//! STICKY block that stops automatic refreshes until a person intervenes. Cost of being wrong here
+//! is a stale gauge; cost of being wrong the other way is hijacking the user's browser on a timer.
+//!
 //! COST: ~3s wall clock and a few Google round trips per run, so it never runs inline. The Tauri
 //! command reads the snapshot `~/.heddle/usage/gemini.json` (tap format + extras) and, when it is
 //! older than `REFRESH_AFTER_SECS`, kicks ONE detached refresh thread (`agy … --log-file /dev/null`
@@ -24,8 +35,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::{
-    augmented_path, is_stale, now_secs, run_with_timeout, tap_limit, usage_dir, write_json_atomic,
-    LimitWindow, NamedWindow, ProviderLimit, RefreshGate,
+    augmented_path, home, is_stale, now_secs, run_with_timeout, tap_limit, usage_dir,
+    write_json_atomic, LimitWindow, NamedWindow, ProviderLimit, RefreshGate,
 };
 
 /// Snapshot file name under `~/.heddle/usage/`.
@@ -34,6 +45,10 @@ pub(super) const SOURCE: &str = "agy-quota";
 // Note codes (the localizable key layer for `note`).
 pub(super) const CODE_REFRESH_FAILED: &str = "gemini.refreshFailed";
 pub(super) const CODE_NO_DATA_YET: &str = "gemini.noDataYet";
+/// The effective HOME has no Antigravity profile — refreshing would start a sign-in we cannot finish.
+pub(super) const CODE_NO_PROFILE: &str = "gemini.noProfile";
+/// A refresh looked like it needed an interactive sign-in; automatic refreshes are paused.
+pub(super) const CODE_AUTH_BLOCKED: &str = "gemini.authBlocked";
 /// Refresh when the snapshot is older than this. Slow-changing gauge; the drawer's refresh button
 /// (`heddle_refresh_provider_limits`) forces one on demand.
 pub(super) const REFRESH_AFTER_SECS: i64 = 180;
@@ -49,6 +64,75 @@ const PRIMARY_BUCKET_PREFIX: &str = "gemini-";
 
 static GATE: RefreshGate = RefreshGate::new();
 
+/// `agy` keeps its profile in `$HOME/.gemini/antigravity-cli` (it CREATES that directory as part of
+/// first-run sign-in). Its presence is our proof that a login already happened in the HOME this
+/// process would hand to the child — absence means a refresh would start an OAuth flow.
+fn agy_profile_exists() -> bool {
+    home().join(".gemini").join("antigravity-cli").is_dir()
+}
+
+/// Does this failure look like agy wanted a human? Conservative on purpose: a timeout is how an
+/// unanswerable browser prompt manifests for a piped child, and anything naming sign-in/auth is
+/// treated the same. False positives cost a stale gauge until someone clicks refresh; false
+/// negatives cost a browser prompt every 180s.
+pub(super) fn looks_like_auth_attempt(err: &str) -> bool {
+    /// Any of these in a failure means "a human may be needed" — see the doc above for why the
+    /// list errs toward blocking.
+    const MARKERS: &[&str] = &[
+        "timed out",
+        "sign in",
+        "sign-in",
+        "signin",
+        "log in",
+        "login",
+        "logged in",
+        "oauth",
+        "authenticate",
+        "authentication",
+        "credential",
+        "browser",
+        "paste",
+    ];
+    let e = err.to_ascii_lowercase();
+    MARKERS.iter().any(|m| e.contains(m))
+}
+
+/// Why a refresh must not run, or `None` when it may. `forced` is an explicit human action (the
+/// drawer's refresh button), which may retry through a sticky auth block — at most one prompt, and
+/// only because someone asked — but never through a missing profile, which is guaranteed to prompt.
+pub(super) fn refresh_blocked_reason(
+    snap: Option<&Value>,
+    profile_exists: bool,
+    forced: bool,
+) -> Option<(&'static str, String)> {
+    if !profile_exists {
+        return Some((
+            CODE_NO_PROFILE,
+            format!(
+                "no Antigravity profile in {} — not starting a sign-in this background refresh \
+                 could never complete; run `agy` once in a terminal to sign in",
+                home().join(".gemini").display()
+            ),
+        ));
+    }
+    if forced {
+        return None;
+    }
+    let blocked = snap
+        .and_then(|v| v["authBlocked"].as_bool())
+        .unwrap_or(false);
+    if blocked {
+        let why = snap
+            .and_then(|v| v["lastError"].as_str())
+            .unwrap_or("a previous refresh needed an interactive sign-in");
+        return Some((
+            CODE_AUTH_BLOCKED,
+            format!("automatic refresh paused after: {why} — use the refresh button once you have signed in"),
+        ));
+    }
+    None
+}
+
 fn snapshot_path() -> std::path::PathBuf {
     usage_dir().join(SNAPSHOT)
 }
@@ -62,18 +146,69 @@ pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let captured_at = snap.as_ref().and_then(|v| v["capturedAt"].as_i64());
-    if captured_at
+    let due = captured_at
         .map(|t| now - t > REFRESH_AFTER_SECS)
-        .unwrap_or(true)
-    {
+        .unwrap_or(true);
+    // Nothing on this path may start an interactive sign-in (HED-114) — check before spawning.
+    let blocked = refresh_blocked_reason(snap.as_ref(), agy_profile_exists(), false);
+    if due && blocked.is_none() {
         maybe_spawn_refresh(now, false, agy_bin);
     }
-    parse_snapshot(&snap?, now)
+    // The blocked-and-no-snapshot case is the FIRST-RUN incident itself: nothing was ever written
+    // because we refuse to spawn. Returning None there would delete the whole Gemini row from the
+    // drawer — the operator would see a provider silently missing instead of the sentence telling
+    // them how to fix it. Synthesize an empty entry so the guidance always has somewhere to land.
+    let parsed = snap.as_ref().and_then(|v| parse_snapshot(v, now));
+    let mut l = match (parsed, &blocked) {
+        (Some(l), _) => l,
+        (None, Some(_)) => empty_entry(),
+        (None, None) => return None,
+    };
+    if let Some((code, why)) = blocked {
+        l.note = Some(match l.note {
+            Some(existing) => format!("{existing}; {why}"),
+            None => why,
+        });
+        let mut codes = l.note_codes.unwrap_or_default();
+        codes.push(code.to_string());
+        l.note_codes = Some(codes);
+    }
+    Some(l)
+}
+
+/// A Gemini row with no numbers — used only to carry a blocked-refresh explanation when no snapshot
+/// exists yet, so the provider never silently disappears from the drawer.
+fn empty_entry() -> ProviderLimit {
+    ProviderLimit {
+        provider: "gemini".to_string(),
+        model: Some("antigravity".to_string()),
+        captured_at: None,
+        five_hour: LimitWindow::default(),
+        seven_day: LimitWindow::default(),
+        source: Some(SOURCE.to_string()),
+        stale: None,
+        stale_after_secs: Some(STALE_AFTER_SECS),
+        note: None,
+        note_codes: Some(Vec::new()),
+        accounts: None,
+        active_account: None,
+        windows: Some(Vec::new()),
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
+    }
 }
 
 /// Force a refresh regardless of snapshot age (respects the in-flight guard, ignores the failure
 /// backoff). `true` when a refresh thread was started.
 pub(super) fn force_refresh(now: i64, agy_bin: &str) -> bool {
+    let snap = std::fs::read_to_string(snapshot_path())
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    // A person asked, so a sticky auth block may be retried (one prompt at most, and they are at
+    // the keyboard) — but a missing profile is a guaranteed prompt we still refuse to start.
+    if refresh_blocked_reason(snap.as_ref(), agy_profile_exists(), true).is_some() {
+        return false;
+    }
     maybe_spawn_refresh(now, true, agy_bin)
 }
 
@@ -93,6 +228,7 @@ fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
     let path = snapshot_path();
     match run_agy_quota(agy_bin) {
         Ok(data) => {
+            // A success proves no human is needed right now: clear any sticky block.
             let snap = snapshot_from_agy(&data, now);
             write_json_atomic(&path, &snap)
         }
@@ -106,6 +242,12 @@ fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
                 );
             snap["lastError"] = Value::String(e.clone());
             snap["lastAttemptAt"] = json!(now);
+            // Sticky: an attempt that looked like it needed a human stops the 180s timer from
+            // asking again (HED-114). A failure that did NOT look like auth clears any older block:
+            // reaching agy far enough to fail for an ordinary reason (network, parse) proves the
+            // sign-in question is settled, so a transient error after a successful login must not
+            // leave automatic refreshes disabled forever.
+            snap["authBlocked"] = json!(looks_like_auth_attempt(&e));
             // A failed snapshot write is a second, distinct failure — say so instead of hiding it
             // behind the agy error.
             match write_json_atomic(&path, &snap) {
