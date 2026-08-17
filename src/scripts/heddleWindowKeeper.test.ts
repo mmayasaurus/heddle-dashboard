@@ -172,10 +172,14 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(calls(home)).toHaveLength(1);
   });
 
-  it("pings the next account when the stagger is disabled", () => {
+  it("pings the next account when the stagger slot is due", () => {
     const home = mkHome();
     establishAcct1Window(home);
-    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "0" });
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({ last_ping_ts: Math.floor(Date.now() / 1000) - 61, last_ping_acct: "acct1" }),
+    );
+    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
     expect(calls(home)).toHaveLength(2);
     expect(calls(home)[1]).toContain(`CFG=${path.join(home, ".claude-acct2")}`);
@@ -197,7 +201,11 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     establishAcct1Window(home);
     const now = Math.floor(Date.now() / 1000);
     writeTap(home, "acct2", now, 7, now - 60);
-    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "0" });
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({ last_ping_ts: now - 61, last_ping_acct: "acct1" }),
+    );
+    const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/acct2: EXPIRED.*pinged ok=True/);
     expect(calls(home)).toHaveLength(2);
@@ -255,6 +263,55 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(calls(home)).toEqual([]);
   });
 
+  it("keeps windows alive when HEDDLE_ROTATE_PCT is malformed", () => {
+    for (const rotatePct of ["abc", "85.5", ""]) {
+      const home = mkHome();
+      const result = runKeeper([], home, { HEDDLE_ROTATE_PCT: rotatePct });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("invalid HEDDLE_ROTATE_PCT");
+      expect(calls(home)).toHaveLength(1);
+    }
+  });
+
+  it("clamps HEDDLE_ROTATE_PCT outside 1-100", () => {
+    const zeroHome = mkHome();
+    seedRotationWindows(zeroHome, { activeUsed: 0 });
+    expect(runKeeper([], zeroHome, { HEDDLE_ROTATE_PCT: "0" }).status).toBe(0);
+    expect(fs.existsSync(path.join(zeroHome, ".heddle", "rotation-advice.json"))).toBe(false);
+
+    const highHome = mkHome();
+    seedRotationWindows(highHome, { activeUsed: 100 });
+    expect(runKeeper([], highHome, { HEDDLE_ROTATE_PCT: "250" }).status).toBe(0);
+    expect(advice(highHome).thresholdPct).toBe(100);
+  });
+
+  it("does not advise from an expired tap window for the busiest account", () => {
+    const home = mkHome();
+    const { now } = seedRotationWindows(home);
+    writeTap(home, "acct1", now + 3, 90, now - 1);
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+  });
+
+  it("does not choose an expired low-usage target", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    const resetsAt = now + 3600;
+    fs.writeFileSync(
+      path.join(home, ".heddle", "accounts.json"),
+      JSON.stringify({ claude: [...registry.claude.slice(0, 2), { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true }] }),
+    );
+    writeTap(home, "acct1", now + 3, 90, resetsAt);
+    writeTap(home, "acct2", now + 2, 1, now - 1);
+    writeTap(home, "acct3", now + 1, 40, resetsAt);
+
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct3");
+  });
+
   it("does not advise from a keeper-started window without a tap capture", () => {
     const home = mkHome();
     const now = Math.floor(Date.now() / 1000);
@@ -285,6 +342,25 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(state.last_ping_acct).toBe("acct2");
     expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
     expect(calls(home)).toEqual([]);
+  });
+
+  it("caps rotation advice dedupe entries at 50", () => {
+    const home = mkHome();
+    const { resetsAt } = seedRotationWindows(home);
+    fs.writeFileSync(
+      path.join(home, ".heddle", "window-keeper.state.json"),
+      JSON.stringify({
+        last_ping_ts: 123,
+        last_ping_acct: "acct2",
+        rotationAdvice: Array.from({ length: 55 }, (_, index) => ({ activeId: `old${index}`, resetsAt: index })),
+      }),
+    );
+
+    expect(runKeeper([], home).status).toBe(0);
+    const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "window-keeper.state.json"), "utf8"));
+    expect(state.rotationAdvice).toHaveLength(50);
+    expect(state.rotationAdvice[0]).toEqual({ activeId: "old6", resetsAt: 6 });
+    expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
   });
 
   it("advises again after the active tap window rolls over", () => {
@@ -345,5 +421,29 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(true);
     expect(calls(home)).toEqual([]);
+  });
+
+  it("does not interpret the fleet post command through a shell", () => {
+    const home = mkHome();
+    const marker = path.join(home, "fleet-post-ran");
+    seedRotationWindows(home);
+
+    const result = runKeeper([], home, {
+      HEDDLE_FLEET_POST_CMD: `${path.join(home, "missing-fleet-hook")}; touch ${marker}`,
+    });
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("reports an unusable relaunch template without claiming there is no eligible target", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+
+    const result = runKeeper([], home, { HEDDLE_RELAUNCH_TEMPLATE: "{acct}" });
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct2");
+    expect(advice(home).command).toBeNull();
+    expect(advice(home).reason).toContain("HEDDLE_RELAUNCH_TEMPLATE");
+    expect(result.stdout).not.toContain("Command: no eligible target");
   });
 });

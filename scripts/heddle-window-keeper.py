@@ -24,15 +24,13 @@ What it does (per run, safe to run every 5 min from launchd):
 
 Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never uses Fable/Opus.
 """
-import json, os, re, sys, time, subprocess, datetime as dt, shutil
+import json, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
 
 HOME = os.path.expanduser("~")
 REG = os.path.join(HOME, ".heddle", "accounts.json")
 USAGE = os.path.join(HOME, ".heddle", "usage")
 STATE = os.path.join(HOME, ".heddle", "window-keeper.state.json")
 LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
-STAGGER_MIN = int(os.environ.get("HEDDLE_STAGGER_MIN", "75"))
-ROTATE_PCT = int(os.environ.get("HEDDLE_ROTATE_PCT", "85"))
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
@@ -53,6 +51,33 @@ def log(msg):
         if not _LOG_WARNING_EMITTED:
             print("warning: unable to write window keeper log", file=sys.stderr)
             _LOG_WARNING_EMITTED = True
+
+
+def int_env(name, default, lo, hi):
+    """Read a bounded integer config value without ever aborting the keeper at import time.
+
+    Bounds are per-setting and NOT shared: a percentage lives in 1-100, but a stagger is minutes and
+    75 x 4 accounts is the whole point of the schedule — clamping minutes to 100 would silently
+    rewrite a legitimate 120 into something the operator never asked for. A wrong-but-plausible
+    config value that nobody is told about is worse than the crash this function exists to prevent."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        log(f"invalid {name}={value!r}; using default {default}")
+        return default
+    clamped = min(hi, max(lo, value))
+    if clamped != value:
+        log(f"{name}={value!r} is outside {lo}-{hi}; clamping to {clamped}")
+    return clamped
+
+
+# Minutes between staggered pings: at least one, and an upper bound past a full 5h window is a typo.
+STAGGER_MIN = int_env("HEDDLE_STAGGER_MIN", 75, 1, 300)
+# A percentage of the 5h window.
+ROTATE_PCT = int_env("HEDDLE_ROTATE_PCT", 85, 1, 100)
 
 
 def load(path, default):
@@ -120,7 +145,7 @@ def fmt(ts):
     return dt.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "—"
 
 
-def rotation_target(accts, active_id):
+def rotation_target(accts, active_id, now):
     """Choose the most useful logged-in account to rotate onto, if its headroom is known enough."""
     known, unknown = [], []
     for acct in accts:
@@ -128,6 +153,10 @@ def rotation_target(accts, active_id):
             continue
         w = window(acct["id"])
         if not w:
+            continue
+        if not w.get("resets_at") or w["resets_at"] <= now:
+            # An expired reading's usage is unknown, but it is not a warm keeper anchor that can
+            # safely stand in for measured headroom.
             continue
         used = w.get("used")
         if used is not None:
@@ -138,7 +167,7 @@ def rotation_target(accts, active_id):
             if used_pct >= ROTATE_PCT:
                 continue
             known.append((used_pct, acct, w))
-        else:
+        elif w.get("source") == "keeper":
             unknown.append((acct, w))
     if known:
         _, acct, w = min(known, key=lambda item: (item[0], item[1]["id"]))
@@ -174,7 +203,17 @@ def post_rotation_advice(text):
     if not command:
         return
     try:
-        result = subprocess.run(command, shell=True, input=text, capture_output=True, text=True, timeout=15)
+        # This is operator-supplied configuration; handing configuration to a shell turns it into
+        # code execution, so parse it into argv instead.
+        args = shlex.split(command)
+    except ValueError as e:
+        log(f"rotation advisor: invalid fleet post command: {str(e)[-160:]}")
+        return
+    if not args:
+        log("rotation advisor: invalid fleet post command: empty command")
+        return
+    try:
+        result = subprocess.run(args, input=text, capture_output=True, text=True, timeout=15)
         if result.returncode:
             log(f"rotation advisor: fleet post failed: {(result.stderr or result.stdout)[-160:]}")
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -196,14 +235,14 @@ def pct(v):
     return int(rounded) if rounded == int(rounded) else rounded
 
 
-def advise_rotation(accts, state):
+def advise_rotation(accts, state, now):
     # A tap capture is written only when a live interactive session renders its statusline. The newest
     # tap is therefore the load-bearing signal for which account is actively in use; keeper anchors do
     # not prove an interactive session exists, so without a tap we intentionally offer no advice.
     tap_windows = []
     for acct in accts:
         w = window(acct["id"])
-        if w and w.get("source") == "tap":
+        if w and w.get("source") == "tap" and w.get("resets_at") and w["resets_at"] > now:
             tap_windows.append((acct, w))
     if not tap_windows:
         return
@@ -226,27 +265,33 @@ def advise_rotation(accts, state):
            for key in advice_keys if isinstance(key, dict)):
         return
 
-    target, target_window = rotation_target(accts, active["id"])
+    target, target_window = rotation_target(accts, active["id"], now)
     active_pct = pct(active_window["used"])
     target_payload = None
     command = None
+    template_error = False
     if target:
         target_payload = {"id": target["id"], "usedPct": pct(target_window.get("used")),
                           "resetsAt": target_window.get("resets_at"), "source": target_window.get("source")}
         try:
             command = RELAUNCH_TEMPLATE.format(account=target["id"])
-        except (KeyError, ValueError) as e:
-            log(f"rotation advisor: invalid relaunch template: {str(e)[-160:]}")
-    if target:
+        except Exception as e:  # noqa: BLE001 - malformed operator configuration must still produce advice
+            template_error = True
+            log(f"rotation advisor: invalid HEDDLE_RELAUNCH_TEMPLATE: {str(e)[-160:]}")
+    if target and template_error:
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation threshold; "
+                  f"{target['id']} has the most available headroom, but HEDDLE_RELAUNCH_TEMPLATE is unusable.")
+    elif target:
         reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation "
                   f"threshold; {target['id']} has the most available headroom.")
     else:
         reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation threshold; "
                   "every other logged-in account is also at/over the threshold or unknown.")
-    advice = {"advisedAt": int(time.time()),
+    advice = {"advisedAt": int(now),
               "active": {"id": active["id"], "usedPct": active_pct, "resetsAt": resets_at},
               "target": target_payload, "command": command, "thresholdPct": ROTATE_PCT, "reason": reason}
-    advice_text = f"Heddle rotation advice: {reason} Command: {command or 'no eligible target'}"
+    command_text = command or ("HEDDLE_RELAUNCH_TEMPLATE is unusable" if template_error else "no eligible target")
+    advice_text = f"Heddle rotation advice: {reason} Command: {command_text}"
 
     # These channels are deliberately independent: a broken desktop or fleet hook must not interrupt
     # the five-minute keeper job, nor should it prevent the durable advice artifact from being attempted.
@@ -259,7 +304,7 @@ def advise_rotation(accts, state):
     post_rotation_advice(advice_text)
 
     try:
-        state["rotationAdvice"] = advice_keys + [advice_key]
+        state["rotationAdvice"] = (advice_keys + [advice_key])[-50:]
         write_json_atomic(STATE, state)
     except Exception as e:
         log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
@@ -313,7 +358,7 @@ def main():
         # happens below — so anything the advisor can throw (a hand-edited state file, an unexpected
         # window shape) must degrade to a log line rather than abort the run before a single ping.
         try:
-            advise_rotation(accts, state)
+            advise_rotation(accts, state, now)
         except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
             log(f"[rotate] advisor failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
 
