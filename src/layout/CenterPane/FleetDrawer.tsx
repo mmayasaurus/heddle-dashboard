@@ -836,6 +836,15 @@ function ProviderCapBlock({
       {!showAccountCycler && (
         <CapLineGroup fiveHour={p.fiveHour} sevenDay={p.sevenDay} windows={extraWindows} color={color} note={p.note} />
       )}
+      {/* A single-account non-Claude provider has no cycler, but its one account's trouble states
+          must still surface — without this, a logged-out or limit-hit lone account is invisible
+          (gitar, PR #47). Info without the cycler chrome. */}
+      {!showAccountCycler && accounts.length === 1 && (accounts[0].loggedIn === false || accounts[0].limitReached) && (
+        <div className="fleet-provcap-account-row fleet-provcap-account-state" title={accounts[0].id}>
+          {accounts[0].loggedIn === false && <span className="fleet-provcap-logged-out" title={t("fleet.loggedOut")}>{t("fleet.loggedOut")}</span>}
+          {accounts[0].limitReached && <span className="fleet-provcap-limit-reached" title={t("fleet.limitReached")}>{t("fleet.limitReached")}</span>}
+        </div>
+      )}
       {hasExtras && (
         <div className="fleet-provcap-extras">
           <AccountCycler p={p} accounts={accounts} selectedAccountId={effectiveSelectedId} onSelectAccount={setSelectedAccountId} color={color} />
