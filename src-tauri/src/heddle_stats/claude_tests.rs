@@ -18,6 +18,23 @@ fn tap_file(model: &str, five: f64, seven: f64, captured: i64, acct: &str) -> St
     )
 }
 
+/// A `claude-<id>.oauth-usage.json` sidecar shaped exactly like the shipped keeper's
+/// `oauth_usage_for()` (`scripts/heddle-window-keeper.py`) — no `windowResetsAt` field, since that
+/// keeper doesn't emit one today.
+fn oauth_file(fable_pct: f64, captured: i64) -> String {
+    format!(
+        r#"{{"fablePct":{fable_pct},"fiveHourPct":10.0,"sevenDayPct":20.0,"byModel":{{"Fable":{fable_pct}}},"capturedAt":{captured},"source":"oauth-usage"}}"#
+    )
+}
+
+/// Same shape, but with a `windowResetsAt` — for exercising the (not-yet-shipped) case where the
+/// endpoint's Fable entry carries its own reset, distinct from the tap's 7-day boundary.
+fn oauth_file_with_window(fable_pct: f64, captured: i64, window_resets_at: i64) -> String {
+    format!(
+        r#"{{"fablePct":{fable_pct},"fiveHourPct":null,"sevenDayPct":null,"byModel":{{}},"capturedAt":{captured},"source":"oauth-usage","windowResetsAt":{window_resets_at}}}"#
+    )
+}
+
 /// A scratch usage dir under the crate's own (gitignored) `target/` — not the shared OS temp dir —
 /// unique per test and process, removed on drop.
 struct Scratch(PathBuf);
@@ -405,4 +422,170 @@ fn a_row_without_a_current_capture_never_surfaces_a_historical_estimate() {
     let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
     assert_eq!(fw["samples"], 3);
     assert_eq!(fw["fablePct"], 4.0);
+}
+
+// ─────────────────────── HED-150 pt2: exact OAuth Fable % sidecar ───────────────────────
+
+#[test]
+fn a_fresh_oauth_sidecar_surfaces_the_exact_fable_pct_and_drops_the_estimate_flag() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-exact");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(77.0));
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["exact"], true);
+    assert_eq!(fw["fablePct"], 77.0);
+}
+
+#[test]
+fn exact_survives_a_tap_only_capture_while_the_sidecar_stays_fresh() {
+    // The anti-flicker guarantee: a statusline tap carries no Fable field, so a tap-only capture
+    // must not demote the drawer from exact back to the heuristic estimate while the OAuth sidecar
+    // is still fresh (HED-150 pt2) — attribute() has to re-stamp exact_fable_pct on every call, not
+    // only when the sidecar itself changes.
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-anti-flicker");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 60));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(77.0)
+    );
+
+    // A later tap-only capture: different model, new seven_day% — the sidecar file itself is
+    // untouched (still fresh, same reading).
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-haiku-4-5", 32.0, 26.0, now + 30, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now + 30).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct,
+        Some(77.0),
+        "must not demote to the estimator"
+    );
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+}
+
+#[test]
+fn tap_absent_with_a_fresh_sidecar_still_surfaces_the_exact_value() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-no-tap");
+    let reg = registry();
+    // No claude-acct1.json (no tap, no keeper anchor) — only the OAuth sidecar.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(55.0, now - 10));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(55.0));
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    // The 5h/7d windows stay unknown — the sidecar never substitutes for a tap capture there.
+    assert_eq!(r.five_hour, LimitWindow::default());
+    assert_eq!(r.seven_day, LimitWindow::default());
+}
+
+#[test]
+fn a_stale_oauth_sidecar_is_ignored_and_the_estimator_path_still_runs() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-stale");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now, "acct1"),
+    );
+    // Captured well beyond OAUTH_EXACT_STALE_AFTER_SECS before `now`.
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file(77.0, now - OAUTH_EXACT_STALE_AFTER_SECS - 100),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct, None,
+        "stale sidecar must not force exact (too few samples for the estimator yet either)"
+    );
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["exact"], false);
+    assert_eq!(fw["fablePct"], 0.0);
+}
+
+#[test]
+fn a_new_window_resets_the_exact_share_via_the_sidecars_own_reset() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-new-window");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 120, "acct1"),
+    );
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file_with_window(40.0, now - 120, 1_786_892_400),
+    );
+    let l = build(&s.0, &reg, None, now - 120).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(40.0)
+    );
+
+    // A new weekly window: the sidecar's OWN windowResetsAt moves (the tap's hardcoded resets_at in
+    // `tap_file` does not) — the new, lower share must not be blended with the old window's 40%.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 1.0, now, "acct1"),
+    );
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file_with_window(5.0, now, 1_786_892_400 + 7 * 86_400),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct,
+        Some(5.0),
+        "re-adopts, doesn't blend"
+    );
+    assert_eq!(
+        r.detail.as_ref().unwrap()["fableWeekly"]["windowResetsAt"],
+        1_786_892_400 + 7 * 86_400
+    );
+}
+
+#[test]
+fn malformed_or_out_of_range_fable_pct_in_the_sidecar_is_ignored_without_panicking() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-malformed");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now, "acct1"),
+    );
+    for bad in [
+        r#"{"fablePct":-5.0,"capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":150.0,"capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":"not-a-number","capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":NaN,"capturedAt":REPL,"source":"oauth-usage"}"#,
+    ] {
+        let body = bad.replace("REPL", &now.to_string());
+        s.write("claude-acct1.oauth-usage.json", &body);
+        let l = build(&s.0, &reg, None, now).unwrap();
+        let r = &l.accounts.as_ref().unwrap()[0];
+        assert_eq!(
+            r.detail.as_ref().unwrap()["fableWeekly"]["exact"],
+            false,
+            "malformed sidecar {body:?} must not flip exact on"
+        );
+    }
 }

@@ -12,6 +12,13 @@
 //! you're on"; `accounts[]` carries every registered account (masked email, own windows, own
 //! capture time / staleness, `limitReached` at ≥100%), and `activeAccount` names the row.
 //! Without a registry this degrades to the plain single-file tap entry (`accounts: None`).
+//!
+//! HED-150 pt2: the window-keeper also writes `claude-<id>.oauth-usage.json` — an exact per-account
+//! weekly Fable % pulled from the OAuth usage endpoint, refreshed independently of the tap.
+//! `attribute()` stamps that value onto EVERY capture while the sidecar is fresh, not just when it
+//! changes: a Fable-silent tap capture (the common case) would otherwise demote the drawer's bar
+//! back to the heuristic estimate between OAuth refreshes. See `fable_attrib.rs` for the
+//! exact-vs-estimate machinery this feeds.
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +36,13 @@ pub(super) const CODE_NO_CAPTURE: &str = "claude.noCapture";
 /// Unregistered per-account files (`claude-unknown-*.json`) are shown only while this recent.
 const UNREGISTERED_MAX_AGE_SECS: i64 = 24 * 3600;
 pub(super) const CODE_LIMIT_REACHED: &str = "claude.limitReached";
+/// The keeper refreshes each account's `claude-<id>.oauth-usage.json` at most every
+/// `HEDDLE_OAUTH_CACHE_SECS` (300s default) and backs a failing account off for
+/// `HEDDLE_OAUTH_BACKOFF_SECS` (3600s default) — see `scripts/heddle-window-keeper.py`. A few
+/// refresh cycles of slack tolerates one missed poll without falling back to the estimator, while
+/// staying well short of a stuck backoff, so a sidecar the keeper has stopped refreshing goes stale
+/// promptly instead of pinning a week-old % as "exact" indefinitely.
+const OAUTH_EXACT_STALE_AFTER_SECS: i64 = 900;
 
 /// One registered Claude account.
 #[derive(Clone, Debug, PartialEq)]
@@ -184,6 +198,37 @@ fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
     }
 }
 
+/// A fresh, valid reading from `claude-<id>.oauth-usage.json` (the window-keeper's sidecar,
+/// HED-150 pt1): `{fablePct, fiveHourPct, sevenDayPct, byModel, capturedAt, source[, windowResetsAt]}`.
+/// `fiveHourPct`/`sevenDayPct` are for Part-1 reconciliation/other consumers — never read here, the
+/// tap alone drives the displayed 5h/7d windows. `None` for anything absent, malformed, out of
+/// range, or stale — best-effort, same as the rest of `attribute()`.
+struct OauthExact {
+    fable_pct: f64,
+    captured_at: i64,
+    /// The Fable entry's own reset time, when the sidecar carries one — the weekly Fable window is
+    /// not guaranteed to share the tap's `seven_day.resets_at` boundary. Verified against the
+    /// shipped keeper (`scripts/heddle-window-keeper.py::oauth_usage_for`, 2026-08-18): it does NOT
+    /// emit this field today, so callers fall back to the tap's own 7-day reset.
+    window_resets_at: Option<i64>,
+}
+
+fn oauth_exact(dir: &Path, id: &str, now: i64) -> Option<OauthExact> {
+    let v = read_json(&dir.join(format!("claude-{id}.oauth-usage.json")))?;
+    let fable_pct = v["fablePct"]
+        .as_f64()
+        .filter(|p| p.is_finite() && (0.0..=100.0).contains(p))?;
+    let captured_at = v["capturedAt"].as_i64()?;
+    if is_stale(Some(captured_at), now, OAUTH_EXACT_STALE_AFTER_SECS).unwrap_or(true) {
+        return None;
+    }
+    Some(OauthExact {
+        fable_pct,
+        captured_at,
+        window_resets_at: v["windowResetsAt"].as_i64(),
+    })
+}
+
 /// Load this account's attribution state, fold in the current capture (if any), persist when it
 /// changed, and return the state. Best-effort: an unreadable/unwritable attrib file just yields
 /// whatever we could compute in memory.
@@ -197,7 +242,32 @@ fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Att
     let mut state: Attrib = read_json(&path)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let cap = file.and_then(fable_attrib::capture_from_tap);
+    let mut cap = file.and_then(fable_attrib::capture_from_tap);
+    // Stamp the OAuth exact reading onto EVERY capture while the sidecar is fresh, not just when it
+    // changes: a statusline tap carries no Fable field, so a tap-only capture reaching `ingest()`
+    // without `exact_fable_pct` set would hit its `seed_from_exact` branch and demote exact→estimate
+    // — flickering the drawer between OAuth refreshes. Overrides any tap-derived exact (there isn't
+    // one today — the tap never carries a Fable window — but the OAuth reading is authoritative
+    // regardless).
+    if let Some(exact) = oauth_exact(dir, id, now) {
+        match &mut cap {
+            Some(c) => {
+                c.exact_fable_pct = Some(exact.fable_pct);
+                if let Some(w) = exact.window_resets_at {
+                    c.seven_day_resets_at = Some(w);
+                }
+            }
+            None => {
+                cap = Some(fable_attrib::Capture {
+                    captured_at: exact.captured_at,
+                    model: String::new(),
+                    seven_day_used: None,
+                    seven_day_resets_at: exact.window_resets_at,
+                    exact_fable_pct: Some(exact.fable_pct),
+                });
+            }
+        }
+    }
     let changed = match &cap {
         Some(c) => fable_attrib::ingest(&mut state, c, now),
         None => false,
@@ -357,10 +427,22 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
     let fable_est = attrib.and_then(fable_attrib::estimate);
     let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
-        // No current capture: don't surface a historical estimate next to a "no capture yet"
-        // note — the drawer renders on non-null alone. The breakdown (with lastCapturedAt)
-        // stays in `detail.fableWeekly` for the tooltip.
-        return row_no_capture(a, label, detail, None, None);
+        // No current capture: don't surface a historical estimate next to a "no capture yet" note —
+        // UNLESS the attribution is a FRESH exact OAuth reading (HED-150 pt2): that's a live current
+        // signal, not a stale guess, so it surfaces even though the tap itself is silent right now.
+        // A non-exact (or now-stale) estimate stays suppressed exactly as before; the breakdown
+        // (with lastCapturedAt) is always in `detail.fableWeekly` for the tooltip.
+        let fresh_exact = attrib.is_some_and(|s| {
+            s.exact
+                && !is_stale(s.last_captured_at, now, OAUTH_EXACT_STALE_AFTER_SECS).unwrap_or(true)
+        });
+        return row_no_capture(
+            a,
+            label,
+            detail,
+            if fresh_exact { fable_est } else { None },
+            if fresh_exact { fable_samples } else { None },
+        );
     };
     let rl = &v["rate_limits"];
     let win = |k: &str| LimitWindow {
