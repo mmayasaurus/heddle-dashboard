@@ -25,6 +25,7 @@ What it does (per run, safe to run every 5 min from launchd):
 Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never uses Fable/Opus.
 """
 import json, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
+import urllib.error, urllib.request
 
 try:
     import fcntl
@@ -35,6 +36,7 @@ HOME = os.path.expanduser("~")
 REG = os.path.join(HOME, ".heddle", "accounts.json")
 USAGE = os.path.join(HOME, ".heddle", "usage")
 STATE = os.path.join(HOME, ".heddle", "window-keeper.state.json")
+OAUTH_STATE = os.path.join(HOME, ".heddle", "oauth-usage-state.json")
 LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
 TRANSCRIPT_OFFSETS = os.path.join(HOME, ".heddle", "transcript-offsets.json")
@@ -86,6 +88,10 @@ def int_env(name, default, lo, hi):
 STAGGER_MIN = int_env("HEDDLE_STAGGER_MIN", 75, 1, 300)
 # A percentage of the 5h window.
 ROTATE_PCT = int_env("HEDDLE_ROTATE_PCT", 85, 1, 100)
+# OAuth is supplemental to the keeper's pings, so cache its exact weekly signal and back off after
+# a denied credential prompt rather than repeatedly disturbing the operator.
+OAUTH_CACHE_SECS = int_env("HEDDLE_OAUTH_CACHE_SECS", 300, 0, 86400)
+OAUTH_BACKOFF_SECS = int_env("HEDDLE_OAUTH_BACKOFF_SECS", 3600, 0, 86400)
 
 
 def load(path, default):
@@ -105,6 +111,147 @@ def write_json_atomic(path, obj):
 
 def safe_segment(acct_id):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(acct_id))
+
+
+def oauth_access_token(acct):
+    """Read an account's OAuth token without letting it escape into durable data or logs."""
+    acct_id = acct.get("id", "unknown")
+    try:
+        if acct.get("configDir") is None:
+            # Keychain access is intentionally injected for tests. Never include its stdout/stderr in
+            # diagnostics: either can contain the credential we are protecting.
+            security = os.environ.get("HEDDLE_SECURITY_BIN", "security")
+            result = subprocess.run([security, "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                                    capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                log(f"[oauth] acct {acct_id}: credentials unavailable (security status={result.returncode})")
+                return None
+            credentials = json.loads(result.stdout)
+        else:
+            config_dir = os.path.expanduser(acct["configDir"])
+            with open(os.path.join(config_dir, ".credentials.json")) as f:
+                credentials = json.load(f)
+        token = (credentials.get("claudeAiOauth") or {}).get("accessToken") if isinstance(credentials, dict) else None
+        if not isinstance(token, str) or not token:
+            log(f"[oauth] acct {acct_id}: credentials unavailable (missing access token)")
+            return None
+        return token
+    except Exception as e:  # Credential sources can be absent, denied, or malformed.
+        log(f"[oauth] acct {acct_id}: credentials unavailable ({type(e).__name__})")
+        return None
+
+
+def fetch_oauth_usage(token):
+    """Fetch only the OAuth limits object; failures deliberately omit bodies and credentials."""
+    url = os.environ.get("HEDDLE_OAUTH_USAGE_URL", "https://api.anthropic.com/api/oauth/usage")
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Do not read an HTTP error body: undocumented endpoints can reflect authorization data.
+        log(f"[oauth] usage fetch failed (HTTPError status={e.code})")
+        return None
+    except Exception as e:
+        log(f"[oauth] usage fetch failed ({type(e).__name__})")
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("limits"), list):
+        log("[oauth] usage fetch failed (invalid response)")
+        return None
+    # The endpoint is undocumented, so do not trust it not to reflect Authorization data in a model
+    # label. Remove such a label before any response object leaves this token-bearing function.
+    for limit in payload["limits"]:
+        if not isinstance(limit, dict):
+            continue
+        scope = limit.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        display_name = model.get("display_name") if isinstance(model, dict) else None
+        if isinstance(display_name, str) and token in display_name:
+            model["display_name"] = None
+    return {"limits": payload["limits"]}
+
+
+def oauth_usage_for(acct):
+    """Return the deliberately small, token-free usage payload for one account."""
+    token = oauth_access_token(acct)
+    if token is None:
+        return None
+    try:
+        usage = fetch_oauth_usage(token)
+    finally:
+        # The token's only use is the Authorization header built in fetch_oauth_usage.
+        del token
+    if usage is None:
+        return None
+
+    # This endpoint is undocumented and its entries are not guaranteed. Copy only independently
+    # validated numbers and restrained display names into the artifact, never the raw response.
+    shaped = {"fablePct": None, "fiveHourPct": None, "sevenDayPct": None, "byModel": {},
+              "capturedAt": int(time.time()), "source": "oauth-usage"}
+    for limit in usage["limits"]:
+        if not isinstance(limit, dict):
+            continue
+        percent = limit.get("percent")
+        if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+            continue
+        kind = limit.get("kind")
+        if kind == "five_hour":
+            shaped["fiveHourPct"] = percent
+        elif kind == "seven_day":
+            shaped["sevenDayPct"] = percent
+        elif kind == "weekly_scoped":
+            scope = limit.get("scope")
+            model = scope.get("model") if isinstance(scope, dict) else None
+            display_name = model.get("display_name") if isinstance(model, dict) else None
+            if not isinstance(display_name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z ._-]{0,63}", display_name):
+                continue
+            shaped["byModel"][display_name] = percent
+            if display_name == "Fable":
+                shaped["fablePct"] = percent
+    return shaped
+
+
+def refresh_oauth_usage(accts, now):
+    """Refresh uncached exact OAuth usage separately from the primary ping execution."""
+    state = load(OAUTH_STATE, {})
+    attempts = state.get("attempts")
+    if not isinstance(attempts, dict):
+        attempts = {}
+        state["attempts"] = attempts
+    state_changed = False
+    for acct in accts:
+        acct_id = acct["id"]
+        path = os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.oauth-usage.json")
+        try:
+            if now - os.path.getmtime(path) < OAUTH_CACHE_SECS:
+                continue
+        except OSError:
+            pass
+        previous = attempts.get(acct_id)
+        last_attempt = previous.get("lastAttemptAt") if isinstance(previous, dict) else None
+        if isinstance(last_attempt, (int, float)) and now - last_attempt < OAUTH_BACKOFF_SECS:
+            log(f"[oauth] acct {acct_id}: skipped (backoff)")
+            continue
+        payload = oauth_usage_for(acct)
+        if payload is None:
+            attempts[acct_id] = {"lastAttemptAt": int(now)}
+            state_changed = True
+            continue
+        try:
+            write_json_atomic(path, payload)
+        except Exception as e:
+            log(f"[oauth] acct {acct_id}: usage write failed ({type(e).__name__})")
+            attempts[acct_id] = {"lastAttemptAt": int(now)}
+            state_changed = True
+            continue
+        if acct_id in attempts:
+            attempts.pop(acct_id)
+            state_changed = True
+    if state_changed:
+        write_json_atomic(OAUTH_STATE, state)
 
 
 def window(acct_id):
@@ -733,6 +880,11 @@ def main():
             account_transcripts(accts, now)
         except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
             log(f"[transcripts] accounting failed: {type(e).__name__}: {str(e)[-160:]}")
+        try:
+            refresh_oauth_usage(accts, now)
+        except Exception as e:  # noqa: BLE001 - OAuth is supplemental and must never cost a ping
+            # OAuth errors may carry a response or request representation, so retain only their type.
+            log(f"[oauth] refresh failed ({type(e).__name__})")
 
     return 0
 
