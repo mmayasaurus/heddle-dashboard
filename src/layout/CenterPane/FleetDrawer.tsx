@@ -301,9 +301,12 @@ export function FleetDrawer() {
             {limits.map((p) => {
               // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
               // the bar answers "how close is each provider to a wall" at a glance.
-              const win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
-              const label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
-              const pct = win.usedPercentage;
+              const fiveHour = p.fiveHour?.usedPercentage != null ? p.fiveHour : undefined;
+              const sevenDay = p.sevenDay?.usedPercentage != null ? p.sevenDay : undefined;
+              const namedWindow = (p.windows ?? []).find((window) => window.usedPercentage != null);
+              const win = fiveHour ?? sevenDay ?? namedWindow;
+              const label = fiveHour ? "5h" : sevenDay ? "7d" : namedWindow?.label ?? namedWindow?.id ?? "—";
+              const pct = win?.usedPercentage;
               const color = providerColor(p.provider);
               return (
                 <span
@@ -313,7 +316,7 @@ export function FleetDrawer() {
                 >
                   <span className="fleet-tag" style={{ color }}>{p.provider}</span>
                   <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                 </span>
               );
             })}
@@ -529,13 +532,14 @@ function fmtWindowAmount(win: LimitWindow): string | null {
 function NamedWindowLine({ win, color }: { win: LimitWindow; color: string }) {
   const t = useT();
   const pct = win.usedPercentage;
+  const pctLabel = pct == null ? "" : `${Math.round(pct)}%`;
   const label = win.label ?? win.id ?? "window";
   const amount = fmtWindowAmount(win);
   return (
-    <div className="fleet-capline">
-      <span className="fleet-capline-lbl" title={label}>{label}</span>
-      <SegBar pct={pct} color={color} />
-      <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
+    <div className="fleet-capline fleet-namedwin">
+      <span className="fleet-namedwin-lbl" title={label}>{label}</span>
+      {pct == null ? <span className="fleet-capline-indeterminate" title={pctLabel}>—</span> : <SegBar pct={pct} color={color} />}
+      <span className="fleet-capline-pct" title={pctLabel}>{pctLabel}</span>
       <LiveClock render={(now) => {
         const resetText = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : "";
         const text = [resetText, amount].filter(Boolean).join(" · ");
@@ -709,7 +713,7 @@ function ProviderCapBlock({
               <div className="fleet-provcap-account" key={`${account.label}-${index}`}>
                 <span className="fleet-provcap-account-label" title={account.label}>{account.label}</span>
                 {account.plan && <span className="fleet-provcap-account-plan" title={`· ${account.plan}`}>· {account.plan}</span>}
-                {(hasData(account.sevenDay) || hasData(account.fiveHour)) && (
+                {(account.sevenDay?.usedPercentage != null || account.fiveHour?.usedPercentage != null) && (
                   <span className="fleet-provcap-account-caps" title={capsTitle}>
                     <SegBar pct={account.sevenDay?.usedPercentage} color={color} segments={6} />
                     {account.sevenDay?.usedPercentage != null && ` ${Math.round(account.sevenDay.usedPercentage)}%`}

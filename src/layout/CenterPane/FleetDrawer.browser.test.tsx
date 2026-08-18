@@ -291,7 +291,7 @@ describe("FleetDrawer provider cap windows (HED-145)", () => {
 
     const cursorBlock = screen.getByTitle("cursor").closest(".fleet-provcap") as HTMLElement;
     expect(cursorBlock).toBeTruthy();
-    const cursorLabels = Array.from(cursorBlock.querySelectorAll(".fleet-capline-lbl")).map((el) => el.textContent);
+    const cursorLabels = Array.from(cursorBlock.querySelectorAll(".fleet-namedwin-lbl")).map((el) => el.textContent);
     expect(cursorLabels).toEqual([
       "included total (Auto / Cursor models)",
       "included API (named 3rd-party models)",
@@ -333,5 +333,77 @@ describe("FleetDrawer provider cap windows (HED-145)", () => {
     expect(screen.getByText("v…@example.com")).toBeTruthy();
     expect(screen.getByText("m…@example.org")).toBeTruthy();
     expect(document.querySelectorAll(".fleet-provcap-account-caps").length).toBe(0);
+  });
+
+  it("regression PR#51 — falls back to Cursor's first real named window in the collapsed summary chip", async () => {
+    localStorage.setItem("heddle-fleet-open", "0");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor, codex]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelectorAll(".fleet-chip-sum")).toHaveLength(2));
+    const cursorChip = screen.getByText("cursor").closest(".fleet-chip-sum");
+    const codexChip = screen.getByText("codex").closest(".fleet-chip-sum");
+    expect(cursorChip?.textContent).toContain("17%");
+    expect(cursorChip?.getAttribute("title")).toContain("included total (Auto / Cursor models) 17%");
+    expect(codexChip?.textContent).toContain("42%");
+    expect(codexChip?.getAttribute("title")).toContain("5h 42%");
+  });
+
+  it("regression PR#51 — gives Cursor named windows distinct dedicated labels", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    const labels = Array.from(document.querySelectorAll(".fleet-namedwin-lbl"));
+    expect(labels.map((label) => label.textContent)).toEqual([
+      "included total (Auto / Cursor models)",
+      "included API (named 3rd-party models)",
+      "on-demand (usage-based)",
+    ]);
+  });
+
+  it("regression PR#51 — marks a null-pct named window indeterminate while retaining its amount and reset", async () => {
+    const cursorWithOnDemandOff = {
+      ...cursor,
+      windows: cursorWindows.map((window) => window.id === "usage-based" ? { ...window, usedPercentage: null } : window),
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursorWithOnDemandOff]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    const onDemandLine = screen.getByText("on-demand (usage-based)").closest(".fleet-capline");
+    expect(onDemandLine?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    expect(onDemandLine?.querySelector(".fleet-seg")).toBeNull();
+    expect(onDemandLine?.querySelector(".fleet-capline-reset")?.textContent).toContain("$0.00 / $100.00");
+    expect(onDemandLine?.querySelector(".fleet-capline-reset")?.textContent).toContain("↻");
+  });
+
+  it("regression PR#51 — does not show compact account caps for a reset-only window", async () => {
+    const cursorResetOnlyAccounts = {
+      ...cursor,
+      model: "cursor.com · 2 acct",
+      accounts: [
+        { ...cursorAccount, fiveHour: { usedPercentage: null, resetsAt: now + 3_600 } },
+        { ...cursorAccount, id: "cursor-agent-keychain", label: "m…@example.org", sevenDay: { usedPercentage: null, resetsAt: now + 86_400 } },
+      ],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursorResetOnlyAccounts]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "2 accounts" }));
+    expect(document.querySelectorAll(".fleet-provcap-account-caps")).toHaveLength(0);
   });
 });
