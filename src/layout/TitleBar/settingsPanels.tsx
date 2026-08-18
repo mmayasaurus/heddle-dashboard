@@ -428,6 +428,7 @@ function AgentPathBlock({
 export function HeddleCoreRootField() {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [value, setValue] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -461,6 +462,7 @@ export function HeddleCoreRootField() {
 
   const commit = async (draft: string) => {
     const root = draft.trim();
+    setSaveError("");
     const next = { ...settings };
     const currentComms = next.comms;
     const comms =
@@ -479,19 +481,27 @@ export function HeddleCoreRootField() {
       await invoke("set_app_settings", { entries: { "vlx-settings": JSON.stringify(next) } });
       setSettings(next);
       setValue(root);
-    } catch {
+    } catch (error) {
       // Preserve the current field value for a later retry if the backend is unavailable.
+      setSaveError(String(error));
     }
   };
 
   return (
-    <AgentPathBlock
-      label="Fleet chat — heddle core path"
-      hint="Folder of your heddle install (contains dist/comms/). Leave blank to auto-detect ~/Developer/heddle."
-      placeholder="~/Developer/heddle"
-      value={value}
-      onCommit={(draft) => void commit(draft)}
-    />
+    <div>
+      <AgentPathBlock
+        label="Fleet chat — heddle core path"
+        hint="Folder of your heddle install (contains dist/comms/). Leave blank to auto-detect ~/Developer/heddle."
+        placeholder="~/Developer/heddle"
+        value={value}
+        onCommit={(draft) => void commit(draft)}
+      />
+      {saveError && (
+        <div role="alert" style={{ marginTop: 6, color: "var(--danger, #ef4444)", fontSize: 11 }}>
+          {saveError}
+        </div>
+      )}
+    </div>
   );
 }
 

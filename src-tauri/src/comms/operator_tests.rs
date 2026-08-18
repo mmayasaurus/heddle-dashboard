@@ -319,30 +319,42 @@ fn resolve_binary_heddle_core_root_requires_the_script_to_exist() {
 
 // ──────────────────────────── binary resolution: tier 4 auto-detect (pure) ───────────────────
 //
-// These use `resolve_binary_with_roots` (not `resolve_binary`) so the conventional-root list is an
-// injected temp dir rather than this machine's real `$HOME` — which may legitimately already have a
-// real heddle checkout in it (that's the whole point of the tier), which would make a test that
-// relied on the real home directory flaky. Same rationale as `token_from_file` being split out of
-// `read_operator_token` above.
+// Search behavior uses `first_core_root` directly with temp dirs, so it cannot observe ambient
+// PATH, `$HOME`, or HEDDLE_COMMS_* values. Tier ordering is covered through
+// `resolve_binary_with_roots` using an explicit setting that wins before any environment tier.
 
 #[test]
-fn resolve_binary_auto_detects_a_conventional_root_when_nothing_else_resolves() {
+fn regression_pr_52_node_tier_requires_node_on_the_injected_path() {
     let dir = tempfile::tempdir().unwrap();
     let script_dir = dir.path().join("dist").join("comms");
     std::fs::create_dir_all(&script_dir).unwrap();
-    std::fs::write(script_dir.join("channel-server.js"), "// fixture").unwrap();
+    let script = script_dir.join("channel-server.js");
+    std::fs::write(&script, "// fixture").unwrap();
 
-    // No settings, no env override, and this assumes (per the verified fixture facts, same
-    // assumption `status_is_no_binary_when_nothing_is_configured` already makes) that the machine
-    // running this suite has no `heddle-comms` on PATH and no HEDDLE_COMMS_BIN/HEDDLE_HOME set —
-    // only the injected conventional root should resolve.
-    let resolved = resolve_binary_with_roots(None, &[dir.path().to_path_buf()]);
+    assert_eq!(
+        node_tier_with_path(script.to_string_lossy().into_owned(), std::ffi::OsStr::new("")),
+        None,
+        "a core script without node on the injected PATH is not a resolvable tier"
+    );
+}
+
+#[test]
+fn first_core_root_auto_detects_the_first_conventional_root_with_a_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing_root = dir.path().join("missing");
+    let root = dir.path().join("first");
+    let later_root = dir.path().join("later");
+    let script_dir = root.join("dist").join("comms");
+    let later_script_dir = later_root.join("dist").join("comms");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    std::fs::create_dir_all(&later_script_dir).unwrap();
+    std::fs::write(script_dir.join("channel-server.js"), "// fixture").unwrap();
+    std::fs::write(later_script_dir.join("channel-server.js"), "// fixture").unwrap();
+
+    let resolved = first_core_root(&[missing_root, root, later_root]);
     assert_eq!(
         resolved,
-        Some((
-            "node".to_string(),
-            vec![script_dir.join("channel-server.js").to_string_lossy().to_string()]
-        ))
+        Some(script_dir.join("channel-server.js").to_string_lossy().to_string())
     );
 }
 
@@ -361,21 +373,10 @@ fn resolve_binary_explicit_override_wins_even_when_a_conventional_root_is_presen
 }
 
 #[test]
-fn resolve_binary_auto_detect_returns_none_when_no_conventional_root_has_the_script() {
+fn first_core_root_returns_none_when_no_conventional_root_has_the_script() {
     let dir = tempfile::tempdir().unwrap();
-    // No `dist/comms/channel-server.js` written under `dir`: tier 4 must not claim availability.
-    // (PATH tier 2 and the HEDDLE_HOME half of tier 3 still read the real environment here; asserting
-    // `!= Some(("node", ...))` rather than `== None` keeps this test honest about that without
-    // depending on the real machine's PATH/env not having anything set — same reasoning as
-    // `resolve_binary_heddle_core_root_requires_the_script_to_exist`'s `before` assertion above.)
-    let resolved = resolve_binary_with_roots(None, &[dir.path().to_path_buf()]);
-    assert_ne!(
-        resolved,
-        Some((
-            "node".to_string(),
-            vec![dir.path().join("dist/comms/channel-server.js").to_string_lossy().to_string()]
-        ))
-    );
+    let resolved = first_core_root(&[dir.path().join("first"), dir.path().join("second")]);
+    assert_eq!(resolved, None);
 }
 
 // ──────────────────────────────── status: no-binary / no-token (pure) ────────────────────────

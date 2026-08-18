@@ -210,6 +210,20 @@ fn on_path(name: &str, path: &std::ffi::OsStr) -> bool {
     std::env::split_paths(path).any(|dir| dir.join(name).is_file())
 }
 
+/// Every `node <script>` tier shares this: it only counts as resolved when `node` itself is on the
+/// augmented PATH. Without this, a `heddleCoreRoot`/`HEDDLE_HOME`/auto-detected root with the script
+/// present but no `node` binary anywhere would report itself available and fail confusingly at spawn
+/// time instead of status honestly reporting `"no-binary"`.
+fn node_tier(script: String) -> Option<(String, Vec<String>)> {
+    node_tier_with_path(script, &augmented_path())
+}
+
+/// The path-injectable half of [`node_tier`], kept pure so tests can prove a discovered core script
+/// is skipped when the child interpreter is unavailable.
+fn node_tier_with_path(script: String, path: &std::ffi::OsStr) -> Option<(String, Vec<String>)> {
+    on_path("node", path).then(|| ("node".to_string(), vec![script]))
+}
+
 /// The four-tier binary search from the module doc, plus the implicit fifth (`None`) — tier logic
 /// lives in `resolve_binary_with_roots`; this just supplies the real conventional-root list
 /// (`conventional_core_roots`, this machine's actual `$HOME`) for tier 4's auto-detect.
@@ -254,11 +268,13 @@ fn resolve_binary_with_roots(
     .flatten()
     {
         if let Some(script) = core_script(&root) {
-            return Some(("node".to_string(), vec![script]));
+            if let Some(tier) = node_tier(script) {
+                return Some(tier);
+            }
         }
     }
     if let Some(script) = first_core_root(conventional_roots) {
-        return Some(("node".to_string(), vec![script]));
+        return node_tier(script);
     }
     None
 }
@@ -504,7 +520,8 @@ async fn whoami_revoked(ctx: &AppCtx) -> Result<bool, &'static str> {
 /// already recover once the backoff window passes (see `ensure_client`). Nothing here retries a
 /// spawn just to answer a status poll.
 async fn static_status(ctx: &AppCtx) -> OperatorStatus {
-    static_status_with_roots(ctx, &conventional_core_roots()).await
+    let roots = conventional_core_roots();
+    static_status_with_roots(ctx, &roots).await
 }
 
 /// `static_status`, with tier 4's conventional-root list passed in — same seam and rationale as
