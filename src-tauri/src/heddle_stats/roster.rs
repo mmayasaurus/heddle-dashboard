@@ -28,6 +28,9 @@ pub struct Worker {
 #[serde(rename_all = "camelCase")]
 pub struct FleetAgent {
     name: String,
+    /// The agent's own `claude --model <id>` argv, when its process is live and the flag is
+    /// present. Never guessed: absent flag, dead process, or an unreadable ps call all yield `None`.
+    model: Option<String>,
     pid: i64,
     session_id: String,
     cwd: String,
@@ -79,6 +82,39 @@ fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
         .collect()
 }
 
+/// Parse `ps -o pid=,args=` output into the raw argv string per listed PID. A SEPARATE ps call
+/// from `parse_ps_liveness` rather than a third `-o` column tacked onto it: `comm` can itself
+/// contain spaces (see the `Google Chrome H` fixture below), so a combined pid/comm/args line
+/// would be ambiguous to split. Two columns keeps the same "first token is pid, rest of the line
+/// is the field" split the liveness parser already uses.
+fn parse_ps_args(output: &str) -> HashMap<i32, String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim_start().splitn(2, char::is_whitespace);
+            let pid = fields.next()?.trim().parse().ok()?;
+            let args = fields.next()?.trim().to_string();
+            Some((pid, args))
+        })
+        .collect()
+}
+
+/// Parse a `--model <id>` / `--model=<id>` flag out of a process's argv string. The heddle
+/// launcher always passes `--model` on resumes; a process with no flag, or a trailing `--model`
+/// with nothing after it, yields `None` rather than a guess.
+fn parse_model_flag(args: &str) -> Option<String> {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    for (index, token) in tokens.iter().enumerate() {
+        if let Some(value) = token.strip_prefix("--model=") {
+            return (!value.is_empty()).then(|| value.to_string());
+        }
+        if *token == "--model" {
+            return tokens.get(index + 1).map(|value| value.to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,6 +150,7 @@ mod tests {
         let agents = vec![
             FleetAgent {
                 name: "r".to_string(),
+                model: None,
                 pid: 1,
                 session_id: String::new(),
                 cwd: String::new(),
@@ -125,6 +162,7 @@ mod tests {
             },
             FleetAgent {
                 name: "r".to_string(),
+                model: None,
                 pid: 2,
                 session_id: String::new(),
                 cwd: String::new(),
@@ -137,6 +175,47 @@ mod tests {
         ];
 
         assert_eq!(matching_agent_index(&agents, Some("r")), Some(1));
+    }
+
+    #[test]
+    fn ps_args_parses_pid_and_full_argv_line() {
+        let args = parse_ps_args(
+            "  101 claude --resume abc123 --model claude-opus-4-8\n  102 /usr/bin/claude --model=claude-fable-5\n",
+        );
+        assert_eq!(
+            args.get(&101).map(String::as_str),
+            Some("claude --resume abc123 --model claude-opus-4-8")
+        );
+        assert_eq!(
+            args.get(&102).map(String::as_str),
+            Some("/usr/bin/claude --model=claude-fable-5")
+        );
+    }
+
+    #[test]
+    fn model_flag_parses_space_form() {
+        assert_eq!(
+            parse_model_flag("claude --resume abc123 --model claude-opus-4-8"),
+            Some("claude-opus-4-8".to_string())
+        );
+    }
+
+    #[test]
+    fn model_flag_parses_equals_form() {
+        assert_eq!(
+            parse_model_flag("claude --model=claude-fable-5 --resume abc123"),
+            Some("claude-fable-5".to_string())
+        );
+    }
+
+    #[test]
+    fn model_flag_absent_is_none() {
+        assert_eq!(parse_model_flag("claude --resume abc123"), None);
+    }
+
+    #[test]
+    fn model_flag_last_token_missing_value_is_none() {
+        assert_eq!(parse_model_flag("claude --resume abc123 --model"), None);
     }
 }
 
@@ -175,6 +254,7 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         }
         agents.push(FleetAgent {
             name: name.to_string(),
+            model: None,
             pid,
             session_id: session["sessionId"]
                 .as_str()
@@ -213,6 +293,34 @@ fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
             (!output.stdout.is_empty() || output.stderr.is_empty())
                 .then(|| parse_ps_liveness(&String::from_utf8_lossy(&output.stdout), "claude"))
         });
+
+    // Model capture: a SEPARATE, second batched ps call keyed only by pids the first call already
+    // proved are a live `claude` executable — never the kill(2) fallback below, which verifies
+    // nothing about the executable and could hand back an unrelated (reused) pid's argv as this
+    // agent's "model". Keeping this off the liveness ps call also leaves `parse_ps_liveness`
+    // (and its exact-basename semantics, HED-77) completely untouched.
+    let verified_pids = ps_liveness
+        .as_ref()
+        .map(|liveness| {
+            liveness
+                .iter()
+                .filter(|(_, &live)| live)
+                .map(|(pid, _)| pid.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let ps_args = if verified_pids.is_empty() {
+        HashMap::new()
+    } else {
+        std::process::Command::new("ps")
+            .args(["-p", &verified_pids, "-o", "pid=,args="])
+            .output()
+            .ok()
+            .map(|output| parse_ps_args(&String::from_utf8_lossy(&output.stdout)))
+            .unwrap_or_default()
+    };
+
     const SESSION_STALE_AFTER_MS: i64 = 48 * 60 * 60 * 1000;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -231,6 +339,11 @@ fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
             continue;
         }
         agent.alive = process_live && !stale;
+        if process_live {
+            agent.model = ps_args
+                .get(&(agent.pid as i32))
+                .and_then(|args| parse_model_flag(args));
+        }
         kept.push(agent);
     }
     kept
@@ -308,6 +421,7 @@ pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
         if !orphaned.is_empty() {
             agents.push(FleetAgent {
                 name: "(orphaned)".to_string(),
+                model: None,
                 pid: 0,
                 session_id: String::new(),
                 cwd: String::new(),

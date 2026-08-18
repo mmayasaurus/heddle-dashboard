@@ -105,6 +105,7 @@ interface FleetWorker {
 }
 interface FleetAgent {
   name: string;
+  model?: string | null;
   pid: number;
   sessionId: string;
   cwd: string;
@@ -717,6 +718,21 @@ function shortCwd(cwd: string): string {
   return parts.slice(-1)[0] ?? cwd;
 }
 
+// Exact ids with a bespoke short form; anything else falls through to the generic rules below.
+const MODEL_DISPLAY: Record<string, string> = {
+  "claude-fable-5": "fable",
+  "claude-opus-4-8": "opus 4.8",
+  "claude-opus-5": "opus 5",
+};
+
+/** Short display form for a fleet agent's own model id — the chip text (full id stays in the tooltip). */
+function shortModel(id: string): string {
+  if (MODEL_DISPLAY[id]) return MODEL_DISPLAY[id];
+  if (id.startsWith("claude-sonnet-")) return "sonnet";
+  if (id.startsWith("claude-haiku-")) return "haiku";
+  return id.split("-").slice(-2).join("-");
+}
+
 /**
  * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
  * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
@@ -735,11 +751,12 @@ function AgentRow({ a }: { a: FleetAgent }) {
         className={"fleet-agent-row" + (hasChildren ? " has-children" : "")}
         onClick={() => hasChildren && setOpenRow((o) => !o)}
         role={hasChildren ? "button" : undefined}
-        title={`${a.name} · pid ${a.pid} · ${a.status} · ${a.cwd}`}
+        title={`${a.name}${a.model ? ` · ${a.model}` : ""} · pid ${a.pid} · ${a.status} · ${a.cwd}`}
       >
         <span className={"fleet-agent-chev" + (hasChildren ? "" : " none")}>{hasChildren ? (openRow ? "▾" : "▸") : "·"}</span>
         <span className={"fleet-agent-glyph " + glyphClass}>{glyph}</span>
         <span className="fleet-agent-name">{a.name}</span>
+        {a.model && <span className="fleet-agent-model">{shortModel(a.model)}</span>}
         <span className="fleet-agent-status">{a.alive ? a.status : "gone"}</span>
         <span className="fleet-dim fleet-agent-cwd">{shortCwd(a.cwd)}</span>
         <span className="fleet-sp" />
