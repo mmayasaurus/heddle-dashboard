@@ -1,14 +1,15 @@
 //! Regression coverage for image-paste setting visibility and availability: every window sees the setting, but
 //! only the desktop shell running on the same machine as the agent can select native image paste.
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { env, setMode, setDynamicStatusFilter } = vi.hoisted(() => ({
+const { env, invoke, setMode, setDynamicStatusFilter } = vi.hoisted(() => ({
   env: {
     isTauri: false,
     isElectron: false,
   },
+  invoke: vi.fn(),
   setMode: vi.fn(),
   setDynamicStatusFilter: vi.fn(),
 }));
@@ -80,13 +81,14 @@ vi.mock("../../ipc/commands", () => ({
   giteaSetConfig: vi.fn(),
 }));
 vi.mock("../../ipc/settingsSync", () => ({ pushSetting: vi.fn() }));
-vi.mock("../../ipc/transport", () => ({ isTauri: false, isRemoteWindow: false }));
+vi.mock("../../ipc/transport", () => ({ invoke, isTauri: false, isRemoteWindow: false }));
 vi.mock("../../notify", () => ({
   getEffectiveNotifyPermission: vi.fn().mockResolvedValue("unsupported"),
   requestEffectiveNotifyPermission: vi.fn().mockResolvedValue("unsupported"),
 }));
 
 import { ImagePasteModeField } from "./settingsBehaviorFields";
+import { HeddleCoreRootField } from "./settingsPanels";
 import { SettingsModal } from "./SettingsModal";
 import { loadSettings, SETTINGS_KEY } from "../../store/settings";
 
@@ -96,6 +98,7 @@ afterEach(() => {
   env.isElectron = false;
   setMode.mockReset();
   setDynamicStatusFilter.mockReset();
+  invoke.mockReset();
 });
 
 describe("image paste settings", () => {
@@ -142,5 +145,27 @@ describe("image paste settings", () => {
     expect(field).toBeTruthy();
     fireEvent.click(within(field as HTMLElement).getByRole("button", { name: "common.off" }));
     expect(setDynamicStatusFilter).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("heddle core path setting", () => {
+  it("loads the saved path and removes it from vlx-settings when cleared", async () => {
+    invoke.mockResolvedValueOnce({
+      "vlx-settings": JSON.stringify({ comms: { heddleCoreRoot: "~/Developer/heddle" } }),
+    });
+    invoke.mockResolvedValueOnce(undefined);
+
+    render(<HeddleCoreRootField />);
+    const input = await screen.findByRole("textbox");
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("~/Developer/heddle"));
+
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith("set_app_settings", {
+        entries: { "vlx-settings": "{}" },
+      }),
+    );
   });
 });

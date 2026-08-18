@@ -317,6 +317,68 @@ fn resolve_binary_heddle_core_root_requires_the_script_to_exist() {
     );
 }
 
+// ──────────────────────────── binary resolution: tier 4 auto-detect (pure) ───────────────────
+//
+// Search behavior uses `first_core_root` directly with temp dirs, so it cannot observe ambient
+// PATH, `$HOME`, or HEDDLE_COMMS_* values. Tier ordering is covered through
+// `resolve_binary_with_roots` using an explicit setting that wins before any environment tier.
+
+#[test]
+fn regression_pr_52_node_tier_requires_node_on_the_injected_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let script_dir = dir.path().join("dist").join("comms");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    let script = script_dir.join("channel-server.js");
+    std::fs::write(&script, "// fixture").unwrap();
+
+    assert_eq!(
+        node_tier_with_path(script.to_string_lossy().into_owned(), std::ffi::OsStr::new("")),
+        None,
+        "a core script without node on the injected PATH is not a resolvable tier"
+    );
+}
+
+#[test]
+fn first_core_root_auto_detects_the_first_conventional_root_with_a_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing_root = dir.path().join("missing");
+    let root = dir.path().join("first");
+    let later_root = dir.path().join("later");
+    let script_dir = root.join("dist").join("comms");
+    let later_script_dir = later_root.join("dist").join("comms");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    std::fs::create_dir_all(&later_script_dir).unwrap();
+    std::fs::write(script_dir.join("channel-server.js"), "// fixture").unwrap();
+    std::fs::write(later_script_dir.join("channel-server.js"), "// fixture").unwrap();
+
+    let resolved = first_core_root(&[missing_root, root, later_root]);
+    assert_eq!(
+        resolved,
+        Some(script_dir.join("channel-server.js").to_string_lossy().to_string())
+    );
+}
+
+#[test]
+fn resolve_binary_explicit_override_wins_even_when_a_conventional_root_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let script_dir = dir.path().join("dist").join("comms");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    std::fs::write(script_dir.join("channel-server.js"), "// fixture").unwrap();
+
+    // The conventional root genuinely resolves (proven above) — an explicit operatorBinPath must
+    // still win, since tier 4 is strictly last.
+    let settings = serde_json::json!({"comms": {"operatorBinPath": "/opt/whatever/heddle-comms"}});
+    let resolved = resolve_binary_with_roots(Some(&settings), &[dir.path().to_path_buf()]);
+    assert_eq!(resolved, Some(("/opt/whatever/heddle-comms".to_string(), Vec::new())));
+}
+
+#[test]
+fn first_core_root_returns_none_when_no_conventional_root_has_the_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let resolved = first_core_root(&[dir.path().join("first"), dir.path().join("second")]);
+    assert_eq!(resolved, None);
+}
+
 // ──────────────────────────────── status: no-binary / no-token (pure) ────────────────────────
 
 #[tokio::test]
@@ -325,9 +387,9 @@ async fn status_is_no_binary_when_nothing_is_configured() {
     reset_state().await;
     let dir = tempfile::tempdir().unwrap();
     let ctx = test_ctx(dir.path());
-    // No settings row at all, and this assumes (per the verified fixture facts) that a machine
-    // running this suite does not happen to have a binary literally named `heddle-comms` on PATH.
-    let status = static_status(&ctx).await;
+    // Inject no conventional roots so a real checkout under this machine's home directory cannot
+    // turn this intentionally no-binary fixture into a no-token case.
+    let status = static_status_with_roots(&ctx, &[]).await;
     assert_eq!(status.reason, Some("no-binary"));
     assert!(!status.available);
 }
