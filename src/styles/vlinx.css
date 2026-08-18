@@ -417,11 +417,10 @@ svg { display: block; }
 .fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-account-state { display: flex; flex-wrap: nowrap; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; align-items: baseline; font-size: 9.5px; }
 .fleet-provcap-fable-weekly { color: var(--text-dim); font-size: 10px; }
-.fleet-provcap-fable-label, .fleet-provcap-fable-est, .fleet-provcap-captured, .fleet-provcap-window > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fleet-provcap-fable-label, .fleet-provcap-fable-est, .fleet-provcap-captured { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .fleet-provcap-spacer { visibility: hidden; }
 .fleet-provcap-logged-out { color: var(--yellow); }
 .fleet-provcap-keeper-estimate { color: var(--text-faint); }
-.fleet-provcap-window { display: flex; align-items: baseline; gap: 6px; color: var(--text-dim); font-size: 10px; }
 @keyframes fleet-spin { to { transform: rotate(360deg); } }
 .splitnode { display: flex; min-width: 0; min-height: 0; flex: 1; }
 .splitnode.sn-row { flex-direction: row; }

@@ -304,7 +304,8 @@ export function FleetDrawer() {
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
               const promoted = filterExtraWindows(p.windows ?? []);
               if (shouldPromoteWindows(p.fiveHour, p.sevenDay, promoted)) {
-                const tightest = promoted.reduce((a, b) =>
+                const usable = promoted.filter(isUsableWindow);
+                const tightest = usable.reduce((a, b) =>
                   (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
                 win = tightest;
                 label = shortWindowLabel(tightest);
@@ -530,13 +531,29 @@ function isNullWindow(win: LimitWindow | null | undefined): boolean {
   return (win?.usedPercentage ?? null) == null;
 }
 
-/** True when neither rolling window carries real data but named windows do — the case where those windows should stand in for 5h/7d as the primary bars. */
+/** A window carries real data worth rendering — a bare id/label with nothing else (e.g. a named
+ * window emitted for a failed/disabled account fetch) does not. */
+function isUsableWindow(win: LimitWindow | null | undefined): boolean {
+  return win != null && (win.usedPercentage != null || win.resetsAt != null);
+}
+
+/** True when neither rolling window carries real data but at least one named window does — the
+ * case where those windows should stand in for 5h/7d as the primary bars. */
 function shouldPromoteWindows(
   fiveHour: LimitWindow | null | undefined,
   sevenDay: LimitWindow | null | undefined,
   windows: LimitWindow[],
 ): boolean {
-  return isNullWindow(fiveHour) && isNullWindow(sevenDay) && windows.length > 0;
+  return isNullWindow(fiveHour) && isNullWindow(sevenDay) && windows.some(isUsableWindow);
+}
+
+/** An account is worth defaulting to when it has real 5h/7d data or at least one usable named window. */
+function accountHasUsableData(account: ProviderAccount): boolean {
+  return (
+    !isNullWindow(account.fiveHour) ||
+    !isNullWindow(account.sevenDay) ||
+    filterExtraWindows(account.windows).some(isUsableWindow)
+  );
 }
 
 /**
@@ -557,6 +574,21 @@ function shortWindowLabel(win: LimitWindow): string {
   }
 }
 
+/**
+ * Short labels for a block of windows rendered together, de-duplicated by window order: a
+ * collision (e.g. two windows both truncating to "INCL") appends a numeric suffix to the later
+ * one(s) — INCL, INCL2, INCL3 — so the block never shows the same label twice.
+ */
+function shortWindowLabels(windows: LimitWindow[]): string[] {
+  const seen = new Map<string, number>();
+  return windows.map((win) => {
+    const base = shortWindowLabel(win);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return count === 1 ? base : `${base}${count}`;
+  });
+}
+
 function fmtWindowAmount(n: number | null | undefined, unit: string | null | undefined): string {
   if (n == null) return "";
   if (unit === "usd") return `$${n.toFixed(2)}`;
@@ -573,8 +605,12 @@ function windowTooltip(win: LimitWindow): string {
 }
 
 /**
- * Renders 5h/7d as usual, unless both are empty and real named windows exist — then those windows
- * become the primary CapLines instead (short label + SegBar, full detail in the title tooltip).
+ * Renders 5h/7d as usual, unless both are empty and at least one named window carries usable data
+ * (usedPercentage or resetsAt) — then the usable named windows become the primary CapLines instead
+ * (short deduped label + SegBar, full detail in the title tooltip). Windows lacking both fields
+ * (e.g. from a failed/disabled account fetch) never render as a CapLine.
+ * When 5h/7d are NOT promoted, any usable named windows still render as additional CapLines beneath
+ * them — accounts with real 5h/7d and per-model windows (e.g. codex) keep both, not just the pair.
  * Shared by the provider-level caps and each account's caps inside the account cycler.
  */
 function CapLineGroup({
@@ -592,27 +628,29 @@ function CapLineGroup({
   note?: string | null;
   className?: string;
 }) {
+  const usableWindows = windows.filter(isUsableWindow);
+  const labels = shortWindowLabels(usableWindows);
+  const renderNamedWindows = (withNote: boolean) =>
+    usableWindows.map((win, index) => (
+      <CapLine
+        key={`${win.id ?? win.label ?? "window"}-${index}`}
+        label={labels[index]}
+        win={win}
+        color={color}
+        note={withNote && index === 0 ? note : undefined}
+        title={windowTooltip(win)}
+        className={className}
+      />
+    ));
+
   if (shouldPromoteWindows(fiveHour, sevenDay, windows)) {
-    return (
-      <>
-        {windows.map((win, index) => (
-          <CapLine
-            key={`${win.id ?? win.label ?? "window"}-${index}`}
-            label={shortWindowLabel(win)}
-            win={win}
-            color={color}
-            note={index === 0 ? note : undefined}
-            title={windowTooltip(win)}
-            className={className}
-          />
-        ))}
-      </>
-    );
+    return <>{renderNamedWindows(true)}</>;
   }
   return (
     <>
       <CapLine label="5h" win={fiveHour ?? { usedPercentage: null, resetsAt: null }} color={color} note={note} className={className} />
       <CapLine label="7d" win={sevenDay ?? { usedPercentage: null, resetsAt: null }} color={color} className={className} />
+      {renderNamedWindows(false)}
     </>
   );
 }
@@ -635,14 +673,15 @@ function AccountCycler({
   p: ProviderLimit;
   accounts: ProviderAccount[];
   selectedAccountId: string | undefined;
-  onSelectAccount: (id: string) => void;
+  onSelectAccount: (_id: string) => void;
   color: string;
 }) {
   const t = useT();
   const isClaude = p.provider === "claude";
+  // Index is clamped to [0, length-1] and the cycler only renders with accounts.length >= 1
+  // (showAccountCycler gate), so this access cannot miss — no guard (codacy, PR #47).
   const selectedAccountIndex = Math.max(0, accounts.findIndex((account) => account.id === selectedAccountId));
   const selectedAccount = accounts[selectedAccountIndex];
-  if (!selectedAccount) return null;
   const acctWindows = filterExtraWindows(selectedAccount.windows);
 
   return (
@@ -730,18 +769,20 @@ function ProviderCapBlock({
   // Claude keeps its single-account detail view at accounts.length === 1; every other provider only
   // switches from the top-level 5h/7d to the account cycler once there's more than one account to cycle.
   const showAccountCycler = accounts.length >= 2 || (p.provider === "claude" && accounts.length >= 1);
+  // Prefer the active account; when absent, default to the first account with real data rather than
+  // blindly accounts[0] — a failed/disabled fetch shouldn't be the face the drawer opens to.
   const defaultAccountId = p.activeAccount && accounts.some((account) => account.id === p.activeAccount)
     ? p.activeAccount
-    : accounts[0]?.id;
+    : (accounts.find(accountHasUsableData) ?? accounts[0])?.id;
   const [selectedAccountId, setSelectedAccountId] = useState(defaultAccountId);
   useEffect(() => {
     setSelectedAccountId(defaultAccountId);
   }, [defaultAccountId]);
   const effectiveSelectedId = selectedAccountId ?? defaultAccountId;
   const extraWindows = filterExtraWindows(p.windows);
-  // When promoted, extraWindows renders as primary CapLines above — it must not also appear below as text.
-  const topWindowsPromoted = shouldPromoteWindows(p.fiveHour, p.sevenDay, extraWindows);
-  const hasExtras = showAccountCycler || extraWindows.length > 0;
+  // CapLineGroup below already renders extraWindows (promoted or as supplementary CapLines) whenever
+  // the cycler is off, so `.fleet-provcap-extras` only ever has something to show for the cycler itself.
+  const hasExtras = showAccountCycler;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -794,18 +835,11 @@ function ProviderCapBlock({
       {!showAccountCycler && (
         <CapLineGroup fiveHour={p.fiveHour} sevenDay={p.sevenDay} windows={extraWindows} color={color} note={p.note} />
       )}
-      {hasExtras && <div className="fleet-provcap-extras">
-        {showAccountCycler && (
+      {hasExtras && (
+        <div className="fleet-provcap-extras">
           <AccountCycler p={p} accounts={accounts} selectedAccountId={effectiveSelectedId} onSelectAccount={setSelectedAccountId} color={color} />
-        )}
-      {!showAccountCycler && !topWindowsPromoted && extraWindows.map((win, index) => (
-        <div className="fleet-provcap-window" key={`${win.id ?? win.label ?? "window"}-${index}`}>
-          <span title={win.label ?? win.id ?? "window"}>{win.label ?? win.id ?? "window"}</span>
-          <span title={win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}>{win.usedPercentage == null ? "" : `${Math.round(win.usedPercentage)}%`}</span>
-          {win.resetsAt && <LiveClock render={(now) => <span className="fleet-dim" title={`↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}`}>↻ {fmtReset(win.resetsAt, now, t("fleet.resetting"))}</span>} />}
         </div>
-      ))}
-      </div>}
+      )}
     </div>
   );
 }
