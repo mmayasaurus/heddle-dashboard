@@ -210,3 +210,200 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText(/captured \d+ min ago/)).toBeTruthy();
   });
 });
+
+// HED-145: Cursor has no 5h/7d concept at all (both always empty LimitWindow::default() from the
+// Rust source) but reports three REAL meters via `windows[]`. The drawer used to render two
+// fabricated empty "5h"/"7d" caplines for every non-claude provider and show `windows[]` as
+// plain text with no bar. Codex, by contrast, has real 5h/7d and must keep rendering them.
+const cursorWindows = [
+  {
+    id: "included-total",
+    label: "included total (Auto / Cursor models)",
+    usedPercentage: 17.3376,
+    resetsAt: now + 864_000,
+    usedAmount: null,
+    limitAmount: null,
+    unit: null,
+  },
+  {
+    id: "included-api",
+    label: "included API (named 3rd-party models)",
+    usedPercentage: 86.688,
+    resetsAt: now + 864_000,
+    usedAmount: 400,
+    limitAmount: 400,
+    unit: "usd",
+  },
+  {
+    id: "usage-based",
+    label: "on-demand (usage-based)",
+    usedPercentage: 0,
+    resetsAt: now + 864_000,
+    usedAmount: 0,
+    limitAmount: 100,
+    unit: "usd",
+  },
+];
+const cursorAccount = {
+  id: "cursor-ide",
+  label: "v…@example.com",
+  plan: "ultra",
+  capturedAt: now,
+  stale: false,
+  loggedIn: null,
+  fiveHour: { usedPercentage: null, resetsAt: null },
+  sevenDay: { usedPercentage: null, resetsAt: null },
+  windows: cursorWindows,
+  limitReached: false,
+  note: null,
+};
+const cursor = {
+  provider: "cursor",
+  model: "cursor.com · 1 acct",
+  capturedAt: now,
+  fiveHour: { usedPercentage: null, resetsAt: null },
+  sevenDay: { usedPercentage: null, resetsAt: null },
+  stale: false,
+  windows: cursorWindows,
+  accounts: [cursorAccount],
+};
+const codex = {
+  provider: "codex",
+  model: "chatgpt · 1 acct",
+  capturedAt: now,
+  fiveHour: { usedPercentage: 42, resetsAt: now + 3_600 },
+  sevenDay: { usedPercentage: 12, resetsAt: now + 86_400 },
+  stale: false,
+};
+
+describe("FleetDrawer provider cap windows (HED-145)", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("renders cursor's real meters as bars with no fabricated 5h/7d caplines, while codex keeps its real 5h/7d", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor, codex]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+
+    const cursorBlock = screen.getByTitle("cursor").closest(".fleet-provcap") as HTMLElement;
+    expect(cursorBlock).toBeTruthy();
+    const cursorLabels = Array.from(cursorBlock.querySelectorAll(".fleet-namedwin-lbl")).map((el) => el.textContent);
+    expect(cursorLabels).toEqual([
+      "included total (Auto / Cursor models)",
+      "included API (named 3rd-party models)",
+      "on-demand (usage-based)",
+    ]);
+    // No fabricated "5h"/"7d" caplines — exactly the three real windows, each a real SegBar.
+    expect(cursorBlock.querySelectorAll(".fleet-capline").length).toBe(3);
+    expect(cursorBlock.querySelectorAll(".fleet-capline .fleet-seg").length).toBe(3);
+    const cursorPcts = Array.from(cursorBlock.querySelectorAll(".fleet-capline-pct")).map((el) => el.textContent);
+    expect(cursorPcts).toEqual(["17%", "87%", "0%"]);
+    const cursorResets = Array.from(cursorBlock.querySelectorAll(".fleet-capline-reset")).map((el) => el.textContent);
+    expect(cursorResets[0]).not.toContain("$");
+    expect(cursorResets[1]).toContain("$400.00 / $400.00");
+    expect(cursorResets[2]).toContain("$0.00 / $100.00");
+
+    // Codex has real 5h/7d — must still render exactly as before (no collateral regression).
+    const codexBlock = screen.getByTitle("codex").closest(".fleet-provcap") as HTMLElement;
+    expect(codexBlock).toBeTruthy();
+    const codexLabels = Array.from(codexBlock.querySelectorAll(".fleet-capline-lbl")).map((el) => el.textContent);
+    expect(codexLabels).toEqual(["5h", "7d"]);
+    const codexPcts = Array.from(codexBlock.querySelectorAll(".fleet-capline-pct")).map((el) => el.textContent);
+    expect(codexPcts).toEqual(["42%", "12%"]);
+  });
+
+  it("hides the empty per-account caps bar in the accounts list for a multi-account provider with no 5h/7d windows", async () => {
+    const cursorTwoAccounts = {
+      ...cursor,
+      model: "cursor.com · 2 acct",
+      accounts: [cursorAccount, { ...cursorAccount, id: "cursor-agent-keychain", label: "m…@example.org" }],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursorTwoAccounts]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "2 accounts" }));
+    expect(screen.getByText("v…@example.com")).toBeTruthy();
+    expect(screen.getByText("m…@example.org")).toBeTruthy();
+    expect(document.querySelectorAll(".fleet-provcap-account-caps").length).toBe(0);
+  });
+
+  it("regression PR#51 — falls back to Cursor's first real named window in the collapsed summary chip", async () => {
+    localStorage.setItem("heddle-fleet-open", "0");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor, codex]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelectorAll(".fleet-chip-sum")).toHaveLength(2));
+    const cursorChip = screen.getByText("cursor").closest(".fleet-chip-sum");
+    const codexChip = screen.getByText("codex").closest(".fleet-chip-sum");
+    expect(cursorChip?.textContent).toContain("17%");
+    expect(cursorChip?.getAttribute("title")).toContain("included total (Auto / Cursor models) 17%");
+    expect(codexChip?.textContent).toContain("42%");
+    expect(codexChip?.getAttribute("title")).toContain("5h 42%");
+  });
+
+  it("regression PR#51 — gives Cursor named windows distinct dedicated labels", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    const labels = Array.from(document.querySelectorAll(".fleet-namedwin-lbl"));
+    expect(labels.map((label) => label.textContent)).toEqual([
+      "included total (Auto / Cursor models)",
+      "included API (named 3rd-party models)",
+      "on-demand (usage-based)",
+    ]);
+  });
+
+  it("regression PR#51 — marks a null-pct named window indeterminate while retaining its amount and reset", async () => {
+    const cursorWithOnDemandOff = {
+      ...cursor,
+      windows: cursorWindows.map((window) => window.id === "usage-based" ? { ...window, usedPercentage: null } : window),
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursorWithOnDemandOff]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    const onDemandLine = screen.getByText("on-demand (usage-based)").closest(".fleet-capline");
+    expect(onDemandLine?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    expect(onDemandLine?.querySelector(".fleet-seg")).toBeNull();
+    expect(onDemandLine?.querySelector(".fleet-capline-reset")?.textContent).toContain("$0.00 / $100.00");
+    expect(onDemandLine?.querySelector(".fleet-capline-reset")?.textContent).toContain("↻");
+  });
+
+  it("regression PR#51 — does not show compact account caps for a reset-only window", async () => {
+    const cursorResetOnlyAccounts = {
+      ...cursor,
+      model: "cursor.com · 2 acct",
+      accounts: [
+        { ...cursorAccount, fiveHour: { usedPercentage: null, resetsAt: now + 3_600 } },
+        { ...cursorAccount, id: "cursor-agent-keychain", label: "m…@example.org", sevenDay: { usedPercentage: null, resetsAt: now + 86_400 } },
+      ],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursorResetOnlyAccounts]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByTitle("cursor")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "2 accounts" }));
+    expect(document.querySelectorAll(".fleet-provcap-account-caps")).toHaveLength(0);
+  });
+});
