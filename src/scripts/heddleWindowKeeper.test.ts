@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -42,6 +42,7 @@ function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = 
     HEDDLE_ROTATE_NOTIFY: "0",
     HEDDLE_SECURITY_BIN: path.join(home, "fake-security-unavailable"),
     HEDDLE_OAUTH_USAGE_URL: `file://${path.join(home, "missing-oauth-usage.json")}`,
+    HEDDLE_OAUTH_ALLOW_INSECURE_URL: "1",
   };
   delete env.CLAUDE_CONFIG_DIR;
   Object.assign(env, overrides);
@@ -167,6 +168,13 @@ function writeFakeSecurity(home: string, token: string, { marker }: { marker?: s
   return security;
 }
 
+function writeUnavailableSecurity(home: string, marker: string) {
+  const security = path.join(home, "fake-security-unavailable-with-marker");
+  fs.writeFileSync(security, `#!/bin/sh\nprintf x >> ${JSON.stringify(marker)}\nexit 1\n`);
+  fs.chmodSync(security, 0o755);
+  return security;
+}
+
 function writeOauthFixture(home: string, percent = 77) {
   const fixture = path.join(home, "oauth-usage.json");
   fs.writeFileSync(fixture, JSON.stringify({ limits: [
@@ -198,6 +206,39 @@ function expectTokenPrivate(home: string, result: ReturnType<typeof runKeeper>, 
     contentsIfPresent(path.join(home, ".heddle", "transcript-offsets.json")),
   ];
   for (const artifact of artifacts) expect(artifact).not.toContain(token);
+}
+
+function runRedirectRefusalFixture(home: string, token: string) {
+  const configDir = path.join(home, ".claude-acct1");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, ".credentials.json"), JSON.stringify({ accessToken: token }));
+  return spawnSync("python3", ["-c", `
+import os, runpy, sys, urllib.request
+from email.message import Message
+from io import BytesIO
+from urllib.response import addinfourl
+home, source, config_dir = sys.argv[1:]
+os.environ["HOME"] = home
+os.environ["HEDDLE_OAUTH_USAGE_URL"] = "https://redirect-origin.test/usage"
+os.environ["HEDDLE_OAUTH_CACHE_SECS"] = "0"
+keeper = runpy.run_path(source, run_name="oauth_redirect_fixture")
+first_hop_headers, redirected_requests = [], []
+class RedirectingHTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        if request.full_url == "https://redirect-origin.test/usage":
+            first_hop_headers.append(request.get_header("Authorization"))
+            headers = Message()
+            headers["Location"] = "https://different-origin.test/usage"
+            return addinfourl(BytesIO(b"{}"), headers, request.full_url, 302)
+        redirected_requests.append(request.full_url)
+        return addinfourl(BytesIO(b"{}"), Message(), request.full_url, 200)
+real_build_opener = keeper["urllib"].request.build_opener
+keeper["urllib"].request.build_opener = lambda *handlers: real_build_opener(RedirectingHTTPS(), *handlers)
+keeper["refresh_oauth_usage"]([{"id": "acct1", "configDir": config_dir}], keeper["time"].time())
+assert first_hop_headers and not redirected_requests
+assert open(os.path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json")).read() == '{"fablePct": 33}'
+print("redirect refused")
+`, home, keeperPath, configDir], { encoding: "utf8" });
 }
 
 function tempFiles(root: string): string[] {
@@ -1008,6 +1049,85 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expectTokenPrivate(home, result, token, "acct2");
   });
 
+  it("reads OAuth usage from flat top-level credentials", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-FLAT";
+    const configDir = path.join(home, ".claude-acct2");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, ".credentials.json"), JSON.stringify({ accessToken: token }));
+    writeRegistry(home, [{ id: "acct2", configDir, loggedIn: true }]);
+    const result = runKeeper([], home, { HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}` });
+
+    expect(result.status).toBe(0);
+    expect(oauthUsage(home, "acct2").fablePct).toBe(77);
+    expectTokenPrivate(home, result, token, "acct2");
+  });
+
+  it("refuses a cross-origin OAuth redirect without issuing a second request", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-REDIRECT";
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    fs.writeFileSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"), '{"fablePct": 33}');
+    const result = runRedirectRefusalFixture(home, token);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("redirect refused");
+    expect(oauthUsage(home, "acct1")).toEqual({ fablePct: 33 });
+    expect(fs.existsSync(path.join(home, ".heddle", "oauth-usage-state.json"))).toBe(false);
+    expectTokenPrivate(home, result, token);
+  });
+
+  it("writes only finite in-range OAuth percentages as strict JSON", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-FINITE";
+    const fixture = path.join(home, "oauth-nonfinite.json");
+    fs.writeFileSync(fixture, '{"limits":[{"kind":"five_hour","percent":NaN},{"kind":"seven_day","percent":150},{"kind":"weekly_scoped","percent":-1,"scope":{"model":{"display_name":"Fable"}}}]}');
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token),
+      HEDDLE_OAUTH_USAGE_URL: `file://${fixture}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(oauthUsage(home, "acct1")).toMatchObject({ fablePct: null, fiveHourPct: null, sevenDayPct: null, byModel: {} });
+    expect(() => JSON.parse(contentsIfPresent(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json")))).not.toThrow();
+    expectTokenPrivate(home, result, token);
+  });
+
+  it("fails closed when HEDDLE_SECURITY_BIN is set but not executable", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: path.join(home, "nonexistent-security"),
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+    });
+
+    expect(result.status).toBe(0);
+    // An invalid override must NOT silently fall back to the real keychain: no token is read, so no
+    // OAuth artifact is written, and the reason is logged (shutil.which returns None before any
+    // subprocess runs, so the live keychain is never touched).
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"))).toBe(false);
+    expect(result.stdout).toContain("HEDDLE_SECURITY_BIN not executable");
+  });
+
+  it("continues OAuth refresh after a malformed account entry", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-MALFORMED";
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, loggedIn: true },
+      { id: { malformed: true }, configDir: null, loggedIn: true },
+    ]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token),
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(oauthUsage(home, "acct1").fablePct).toBe(77);
+    expect(result.stdout).toContain("[oauth] account refresh failed");
+    expectTokenPrivate(home, result, token);
+  });
+
   it("keeps pings running and keeps tokens private when OAuth usage fetching fails", () => {
     const home = mkHome();
     const token = "FAKE-TOKEN-HED150-FAILED-FETCH";
@@ -1023,9 +1143,9 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expectTokenPrivate(home, result, token);
   });
 
-  it("backs off OAuth usage retries after a failed attempt", () => {
+  it("retries transient OAuth fetch failures on the next run without a credential backoff", () => {
     const home = mkHome();
-    const token = "FAKE-TOKEN-HED150-BACKOFF";
+    const token = "FAKE-TOKEN-HED150-TRANSIENT";
     const marker = path.join(home, "security-attempts");
     writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
     const env = {
@@ -1037,9 +1157,108 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
 
     const result = runKeeper([], home, env);
     expect(result.status).toBe(0);
-    expect(contentsIfPresent(marker)).toBe("x");
+    expect(contentsIfPresent(marker)).toBe("xx");
+    expect(fs.existsSync(path.join(home, ".heddle", "oauth-usage-state.json"))).toBe(false);
     expectTokenPrivate(home, result, token);
   });
+
+  it("backs off missing OAuth credentials for an hour", () => {
+    const home = mkHome();
+    const marker = path.join(home, "credential-attempts");
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const env = {
+      HEDDLE_SECURITY_BIN: writeUnavailableSecurity(home, marker),
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+    };
+    expect(runKeeper([], home, env).status).toBe(0);
+    expect(contentsIfPresent(marker)).toBe("x");
+    expect(runKeeper([], home, env).status).toBe(0);
+    expect(contentsIfPresent(marker)).toBe("x");
+    expect(JSON.parse(contentsIfPresent(path.join(home, ".heddle", "oauth-usage-state.json"))).attempts.acct1).toHaveProperty("lastAttemptAt");
+  });
+
+  it("refuses a file OAuth URL when the explicit insecure test flag is absent", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-SCHEME";
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token),
+      HEDDLE_OAUTH_ALLOW_INSECURE_URL: "0",
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"))).toBe(false);
+    expectTokenPrivate(home, result, token);
+  });
+
+  it("uses string backoff keys for numeric OAuth account ids", () => {
+    const home = mkHome();
+    const marker = path.join(home, "numeric-id-security");
+    writeRegistry(home, [{ id: 42, configDir: null, loggedIn: true }]);
+    fs.writeFileSync(path.join(home, ".heddle", "oauth-usage-state.json"), JSON.stringify({ attempts: { "42": { lastAttemptAt: Math.floor(Date.now() / 1000) } } }));
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeUnavailableSecurity(home, marker),
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("accepts digit-bearing OAuth display names while rejecting unsafe names", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-DISPLAY";
+    const fixture = path.join(home, "oauth-display-names.json");
+    fs.writeFileSync(fixture, JSON.stringify({ limits: [
+      { kind: "weekly_scoped", percent: 44, scope: { model: { display_name: "Opus 4" } } },
+      { kind: "weekly_scoped", percent: 55, scope: { model: { display_name: `Fable-${token}` } } },
+      { kind: "weekly_scoped", percent: 66, scope: { model: { display_name: "Bad\u0001Name" } } },
+      { kind: "weekly_scoped", percent: 77, scope: { model: { display_name: "x".repeat(65) } } },
+    ] }));
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token),
+      HEDDLE_OAUTH_USAGE_URL: `file://${fixture}`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(oauthUsage(home, "acct1").byModel).toEqual({ "Opus 4": 44 });
+    expectTokenPrivate(home, result, token);
+  });
+
+  it("skips OAuth refresh when another run holds its flock", async () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-LOCK";
+    const marker = path.join(home, "oauth-lock-security");
+    const ready = path.join(home, "oauth-lock-ready");
+    const lock = path.join(home, ".heddle", "oauth-usage.lock");
+    const holder = spawn("python3", ["-c", `
+import fcntl, sys, time
+lock, ready = sys.argv[1:]
+with open(lock, "a") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(ready, "w").close()
+    time.sleep(10)
+`, lock, ready], { stdio: "ignore" });
+    for (let attempt = 0; attempt < 100 && !fs.existsSync(ready); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    try {
+      writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+      const result = runKeeper([], home, {
+        HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token, { marker }),
+        HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(result.stdout).toContain("[oauth] refresh skipped; another run holds the lock");
+      expectTokenPrivate(home, result, token);
+    } finally {
+      holder.kill();
+    }
+  }, 20000);
 
   it("continues pings when transcript accounting fails", () => {
     const home = mkHome();
