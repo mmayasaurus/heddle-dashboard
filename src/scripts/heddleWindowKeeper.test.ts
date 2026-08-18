@@ -1110,6 +1110,50 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).toContain("HEDDLE_SECURITY_BIN not executable");
   });
 
+  it("captures the exact Fable percent from weekly_scoped when limits is an empty list", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-EMPTYLIMITS";
+    const fixture = path.join(home, "oauth-emptylimits.json");
+    fs.writeFileSync(fixture, JSON.stringify({ limits: [], weekly_scoped: { percent: 61, scope: { model: { display_name: "Fable" } } } }));
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token),
+      HEDDLE_OAUTH_USAGE_URL: `file://${fixture}`,
+    });
+
+    expect(result.status).toBe(0);
+    // An empty `limits: []` alongside a populated weekly_scoped must not drop the exact Fable value.
+    expect(oauthUsage(home, "acct1")).toMatchObject({ fablePct: 61 });
+    expectTokenPrivate(home, result, token);
+  });
+
+  it("backs off OAuth refresh after a persistent usage-write failure", () => {
+    const home = mkHome();
+    const token = "FAKE-TOKEN-HED150-WRITEFAIL";
+    const marker = path.join(home, "security-calls");
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    // Make the artifact path un-writable: a directory where the .json file must be written.
+    fs.mkdirSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"), { recursive: true });
+    const env = {
+      HEDDLE_SECURITY_BIN: writeFakeSecurity(home, token, { marker }),
+      HEDDLE_OAUTH_USAGE_URL: `file://${writeOauthFixture(home)}`,
+      HEDDLE_OAUTH_CACHE_SECS: "0",
+    };
+
+    const first = runKeeper([], home, env);
+    expect(first.status).toBe(0);
+    // The write failed, so a backoff attempt is recorded (a persistent local failure is non-transient).
+    const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "oauth-usage-state.json"), "utf8"));
+    expect(state.attempts?.acct1?.lastAttemptAt).toBeGreaterThan(0);
+    const callsAfterFirst = fs.readFileSync(marker, "utf8").length;
+
+    // An immediate second run is inside the backoff window, so it does NOT re-fetch (no keychain call).
+    const second = runKeeper([], home, env);
+    expect(second.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8").length).toBe(callsAfterFirst);
+    expectTokenPrivate(home, first, token);
+  });
+
   it("continues OAuth refresh after a malformed account entry", () => {
     const home = mkHome();
     const token = "FAKE-TOKEN-HED150-MALFORMED";

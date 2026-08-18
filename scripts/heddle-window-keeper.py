@@ -198,7 +198,9 @@ def fetch_oauth_usage(token):
         log(f"[oauth] usage fetch failed ({type(e).__name__})")
         return None
     limits = payload.get("limits") if isinstance(payload, dict) else None
-    if not isinstance(limits, list) and isinstance(payload, dict) and isinstance(payload.get("weekly_scoped"), dict):
+    if not limits and isinstance(payload, dict) and isinstance(payload.get("weekly_scoped"), dict):
+        # `not limits` covers both a missing key and an empty `limits: []` returned alongside a
+        # populated weekly_scoped — either way the exact Fable value must not be silently dropped.
         limits = [{"kind": "weekly_scoped", **payload["weekly_scoped"]}]
     if not isinstance(limits, list):
         log("[oauth] usage fetch failed (invalid response)")
@@ -314,7 +316,12 @@ def refresh_oauth_usage(accts, now):
                 try:
                     write_json_atomic(path, payload)
                 except Exception as e:
+                    # A persistent local write failure (disk full, USAGE unwritable) is not transient;
+                    # back it off like a credential failure so we don't re-fetch (keychain + network)
+                    # every run only to fail the write again. A one-off glitch costs one backoff window.
                     log(f"[oauth] acct {acct_id}: usage write failed ({type(e).__name__})")
+                    attempts[acct_id] = {"lastAttemptAt": int(now)}
+                    state_changed = True
                     continue
                 if acct_id in attempts:
                     attempts.pop(acct_id)
