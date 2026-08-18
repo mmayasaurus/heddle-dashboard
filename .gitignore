@@ -84,3 +84,4 @@ certs/
 
 # ─── memtrace's per-repo local store ───
 .memdb/
+.memtrace/
