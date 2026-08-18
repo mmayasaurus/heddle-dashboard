@@ -417,6 +417,13 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             // Size the main window to 77% x 81% of the current monitor with caps, then center it.
             // This fits laptops and uses larger displays; fall back to configured dimensions if unavailable.
             if let Some(win) = app.get_webview_window("main") {
+                // Debug builds are otherwise indistinguishable from the installed app, which led the
+                // operator to evaluate a dev build by mistake. This marks the TITLE BAR + window list
+                // / Mission Control — what a focused window shows, i.e. the surface the operator was
+                // actually looking at. The Dock label and ⌘-Tab switcher read the bundle name, not the
+                // window title, so a fully distinct dev identity needs a debug productName (HED-159).
+                #[cfg(debug_assertions)]
+                let _ = win.set_title("heddle [DEV]");
                 if let Ok(Some(monitor)) = win.current_monitor() {
                     let scale = monitor.scale_factor();
                     let sz = monitor.size(); // Physical pixels.

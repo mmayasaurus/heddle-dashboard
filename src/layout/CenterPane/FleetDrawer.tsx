@@ -490,6 +490,16 @@ function FableWeeklyLine({ account, color }: { account: ProviderAccount; color: 
   );
 }
 
+/** `$used / $limit` for a usd-denominated window; falls back to whichever side is present. `null`
+ * for non-usd windows or when neither amount is known. (Grafted from #51 — W's design.) */
+function fmtWindowUsedLimit(win: LimitWindow): string | null {
+  if (win.unit !== "usd") return null;
+  const used = win.usedAmount != null ? `$${win.usedAmount.toFixed(2)}` : null;
+  const limit = win.limitAmount != null ? `$${win.limitAmount.toFixed(2)}` : null;
+  if (used && limit) return `${used} / ${limit}`;
+  return used ?? limit;
+}
+
 function CapLine({
   label,
   win,
@@ -497,6 +507,7 @@ function CapLine({
   note,
   className,
   title,
+  namedWindow = false,
 }: {
   label: string;
   win: LimitWindow;
@@ -504,19 +515,31 @@ function CapLine({
   note?: string | null;
   className?: string;
   title?: string;
+  /** Promoted/named pools (#51's insight): a null pct means the pool is OFF (e.g. on-demand), not
+   *  that the window is absent — render an indeterminate dash instead of an empty bar, and keep
+   *  the reset clock + any $used/$limit visible rather than "no active window". */
+  namedWindow?: boolean;
 }) {
   const t = useT();
   const pct = win.usedPercentage;
+  const amount = namedWindow ? fmtWindowUsedLimit(win) : null;
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
       <span className="fleet-capline-lbl" title={title ?? label}>{label}</span>
-      <SegBar pct={pct} color={color} />
+      {namedWindow && pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
       <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
-      <LiveClock render={(now) => (
-        <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
-          {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
-        </span>
-      )} />
+      <LiveClock render={(now) => {
+        if (namedWindow) {
+          const reset = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : "";
+          const text = [reset, amount].filter(Boolean).join(" · ");
+          return <span className="fleet-dim fleet-capline-reset" title={text}>{text}</span>;
+        }
+        return (
+          <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
+            {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
+          </span>
+        );
+      }} />
     </div>
   );
 }
@@ -641,6 +664,7 @@ function CapLineGroup({
         note={withNote && index === 0 ? note : undefined}
         title={windowTooltip(win)}
         className={className}
+        namedWindow
       />
     ));
 

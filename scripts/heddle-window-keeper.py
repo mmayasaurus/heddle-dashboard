@@ -24,14 +24,25 @@ What it does (per run, safe to run every 5 min from launchd):
 
 Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never uses Fable/Opus.
 """
-import json, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
+import json, math, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
+import urllib.error, urllib.parse, urllib.request
+
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl; accounting remains available without this optimization.
+    fcntl = None
 
 HOME = os.path.expanduser("~")
 REG = os.path.join(HOME, ".heddle", "accounts.json")
 USAGE = os.path.join(HOME, ".heddle", "usage")
 STATE = os.path.join(HOME, ".heddle", "window-keeper.state.json")
+OAUTH_STATE = os.path.join(HOME, ".heddle", "oauth-usage-state.json")
 LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
+TRANSCRIPT_OFFSETS = os.path.join(HOME, ".heddle", "transcript-offsets.json")
+TRANSCRIPT_STATE = os.path.join(HOME, ".heddle", "transcript-usage-state.json")
+TRANSCRIPT_LOCK = os.path.join(HOME, ".heddle", "transcript-accounting.lock")
+OAUTH_LOCK = os.path.join(HOME, ".heddle", "oauth-usage.lock")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
 # The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
@@ -78,6 +89,10 @@ def int_env(name, default, lo, hi):
 STAGGER_MIN = int_env("HEDDLE_STAGGER_MIN", 75, 1, 300)
 # A percentage of the 5h window.
 ROTATE_PCT = int_env("HEDDLE_ROTATE_PCT", 85, 1, 100)
+# OAuth is supplemental to the keeper's pings, so cache its exact weekly signal and back off after
+# a denied credential prompt rather than repeatedly disturbing the operator.
+OAUTH_CACHE_SECS = int_env("HEDDLE_OAUTH_CACHE_SECS", 300, 0, 86400)
+OAUTH_BACKOFF_SECS = int_env("HEDDLE_OAUTH_BACKOFF_SECS", 3600, 0, 86400)
 
 
 def load(path, default):
@@ -90,13 +105,239 @@ def load(path, default):
 def write_json_atomic(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(obj, f)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(obj, f, allow_nan=False)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def safe_segment(acct_id):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(acct_id))
+
+
+def oauth_access_token(acct):
+    """Read an account's OAuth token without letting it escape into durable data or logs."""
+    acct_id = acct.get("id", "unknown")
+    try:
+        if acct.get("configDir") is None:
+            # Keychain access is intentionally injected for tests. Never include its stdout/stderr in
+            # diagnostics: either can contain the credential we are protecting.
+            override = os.environ.get("HEDDLE_SECURITY_BIN")
+            if override is None:
+                security = "security"
+            else:
+                # A set-but-invalid override must FAIL CLOSED: silently falling back to the real
+                # `security` would read the live keychain (and pop a GUI prompt) on a mistyped
+                # override mid-test — the exact thing the injected fake exists to prevent.
+                security = shutil.which(override)
+                if security is None:
+                    log(f"[oauth] acct {acct_id}: credentials unavailable (HEDDLE_SECURITY_BIN not executable)")
+                    return None
+            result = subprocess.run([security, "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                                    capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                log(f"[oauth] acct {acct_id}: credentials unavailable (security status={result.returncode})")
+                return None
+            credentials = json.loads(result.stdout)
+        else:
+            config_dir = os.path.expanduser(acct["configDir"])
+            with open(os.path.join(config_dir, ".credentials.json")) as f:
+                credentials = json.load(f)
+        nested_token = (credentials.get("claudeAiOauth") or {}).get("accessToken") if isinstance(credentials, dict) else None
+        token = nested_token if isinstance(nested_token, str) and nested_token else (credentials.get("accessToken") if isinstance(credentials, dict) else None)
+        if not isinstance(token, str) or not token:
+            log(f"[oauth] acct {acct_id}: credentials unavailable (missing access token)")
+            return None
+        return token
+    except Exception as e:  # Credential sources can be absent, denied, or malformed.
+        log(f"[oauth] acct {acct_id}: credentials unavailable ({type(e).__name__})")
+        return None
+
+
+class RefuseOAuthRedirects(urllib.request.HTTPRedirectHandler):
+    """A bearer token must never be forwarded to a redirect destination."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def oauth_url_allowed(url):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme == "https":
+        return True
+    # File fixtures exist solely for this test-only explicit opt-in. Normal operation accepts HTTPS only.
+    if os.environ.get("HEDDLE_OAUTH_ALLOW_INSECURE_URL") != "1":
+        return False
+    return parsed.scheme == "file"
+
+
+def fetch_oauth_usage(token):
+    """Fetch only the OAuth limits object; failures deliberately omit bodies and credentials."""
+    url = os.environ.get("HEDDLE_OAUTH_USAGE_URL", "https://api.anthropic.com/api/oauth/usage")
+    if not oauth_url_allowed(url):
+        log("[oauth] usage fetch failed (disallowed URL scheme)")
+        return None
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+    })
+    try:
+        opener = urllib.request.build_opener(RefuseOAuthRedirects())
+        with opener.open(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Do not read an HTTP error body: undocumented endpoints can reflect authorization data.
+        log(f"[oauth] usage fetch failed (HTTPError status={e.code})")
+        return None
+    except Exception as e:
+        log(f"[oauth] usage fetch failed ({type(e).__name__})")
+        return None
+    limits = payload.get("limits") if isinstance(payload, dict) else None
+    if not limits and isinstance(payload, dict) and isinstance(payload.get("weekly_scoped"), dict):
+        # `not limits` covers both a missing key and an empty `limits: []` returned alongside a
+        # populated weekly_scoped — either way the exact Fable value must not be silently dropped.
+        limits = [{"kind": "weekly_scoped", **payload["weekly_scoped"]}]
+    if not isinstance(limits, list):
+        log("[oauth] usage fetch failed (invalid response)")
+        return None
+    # The endpoint is undocumented, so do not trust it not to reflect Authorization data in a model
+    # label. Remove such a label before any response object leaves this token-bearing function.
+    for limit in limits:
+        if not isinstance(limit, dict):
+            continue
+        scope = limit.get("scope")
+        model = scope.get("model") if isinstance(scope, dict) else None
+        display_name = model.get("display_name") if isinstance(model, dict) else None
+        if isinstance(display_name, str) and token in display_name:
+            model["display_name"] = None
+    return {"limits": limits}
+
+
+def oauth_usage_for(acct):
+    """Return a token-free usage payload and whether failure was credential-related."""
+    token = oauth_access_token(acct)
+    if token is None:
+        return None, True
+    try:
+        usage = fetch_oauth_usage(token)
+    finally:
+        # The token's only use is the Authorization header built in fetch_oauth_usage.
+        del token
+    if usage is None:
+        return None, False
+
+    # This endpoint is undocumented and its entries are not guaranteed. Copy only independently
+    # validated numbers and restrained display names into the artifact, never the raw response.
+    shaped = {"fablePct": None, "fiveHourPct": None, "sevenDayPct": None, "byModel": {},
+              "capturedAt": int(time.time()), "source": "oauth-usage"}
+    for limit in usage["limits"]:
+        if not isinstance(limit, dict):
+            continue
+        percent = limit.get("percent")
+        if (isinstance(percent, bool) or not isinstance(percent, (int, float))
+                or not math.isfinite(percent) or not 0 <= percent <= 100):
+            continue
+        kind = limit.get("kind")
+        if kind == "five_hour":
+            shaped["fiveHourPct"] = percent
+        elif kind == "seven_day":
+            shaped["sevenDayPct"] = percent
+        elif kind == "weekly_scoped":
+            scope = limit.get("scope")
+            model = scope.get("model") if isinstance(scope, dict) else None
+            display_name = model.get("display_name") if isinstance(model, dict) else None
+            if not isinstance(display_name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ._-]{0,63}", display_name):
+                continue
+            shaped["byModel"][display_name] = percent
+            if display_name == "Fable":
+                shaped["fablePct"] = percent
+    return shaped, False
+
+
+def oauth_lock():
+    """Acquire the same non-blocking flock discipline as transcript accounting."""
+    if fcntl is None:
+        return None
+    os.makedirs(os.path.dirname(OAUTH_LOCK), exist_ok=True)
+    lock_file = open(OAUTH_LOCK, "a")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file
+    except BlockingIOError:
+        lock_file.close()
+        log("[oauth] refresh skipped; another run holds the lock")
+        return False
+    except OSError:
+        lock_file.close()
+        log("[oauth] refresh skipped; unable to acquire the lock")
+        return False
+
+
+def refresh_oauth_usage(accts, now):
+    """Refresh uncached exact OAuth usage separately from the primary ping execution."""
+    lock_file = oauth_lock()
+    if lock_file is False:
+        return
+    try:
+        state = load(OAUTH_STATE, {})
+        attempts = state.get("attempts")
+        if not isinstance(attempts, dict):
+            attempts = {}
+            state["attempts"] = attempts
+        state_changed = False
+        for acct in accts:
+            try:
+                raw_acct_id = acct["id"]
+                if isinstance(raw_acct_id, bool) or not isinstance(raw_acct_id, (str, int, float)):
+                    raise TypeError("invalid account id")
+                acct_id = str(raw_acct_id)
+                path = os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.oauth-usage.json")
+                try:
+                    if now - os.path.getmtime(path) < OAUTH_CACHE_SECS:
+                        continue
+                except OSError:
+                    pass
+                previous = attempts.get(acct_id)
+                last_attempt = previous.get("lastAttemptAt") if isinstance(previous, dict) else None
+                if isinstance(last_attempt, (int, float)) and now - last_attempt < OAUTH_BACKOFF_SECS:
+                    log(f"[oauth] acct {acct_id}: skipped (backoff)")
+                    continue
+                payload, credential_failure = oauth_usage_for(acct)
+                if payload is None:
+                    if credential_failure:
+                        attempts[acct_id] = {"lastAttemptAt": int(now)}
+                        state_changed = True
+                    continue
+                try:
+                    write_json_atomic(path, payload)
+                except Exception as e:
+                    # A persistent local write failure (disk full, USAGE unwritable) is not transient;
+                    # back it off like a credential failure so we don't re-fetch (keychain + network)
+                    # every run only to fail the write again. A one-off glitch costs one backoff window.
+                    log(f"[oauth] acct {acct_id}: usage write failed ({type(e).__name__})")
+                    attempts[acct_id] = {"lastAttemptAt": int(now)}
+                    state_changed = True
+                    continue
+                if acct_id in attempts:
+                    attempts.pop(acct_id)
+                    state_changed = True
+            except Exception as e:
+                # Registry data is external input; one bad record must not suppress other accounts.
+                log(f"[oauth] account refresh failed ({type(e).__name__})")
+                continue
+        if state_changed:
+            write_json_atomic(OAUTH_STATE, state)
+    finally:
+        if lock_file is not None:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
 
 
 def window(acct_id):
@@ -314,6 +555,333 @@ def advise_rotation(accts, state, now):
         log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
 
 
+def account_uuid_map():
+    """Map transcript owner UUIDs to Heddle ids without retaining config credentials.
+
+    The projects directories are commonly shared symlinks, so a config directory cannot establish
+    ownership.  Only the deliberately small `accountUuid` field is read from each config file."""
+    owners = {}
+    for acct in (load(REG, {}) or {}).get("claude", []):
+        try:
+            config_dir = os.path.expanduser(acct.get("configDir") or "~/.claude")
+            with open(os.path.join(config_dir, ".claude.json")) as f:
+                config = json.load(f)
+            owner_uuid = config.get("accountUuid") if isinstance(config, dict) else None
+            acct_id = acct.get("id")
+            if isinstance(owner_uuid, str) and isinstance(acct_id, str):
+                owners[owner_uuid] = acct_id
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+            # A missing or unavailable config is not worth delaying the five-minute keeper.
+            continue
+    return owners
+
+
+def transcript_projects(accts):
+    """Return each real projects directory once, even when account configs symlink to it."""
+    projects = []
+    seen = set()
+    for acct in accts:
+        try:
+            config_dir = os.path.expanduser(acct.get("configDir") or "~/.claude")
+            project_dir = os.path.realpath(os.path.join(config_dir, "projects"))
+            if project_dir not in seen and os.path.isdir(project_dir):
+                seen.add(project_dir)
+                projects.append(project_dir)
+        except OSError:
+            continue
+    return projects
+
+
+def transcript_files(accts):
+    """Find transcript files under deduplicated project roots, tolerating unreadable trees."""
+    files, seen = [], set()
+    for project_dir in transcript_projects(accts):
+        try:
+            for root, _, names in os.walk(project_dir, onerror=lambda _error: None):
+                for name in names:
+                    if not name.endswith(".jsonl"):
+                        continue
+                    try:
+                        path = os.path.realpath(os.path.join(root, name))
+                        if path not in seen:
+                            seen.add(path)
+                            files.append(path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return sorted(files)
+
+
+def weekly_windows(accts, now):
+    """Return only windows proved by seven-day tap captures; keeper anchors are five-hour only."""
+    windows = {}
+    for acct in accts:
+        try:
+            tap = load(os.path.join(USAGE, f"claude-{safe_segment(acct['id'])}.json"), None)
+            seven_day = (tap or {}).get("rate_limits", {}).get("seven_day", {})
+            resets_at = seven_day.get("resets_at")
+            if resets_at is not None:
+                resets_at = int(resets_at)
+                if resets_at > now:
+                    windows[acct["id"]] = (resets_at - 7 * 86400, resets_at)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return windows
+
+
+def transcript_offsets():
+    """Load the explicit byte-offset contract, surfacing a broken state path to main's guard."""
+    if not os.path.exists(TRANSCRIPT_OFFSETS):
+        return {}
+    with open(TRANSCRIPT_OFFSETS) as f:
+        offsets = json.load(f)
+    if not isinstance(offsets, dict):
+        raise ValueError("transcript offsets must be an object")
+    return offsets
+
+
+def transcript_state():
+    """Load the combined transaction, merging the previous two-file state once if present."""
+    if not os.path.exists(TRANSCRIPT_STATE):
+        state = {"windows": {}, "files": {}}
+    else:
+        with open(TRANSCRIPT_STATE) as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("transcript usage state must be an object")
+    state.setdefault("windows", {})
+    state.setdefault("files", {})
+    if not isinstance(state["windows"], dict) or not isinstance(state["files"], dict):
+        raise ValueError("transcript usage state has invalid sections")
+    legacy_offsets = transcript_offsets()
+    files = {}
+    for path, value in state["files"].items():
+        if isinstance(value, dict) and isinstance(value.get("accounts"), dict):
+            files[path] = {"offset": transcript_number(value.get("offset")),
+                           "size": transcript_number(value.get("size")),
+                           "accounts": value["accounts"], "oversized": bool(value.get("oversized"))}
+        elif isinstance(value, dict):
+            # The old accumulator stored only per-account counts; merge its matching legacy offset.
+            saved = legacy_offsets.get(path, {})
+            files[path] = {"offset": transcript_number(saved.get("offset")) if isinstance(saved, dict) else 0,
+                           "size": transcript_number(saved.get("size")) if isinstance(saved, dict) else 0,
+                           "accounts": value, "oversized": False}
+    for path, saved in legacy_offsets.items():
+        if path not in files and isinstance(saved, dict):
+            files[path] = {"offset": transcript_number(saved.get("offset")),
+                           "size": transcript_number(saved.get("size")), "accounts": {}, "oversized": False}
+    state["files"] = files
+    return state
+
+
+def transcript_timestamp(value):
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def transcript_number(value):
+    """Usage counts are integers; malformed or negative provider values carry no usable signal."""
+    try:
+        result = int(value)
+        return result if result >= 0 else 0
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def is_fable(model):
+    # `affable` is not Fable; model names use separators, so match a complete token only.
+    return "fable" in re.split(r"[^a-z0-9]+", model.lower())
+
+
+# A real model id is a short single-line token (`claude-opus-4-8`, `gpt-5.6-codex`). The `model` field
+# is the ONE transcript value we persist as a key, so it is the one place body content could ride out
+# of the reader if a record were malformed or adversarial. Require it to look like a model id — capped
+# length, no whitespace or control characters — before it can enter turns.json / the state file.
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+
+
+def is_plausible_model(model):
+    return isinstance(model, str) and bool(_MODEL_RE.match(model))
+
+
+def add_transcript_turn(file_counts, account, model, usage):
+    account_counts = file_counts.setdefault(account, {})
+    counts = account_counts.setdefault(model, {"input": 0, "output": 0, "cacheCreation": 0,
+                                                "cacheRead": 0, "turns": 0})
+    counts["input"] += transcript_number(usage.get("input_tokens"))
+    counts["output"] += transcript_number(usage.get("output_tokens"))
+    counts["cacheCreation"] += transcript_number(usage.get("cache_creation_input_tokens"))
+    counts["cacheRead"] += transcript_number(usage.get("cache_read_input_tokens"))
+    counts["turns"] += 1
+
+
+def account_summary(acct_id, resets_at, files, now):
+    by_model = {}
+    sessions_seen = 0
+    for file_state in files.values():
+        accounts = file_state.get("accounts", file_state) if isinstance(file_state, dict) else {}
+        models = accounts.get(acct_id, {}) if isinstance(accounts, dict) else {}
+        if not models:
+            continue
+        sessions_seen += 1
+        for model, values in models.items():
+            target = by_model.setdefault(model, {"input": 0, "output": 0, "cacheCreation": 0,
+                                                  "cacheRead": 0, "turns": 0})
+            for key in target:
+                target[key] += transcript_number(values.get(key))
+    # Cache reads commonly dominate a turn (for example, a large reused context). Including them
+    # would swamp real request/output work and make long sessions all look alike.
+    weighted_total = sum(values["input"] + values["output"] + values["cacheCreation"]
+                         for values in by_model.values())
+    fable_weighted = sum(values["input"] + values["output"] + values["cacheCreation"]
+                         for model, values in by_model.items() if is_fable(model))
+    cache_read_total = sum(values["cacheRead"] for values in by_model.values())
+    return {"windowResetsAt": resets_at, "updatedAt": int(now), "sessionsSeen": sessions_seen,
+            "byModel": by_model, "weightedTotal": weighted_total, "fableWeighted": fable_weighted,
+            "fableShare": fable_weighted / weighted_total if weighted_total else None,
+            "cacheReadTotal": cache_read_total}
+
+
+def remove_account_contributions(files, acct_id):
+    """Forget one expired window without rewinding bytes or disturbing other accounts' totals."""
+    for file_state in files.values():
+        if isinstance(file_state, dict):
+            accounts = file_state.get("accounts", file_state)
+            if isinstance(accounts, dict):
+                accounts.pop(acct_id, None)
+
+
+def transcript_lock():
+    """Acquire a non-blocking lock so overlapping launchd runs never race the transaction."""
+    if fcntl is None:
+        return None
+    os.makedirs(os.path.dirname(TRANSCRIPT_LOCK), exist_ok=True)
+    lock_file = open(TRANSCRIPT_LOCK, "a")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_file
+    except BlockingIOError:
+        lock_file.close()
+        log("[transcripts] accounting skipped; another run holds the lock")
+        return False
+    except OSError:
+        lock_file.close()
+        log("[transcripts] accounting skipped; unable to acquire the lock")
+        return False
+
+
+def account_transcripts(accts, now):
+    """Incrementally account assistant usage without exposing transcript content anywhere.
+
+    A single counts-only transaction keeps every file's offset beside its accumulated totals, so a
+    crash cannot retain one without the other. Transcript content is never emitted or retained.
+    """
+    lock_file = transcript_lock()
+    if lock_file is False:
+        return
+    try:
+        state = transcript_state()
+        owners = account_uuid_map()
+        windows = weekly_windows(accts, now)
+        current_resets = {acct_id: end for acct_id, (_, end) in windows.items()}
+
+        # Each account owns its own weekly aggregate. A rollover drops only that account's old
+        # contribution; byte offsets remain valid and other accounts continue draining normally.
+        # A previously absent window (previous is None) is also treated as a boundary change so
+        # that turns already scanned (while skipping this account) are cleared and the current
+        # window can be fully backfilled on the next read.
+        for acct_id, resets_at in current_resets.items():
+            previous = state["windows"].get(acct_id)
+            if previous != resets_at:
+                remove_account_contributions(state["files"], acct_id)
+        state["windows"] = current_resets
+
+        budget = int_env("HEDDLE_TRANSCRIPT_BYTES", 32 * 1024 * 1024, 1, 1024 * 1024 * 1024)
+        read_bytes = 0
+        for path in transcript_files(accts):
+            if read_bytes >= budget:
+                break
+            try:
+                size = os.path.getsize(path)
+                file_state = state["files"].setdefault(path, {"offset": 0, "size": 0, "accounts": {}, "oversized": False})
+                offset = transcript_number(file_state.get("offset")) if isinstance(file_state, dict) else 0
+                if size < offset:
+                    offset = 0
+                    file_state["accounts"] = {}
+                    file_state["oversized"] = False
+                with open(path, "rb") as f:
+                    if offset and not file_state.get("oversized"):
+                        # We only persist newline boundaries. Any other byte proves replacement even
+                        # when a truncated file happened to regrow past the stale old offset.
+                        f.seek(offset - 1)
+                        if f.read(1) != b"\n":
+                            offset = 0
+                            file_state["accounts"] = {}
+                            file_state["oversized"] = False
+                    if size == offset:
+                        file_state.update({"offset": offset, "size": size, "oversized": False})
+                        continue
+                    f.seek(offset)
+                    data = f.read(min(size - offset, budget - read_bytes))
+            except OSError:
+                continue
+            read_bytes += len(data)
+            newline = data.rfind(b"\n")
+            if newline < 0:
+                if offset + len(data) == size:
+                    # Reached EOF without a newline: a genuinely incomplete trailing write; wait for it.
+                    file_state.update({"offset": offset, "size": size})
+                elif len(data) >= budget:
+                    # We consumed a WHOLE run budget from this position and still found no newline, so a
+                    # single record is at least a full budget long — genuinely oversized. Skip it so one
+                    # pathological line cannot starve every later file; never log transcript data.
+                    file_state.update({"offset": offset + len(data), "size": size, "oversized": True})
+                    log("[transcripts] skipped oversized JSONL record")
+                else:
+                    # No newline only because EARLIER files already spent part of this run's budget, so
+                    # a normal record's newline sits just past our partial allowance. Leave the offset
+                    # untouched — a later run with a fresh full budget reads past it. Advancing here would
+                    # split a normal record and silently drop its turn (gitar-bot's budget-boundary case).
+                    file_state.update({"offset": offset, "size": size})
+                continue
+            complete = data[:newline + 1]
+            file_counts = file_state.setdefault("accounts", {})
+            for raw_line in complete.splitlines():
+                try:
+                    turn = json.loads(raw_line.decode("utf-8"))
+                    if turn.get("type") != "assistant" or turn.get("isSidechain"):
+                        continue
+                    acct_id = owners.get(turn.get("ownerAccountUuid"))
+                    if acct_id not in windows:
+                        continue
+                    timestamp = transcript_timestamp(turn.get("timestamp"))
+                    start, _end = windows[acct_id]
+                    if timestamp is None or timestamp < start or timestamp > now:
+                        continue
+                    message = turn.get("message") or {}
+                    model, usage = message.get("model"), message.get("usage")
+                    if is_plausible_model(model) and isinstance(usage, dict):
+                        add_transcript_turn(file_counts, acct_id, model, usage)
+                except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
+                    # Invalid complete records are skipped silently: logging a transcript line could leak it.
+                    continue
+            file_state.update({"offset": offset + len(complete), "size": size, "oversized": False})
+
+        write_json_atomic(TRANSCRIPT_STATE, state)
+        for acct_id, (_, resets_at) in windows.items():
+            write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.turns.json"),
+                              account_summary(acct_id, resets_at, state["files"], now))
+    finally:
+        if lock_file is not None:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
+
+
 def main():
     dry = "--dry-run" in sys.argv
     verify = None
@@ -357,15 +925,10 @@ def main():
             log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
         return
 
-    if not dry:
-        # The advisor is SECONDARY. Keeping windows alive is what this job exists for, and that work
-        # happens below — so anything the advisor can throw (a hand-edited state file, an unexpected
-        # window shape) must degrade to a log line rather than abort the run before a single ping.
-        try:
-            advise_rotation(accts, state, now)
-        except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
-            log(f"[rotate] advisor failed, continuing with pings: {type(e).__name__}: {str(e)[-160:]}")
-
+    # PRIMARY JOB FIRST (adversarial review, cursor/grok): keep windows alive before ANY secondary
+    # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
+    # filesystem read — is not an exception, so the try/except guarding the advisor and transcript
+    # accounting below cannot catch it. Only doing the pings first guarantees a hang there costs no ping.
     for a in accts:
         w = window(a["id"])
         live = bool(w and w["resets_at"] and w["resets_at"] > now)
@@ -391,6 +954,23 @@ def main():
             state.update({"last_ping_ts": now, "last_ping_acct": a["id"]})
             write_json_atomic(STATE, state)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN
+
+    if not dry:
+        # SECONDARY work, now that the pings are done. Each is wrapped so a raised error degrades to a
+        # log line; a hung open() cannot reach here to block a ping because the pings already ran.
+        try:
+            advise_rotation(accts, state, now)
+        except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
+            log(f"[rotate] advisor failed: {type(e).__name__}: {str(e)[-160:]}")
+        try:
+            account_transcripts(accts, now)
+        except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
+            log(f"[transcripts] accounting failed: {type(e).__name__}: {str(e)[-160:]}")
+        try:
+            refresh_oauth_usage(accts, now)
+        except Exception as e:  # noqa: BLE001 - OAuth is supplemental and must never cost a ping
+            # OAuth errors may carry a response or request representation, so retain only their type.
+            log(f"[oauth] refresh failed ({type(e).__name__})")
 
     return 0
 

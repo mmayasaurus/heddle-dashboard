@@ -222,6 +222,28 @@ const cursor = {
 };
 
 describe("FleetDrawer real-windows promotion (cursor)", () => {
+  it("renders a null-pct named window as an indeterminate dash with its amount and reset kept (grafted #51 regression)", async () => {
+    const offWindows = [
+      { id: "included-total", label: "included total (Auto / Cursor models)", usedPercentage: 17.3, resetsAt: now + 864_000, usedAmount: null, limitAmount: null, unit: null },
+      { id: "usage-based", label: "on-demand (usage-based)", usedPercentage: null, resetsAt: now + 864_000, usedAmount: 0, limitAmount: 100, unit: "usd" },
+    ];
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        provider: "cursor", model: "cursor.com", capturedAt: now, stale: false,
+        fiveHour: { usedPercentage: null, resetsAt: null }, sevenDay: { usedPercentage: null, resetsAt: null },
+        windows: offWindows,
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+    await waitFor(() => expect(screen.getByText("O-D")).toBeTruthy());
+    const line = screen.getByText("O-D").closest(".fleet-capline");
+    expect(line?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    expect(line?.querySelector(".fleet-seg")).toBeNull();
+    expect(line?.querySelector(".fleet-capline-reset")?.textContent).toContain("$0.00 / $100.00");
+    expect(line?.querySelector(".fleet-capline-reset")?.textContent).toContain("↻");
+  });
+
   beforeEach(() => {
     localStorage.setItem("heddle-fleet-open", "1");
     invoke.mockImplementation((command: string) => {
