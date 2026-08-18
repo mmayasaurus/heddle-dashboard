@@ -680,6 +680,38 @@ fn a_sidecar_gone_stale_demotes_exact_even_when_the_tap_capture_is_unchanged() {
     assert_eq!(r.fable_weekly_estimate_pct, None);
 }
 
+/// The demotion's no-tap branch (`expire_exact` when `last_used_pct == None`). An IDLE account
+/// (acct3/acct4 never render a statusline, so no tap file ever exists) still gets a fresh exact
+/// reading from the sidecar alone via the synthesized capture — the HED-165 idle-account pattern —
+/// and when that sidecar goes stale, expire_exact must demote it too (seed from `fable_pct` alone,
+/// `unknown_pct` stays 0), or an idle account would pin the last exact % forever.
+#[test]
+fn a_sidecar_only_history_with_no_tap_surfaces_then_demotes_when_stale() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-sidecar-only");
+    let reg = registry();
+    // ONLY the OAuth sidecar for acct1 — no tap file, no keeper anchor ever rendered.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(77.0));
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    assert!(persisted_attrib(&s, "acct1").exact);
+
+    // The sidecar ages out with no tap ever seen: expire_exact's None branch demotes — the last
+    // exact share alone is the seed, unknown stays 0, exact cleared, the estimate hidden.
+    let later = now + OAUTH_EXACT_STALE_AFTER_SECS + 60;
+    let l = build(&s.0, &reg, None, later).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], false);
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+    let p = persisted_attrib(&s, "acct1");
+    assert_eq!(
+        (p.exact, p.fable_pct, p.unknown_pct, p.samples),
+        (false, 77.0, 0.0, 0)
+    );
+}
+
 /// The keeper names the sidecar with `safe_segment()`, so an id carrying out-of-class characters is
 /// written as `claude-team_a.oauth-usage.json` — reading the raw id finds nothing at all.
 #[test]
