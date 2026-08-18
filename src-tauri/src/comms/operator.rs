@@ -22,7 +22,10 @@
 //! (2) `heddle-comms` on `PATH`, augmented the same way `heddle_stats` augments it for `ccusage`/
 //! `agy` so a Dock/Finder-launched GUI (no shell PATH) can still find an npm/bun/brew install;
 //! (3) `vlx-settings.comms.heddleCoreRoot` → `node <root>/dist/comms/channel-server.js`, only when
-//! that file actually exists; (4) none of the above → `"no-binary"`.
+//! that file actually exists; (4) auto-detect: the same `node <root>/dist/comms/channel-server.js`
+//! check against a fixed, home-relative list of CONVENTIONAL heddle-core checkout locations (see
+//! `conventional_core_roots`), so a Dock-launched app with no settings/env configured yet can still
+//! find a conventional dev checkout; (5) none of the above → `"no-binary"`.
 //!
 //! "KILL ON APP EXIT" is wired: [`shutdown`] is called from `tauri::RunEvent::Exit` in `lib.rs`
 //! (outside this dispatch's file scope — command registration only), so a quitting app cancels the
@@ -207,16 +210,33 @@ fn on_path(name: &str, path: &std::ffi::OsStr) -> bool {
     std::env::split_paths(path).any(|dir| dir.join(name).is_file())
 }
 
-/// The three-tier binary search from the module doc, plus the implicit fourth (`None`). Tier 1 is
-/// trusted as typed, exactly like `agy_bin`'s own explicit-override tier; tiers 2 and 3 are only
-/// returned once this function has itself confirmed the candidate file exists, so a merely-set
-/// `heddleCoreRoot` can never masquerade as "available" when it points nowhere useful.
-/// Where the broker binary can come from, most explicit first. Env tiers exist because the two
-/// settings tiers currently have no UI: heddle is not published to npm, not a dependency of this
-/// app, and (measured on this machine) `heddle-comms` is on no PATH the app searches — so without
-/// them the composer would be permanently "no-binary" with no in-app way to fix it. A hardcoded
-/// developer path is deliberately NOT one of the tiers: this ships.
+/// The four-tier binary search from the module doc, plus the implicit fifth (`None`) — tier logic
+/// lives in `resolve_binary_with_roots`; this just supplies the real conventional-root list
+/// (`conventional_core_roots`, this machine's actual `$HOME`) for tier 4's auto-detect.
 fn resolve_binary(settings: Option<&Value>) -> Option<(String, Vec<String>)> {
+    resolve_binary_with_roots(settings, &conventional_core_roots())
+}
+
+/// Where the broker binary can come from, most explicit first. Tier 1 is trusted as typed, exactly
+/// like `agy_bin`'s own explicit-override tier; tiers 2 through 4 are only returned once this
+/// function has itself confirmed the candidate file exists, so a merely-set `heddleCoreRoot` — or an
+/// auto-detected conventional root — can never masquerade as "available" when nothing is actually
+/// there. Env tiers exist because the two settings tiers currently have no UI: heddle is not
+/// published to npm, not a dependency of this app, and (measured on this machine) `heddle-comms` is
+/// on no PATH the app searches — so without them the composer would be permanently "no-binary" with
+/// no in-app way to fix it. Tier 4 (auto-detect) is checked strictly LAST, after every explicit
+/// tier, so a real override or install always wins; it is never a single unconditionally-trusted
+/// hardcoded path, only a fixed, home-relative list that still must pass the same existence check
+/// as tier 3.
+///
+/// `conventional_roots` is passed in (rather than this function calling `conventional_core_roots`
+/// itself) purely so `operator_tests.rs` can prove tier ordering against an injected temp root —
+/// this machine's real `$HOME` may legitimately already have a real heddle checkout in it (that's
+/// the whole point of tier 4), which would make a test that relied on the real home directory flaky.
+fn resolve_binary_with_roots(
+    settings: Option<&Value>,
+    conventional_roots: &[PathBuf],
+) -> Option<(String, Vec<String>)> {
     if let Some(p) = setting_str(settings, "operatorBinPath") {
         return Some((p, Vec::new()));
     }
@@ -237,6 +257,9 @@ fn resolve_binary(settings: Option<&Value>) -> Option<(String, Vec<String>)> {
             return Some(("node".to_string(), vec![script]));
         }
     }
+    if let Some(script) = first_core_root(conventional_roots) {
+        return Some(("node".to_string(), vec![script]));
+    }
     None
 }
 
@@ -249,6 +272,27 @@ fn core_script(root: &str) -> Option<String> {
     script
         .is_file()
         .then(|| script.to_string_lossy().into_owned())
+}
+
+/// Conventional locations a heddle core checkout lives in, checked ONLY as a last resort after every
+/// explicit tier (settings/env/PATH) so a real install or an operator override always wins. Each is
+/// accepted only if its channel-server.js actually exists, so this can never resolve to a wrong path;
+/// it just spares the common dev setup (heddle beside heddle-dashboard) from needing any config.
+fn conventional_core_roots() -> Vec<PathBuf> {
+    let home = crate::host::home_dir();
+    let mut roots = Vec::new();
+    if let Some(h) = home {
+        roots.push(h.join("Developer").join("heddle"));
+        roots.push(h.join("heddle"));
+    }
+    roots
+}
+
+/// The first of `roots` whose `core_script` exists, tried in order. Split out as a pure function —
+/// no `$HOME` lookup of its own — so `operator_tests.rs` can exercise the auto-detect tier's search
+/// logic against temp dirs instead of the real home directory (see `resolve_binary_with_roots`).
+fn first_core_root(roots: &[PathBuf]) -> Option<String> {
+    roots.iter().find_map(|root| core_script(&root.to_string_lossy()))
 }
 
 /// An env var that is set AND non-empty — an empty override must not shadow a later tier.
@@ -460,11 +504,19 @@ async fn whoami_revoked(ctx: &AppCtx) -> Result<bool, &'static str> {
 /// already recover once the backoff window passes (see `ensure_client`). Nothing here retries a
 /// spawn just to answer a status poll.
 async fn static_status(ctx: &AppCtx) -> OperatorStatus {
+    static_status_with_roots(ctx, &conventional_core_roots()).await
+}
+
+/// `static_status`, with tier 4's conventional-root list passed in — same seam and rationale as
+/// `resolve_binary_with_roots`, so `operator_tests.rs` can prove the "no-binary" status deterministically
+/// instead of depending on whether this machine happens to have a real conventional heddle checkout.
+async fn static_status_with_roots(ctx: &AppCtx, conventional_roots: &[PathBuf]) -> OperatorStatus {
     let ctx = ctx.clone();
+    let roots = conventional_roots.to_vec();
     let (has_binary, has_token) = blocking(move || {
         let settings = settings_json(&ctx);
         (
-            resolve_binary(settings.as_ref()).is_some(),
+            resolve_binary_with_roots(settings.as_ref(), &roots).is_some(),
             read_operator_token(settings.as_ref()).is_some(),
         )
     })
