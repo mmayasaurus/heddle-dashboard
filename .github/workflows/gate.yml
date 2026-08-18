@@ -4,7 +4,8 @@
 # pass (`pnpm test`), `cargo check` succeeds for both feature sets (default
 # `gui` and `--no-default-features` minimal vela-server), and `cargo test`
 # passes on Linux (353 tests; 8 ignored by design — they need real ~/.claude /
-# SSH state).
+# SSH state). That real work lives in the `web` / `rust` / `rust-test` jobs; the
+# `gate` job aggregates their results.
 #
 # What it does NOT prove: eslint is non-required and red until HED-14 (`lint`
 # job — deliberately outside the aggregator). No packaged `tauri build`,
@@ -12,13 +13,44 @@
 #
 # Runs on GitHub-hosted runners — the repo is public, so minutes are free. The
 # job NAME `gate` is the required-status-check context string for the "Protect
-# main" ruleset (HED-13); renaming it silently un-requires the gate.
+# main" ruleset (HED-13); renaming it silently un-requires the gate. The marker
+# name `gate-verdict` is NOT required and must stay out of the ruleset (see below).
+#
+# ── EDIT-SAFE via a verdict echo (HED-142) ──────────────────────────────────
+# GitHub resolves a required status check from the NEWEST check-run of the
+# required name on the head commit. A PR `edited` event (reviewer bots edit the
+# body constantly) re-fires this workflow with NO new commit. Three earlier
+# fixes each died on a GitHub semantic we had inferred rather than observed; all
+# six behaviours are now reproduced in a sandbox and written up in docs/CI.md:
+#   • skip the edit run  → it publishes a `skipped` check-run, and `skipped`
+#     SUPERSEDES a real red → a body-edit MASKS a failure. Unsafe.
+#   • dynamic job name   → edits publish a DIFFERENT context, so the latest suite
+#     no longer carries `gate` → the required check reads unsatisfied → the PR is
+#     BLOCKED with no code cause. Unsafe (this is what attempt 3 did).
+#   • re-run real work on edits in a shared slot → a bot edit CANCELS the
+#     in-flight run; here doubly costly (the rust jobs restart cold) and the
+#     always() aggregator sees cancelled needs and publishes `gate: FAILURE`
+#     with no code cause (measured live on dashboard#41, run 32068437179).
+# The echo satisfies all three at once. Every run — commit or edit — publishes
+# the STATIC context `gate`. A commit / retarget / push run does the real work
+# (web/rust/rust-test), and the `gate` aggregator records its verdict as a
+# non-required `gate-verdict` marker check-run on the head SHA. An edit run does
+# NOT recompute (the expensive rust jobs are skipped): it reads that SHA's latest
+# `gate-verdict` and republishes exactly that conclusion. So an edit can only
+# ever REPEAT the real verdict for the exact commit under review — green stays
+# green, red stays red (no mask) — and `gate` is present on every suite (no
+# block). Edit runs are ~5s and get their own concurrency slot with
+# cancel-in-progress: false, so they never cancel anything (no cancellation-red).
+# On a reopened PR the head SHA is unchanged and `reopened` is a commit-path
+# event, so it simply re-runs the real jobs and refreshes the marker — verdicts
+# are SHA-bound, so reopen carries no stale-verdict hazard.
 #
 # Hardening (zizmor-clean): every action hash-pinned (Dependabot bumps the pins,
 # see .github/dependabot.yml), workflow-level `permissions: {}`, checkout without
-# persisted credentials (nothing here pushes, so build steps never see a token),
-# runner pinned to an Ubuntu series (not `-latest`) so the environment only
-# moves when we move it.
+# persisted credentials (build steps never see a token), runner pinned to an
+# Ubuntu series (not `-latest`) so the environment only moves when we move it.
+# The `gate` job alone holds `checks: write` — the least privilege the marker
+# read/write needs; every leaf job stays `contents: read`.
 name: Gate
 
 on:
@@ -35,39 +67,40 @@ on:
     #     ONLY `pull_request: edited` — no synchronize, no new commit. Without
     #     `edited` the retargeted PR silently kept the verdict it earned against
     #     the OLD base, which is a different merge result.
-    # `edited` also fires on title/body edits (reviewer bots edit bodies often),
-    # so those re-run the gate too. Deliberate — see the note on the `gate` job.
+    # `edited` also fires on title/body edits (reviewer bots edit bodies often).
+    # Those take the echo path below — see the `gate` job — so they neither skip
+    # nor recompute; they republish the head SHA's real verdict.
     types: [opened, synchronize, reopened, edited]
   # Break-glass manual run, e.g. to re-check main after a runner-side outage.
   workflow_dispatch: {}
 
 permissions: {}
 
-# A superseded run is dead weight: cancel it and let the newest commit's run
-# report. The gate is a per-commit required check, so a cancelled stale run
-# never reds the PR verdict — only the latest commit's run counts.
-#
-# TWO SLOTS, measured on heddle#27/#31: commit-driven events (opened,
-# synchronize, reopened) and `edited` events get separate groups. With one
-# shared group a reviewer bot editing the PR body CANCELLED the in-flight real
-# run — and here that is expensive twice over: the rust jobs restart from
-# scratch, and the always() aggregator saw cancelled needs and published
-# `gate: FAILURE`. Separated, an edit still re-runs the gate (nothing is
-# skipped, so no `skipped` check-run can ever supersede a red one) but cannot
-# kill the run that matters.
+# TWO SLOTS (HED-91/142). Commit-driven events (push, opened, synchronize,
+# reopened) and a base RETARGET (an `edited` whose changes.base.ref.from is
+# populated) share the `run` slot with cancel-in-progress: TRUE — a newer commit
+# supersedes the stale run (and here spares a cold rust rebuild). Title/body
+# `edited` events take the `edit` slot with cancel-in-progress: FALSE — echoes
+# are ~5s and must never be cancelled, or a cancelled edit run could red the
+# required context (the failure measured on dashboard#41). Because the slots
+# differ, a body-edit's echo NEVER cancels an in-flight commit run (and vice
+# versa); the echo just polls for that run's marker. The discriminator is
+# github.event.changes.base.ref.from: populated on a retarget, empty/absent on a
+# title or body edit (GitHub coerces the absent value so `!= ''` is false for a
+# plain edit — verified in the sandbox).
 concurrency:
-  # Slot keyed on the SAME condition as the gate job name (HED-142): commit-driven
-  # events AND base retargets share the 'run' slot; only title/body edits get 'edit'.
-  # A cosmetic edit therefore cannot cancel an in-flight commit or RETARGET run —
-  # those publish the required `gate` and must not be killed by a body-edit
-  # (copilot/codex/qodo, HED-142 r1). Edits can still cancel each other in 'edit',
-  # which only ever touches the non-required `gate (edit …)` context.
-  group: gate-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'run' || 'edit' }}
-  cancel-in-progress: true
+  group: gate-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'run' || 'edit' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
 
+# Every leaf job runs on commit-driven events only; a title/body edit SKIPS them
+# and the `gate` job echoes the head SHA's last real verdict instead of
+# re-running (crucially, this avoids a cold rust rebuild on every bot body-edit).
+# Each leaf repeats the same commit-event `if:` guard literally — no YAML anchor,
+# to keep the file to constructs validated in the HED-142 sandbox.
 jobs:
   web:
     name: web (pnpm build + vitest)
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -99,6 +132,7 @@ jobs:
 
   rust:
     name: rust (cargo check)
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
@@ -124,6 +158,7 @@ jobs:
 
   rust-test:
     name: rust (cargo test)
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     permissions:
@@ -147,6 +182,7 @@ jobs:
 
   lint:
     name: lint (eslint) — NON-required, red until HED-14
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -178,45 +214,87 @@ jobs:
         run: pnpm lint
 
   gate:
-    # The REQUIRED context `gate` (HED-13 ruleset) is published ONLY by runs that
-    # represent real merge-readiness: commit-driven events and base RETARGETS
-    # (`edited` with changes.base.ref.from set). A title/body EDIT publishes a
-    # DIFFERENT, non-required name — the point of HED-142.
+    # Required-check context string — do NOT rename (see header; HED-13).
     #
-    # Two prior attempts this reconciles:
-    #  - HED-91 first SKIPPED edits — unsafe: a skipped job publishes a check-run
-    #    under its name, GitHub takes the NEWEST run of a name and treats
-    #    `skipped` as passing, so a bot body-edit could mask a RED `gate` (and a
-    #    skipped leaf could hide `lint`'s honest red).
-    #  - HED-91 then made edits RUN under the static name `gate`. That fixed
-    #    masking but created HED-142: bot body-edits at PR-open fire several
-    #    `edited` runs that cancel each other in the edit concurrency slot; a
-    #    cancelled run's `always()` aggregator (below) publishes `gate: FAILURE`,
-    #    and with no later commit to heal it the required context stays RED with
-    #    no code cause (measured live on dashboard#41, run 32068437179).
-    # The fix: edits neither skip NOR publish `gate`. A running edit job evaluates
-    # this to `gate (edit …)`; a cancelled-before-eval one publishes the raw
-    # expression text — either way NOT the string `gate`, so the required
-    # context's newest run at the head SHA stays the commit/retarget verdict.
-    # The commit-driven `gate` already established readiness at that SHA and an
-    # edit does not change the SHA, so nothing is lost by not re-publishing.
-    # Residual (in the REVIEW-SWEEP noise list): the non-required `gate (edit …)`
-    # context may flap cancelled/red during a bot-edit storm — cosmetic, no
-    # merge-readiness signal, never blocks merge. The leaf jobs (web/rust/…) are
-    # likewise non-required and may flap the same way; only `gate` is required.
-    name: ${{ (github.event.action != 'edited' || github.event.changes.base.ref.from != '') && 'gate' || 'gate (edit — non-required; no merge-readiness signal)' }}
+    # Commit / retarget / push: aggregate the real leaf jobs (all of `needs` must
+    # be success), record that verdict as the `gate-verdict` marker for the head
+    # SHA, and exit with it (this job's own conclusion is the required verdict).
+    # Title/body edit: the leaf jobs were skipped, so echo the head SHA's last
+    # `gate-verdict` instead of recomputing — that is what stops an edit from
+    # masking a red or dropping the `gate` context, without a cold rust rebuild.
+    # `if: always()` so a skipped/failed/cancelled dependency still yields a real
+    # `gate` verdict here rather than a `skipped` required check (which GitHub
+    # would treat as passing).
+    name: gate
+    needs: [web, rust, rust-test]
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [web, rust, rust-test]
-    # `if: always()` so a failed/cancelled/skipped dependency yields a red gate
-    # instead of a skipped (which GitHub would treat as pass for a required check).
-    if: always()
-    permissions: {}
+    permissions:
+      checks: write
     steps:
-      - name: Verdict
+      - name: Verdict (commit) or echo (edit)
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # PR head on PR events; the pushed commit on push / workflow_dispatch.
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # True ONLY for a title/body edit (an `edited` event with no base
+          # change). Everything else — push, opened, synchronize, reopened, a
+          # base retarget, workflow_dispatch — is a commit-path run.
+          IS_EDIT: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref.from == '' }}
+          # Aggregate of the required leaf jobs; only read on the commit path.
           RESULTS: ${{ toJSON(needs) }}
-        # jq is preinstalled on ubuntu runners.
         run: |
+          set -eu
+          if [ "$IS_EDIT" = "true" ]; then
+            echo "edit event — echoing the last real verdict (gate-verdict marker) for $SHA"
+            CONC=none
+            # The commit run may still be in flight when a fast edit arrives, so
+            # poll briefly for its marker before deciding. The rust jobs can run
+            # ~7 min cold, longer than this poll — so an edit that races a fresh
+            # commit run will fail CLOSED (red), then heal when the commit run's
+            # own `gate` supersedes it. A stuck quiet PR (marker truly absent)
+            # gets the self-describing remedy below.
+            for i in $(seq 1 15); do
+              CONC=$(gh api "repos/$REPO/commits/$SHA/check-runs" \
+                --jq '[.check_runs[] | select(.name=="gate-verdict")] | sort_by(.started_at) | last | .conclusion // "none"' 2>/dev/null || echo none)
+              [ "$CONC" != "none" ] && break
+              echo "  no gate-verdict marker yet for ${SHA} (attempt $i/15) — waiting 10s for the commit run"
+              sleep 10
+            done
+            case "$CONC" in
+              success)
+                echo "last real verdict for ${SHA} = success — gate green"
+                exit 0 ;;
+              none)
+                echo "::error::no gate-verdict marker for ${SHA} — the commit 'gate' run has not published a verdict for this commit (still running, cancelled, or never ran). Re-run the 'gate' workflow on this PR, or push a commit, to produce one. Failing closed."
+                exit 1 ;;
+              *)
+                echo "::error::last real verdict for ${SHA} was '${CONC}' — echoing it. An edit never masks a real failure; fix the code and push a commit."
+                exit 1 ;;
+            esac
+          fi
+          # Commit / retarget / push: the real verdict is "did every leaf succeed".
           echo "$RESULTS"
-          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null || { echo "::error::a required job did not succeed"; exit 1; }
+          if echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' >/dev/null; then
+            MARK=success
+          else
+            MARK=failure
+          fi
+          # Record the verdict as a non-required marker on the head SHA so future
+          # edit runs can echo it. Best-effort: on a fork-head PR GITHUB_TOKEN is
+          # read-only regardless of `permissions:`, so this POST 403s — the gate
+          # still reflects the real result below; only later EDIT runs on a fork
+          # degrade (they fail closed, never mask). Same-repo branches — the
+          # fleet's flow — always publish.
+          if ! gh api "repos/$REPO/check-runs" -X POST -f name=gate-verdict \
+                -f head_sha="$SHA" -f status=completed -f conclusion="$MARK" >/dev/null 2>&1; then
+            echo "::warning::could not publish the gate-verdict marker for ${SHA} (read-only token / fork PR?) — edit runs on this commit will fail closed until a commit run can publish one."
+          fi
+          echo "real verdict = ${MARK}; recorded as gate-verdict marker for ${SHA}"
+          # Make THIS job's conclusion the required verdict.
+          if [ "$MARK" != success ]; then
+            echo "::error::a required job did not succeed"
+            exit 1
+          fi
