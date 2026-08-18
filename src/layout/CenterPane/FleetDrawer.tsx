@@ -724,13 +724,27 @@ const MODEL_DISPLAY: Record<string, string> = {
   "claude-opus-4-8": "opus 4.8",
   "claude-opus-5": "opus 5",
 };
+const MODEL_FAMILY_WORDS = ["sonnet", "haiku", "opus", "fable"];
+const MODEL_CHIP_MAX_CHARS = 12;
+
+function truncateModelChip(label: string): string {
+  return label.length > MODEL_CHIP_MAX_CHARS ? `${label.slice(0, MODEL_CHIP_MAX_CHARS - 1)}…` : label;
+}
 
 /** Short display form for a fleet agent's own model id — the chip text (full id stays in the tooltip). */
 function shortModel(id: string): string {
-  if (MODEL_DISPLAY[id]) return MODEL_DISPLAY[id];
+  // `id` is process-derived, never trust a bracket lookup with it directly — an id of literally
+  // "constructor" or "toString" must fall through to the generic path below, not resolve to an
+  // Object.prototype member.
+  if (Object.prototype.hasOwnProperty.call(MODEL_DISPLAY, id)) return MODEL_DISPLAY[id];
   if (id.startsWith("claude-sonnet-")) return "sonnet";
   if (id.startsWith("claude-haiku-")) return "haiku";
-  return id.split("-").slice(-2).join("-");
+  const remainder = id.startsWith("claude-") ? id.slice("claude-".length) : id;
+  const [family, ...versionTokens] = remainder.split("-");
+  if (MODEL_FAMILY_WORDS.includes(family)) {
+    return truncateModelChip([family, ...versionTokens].join(" "));
+  }
+  return truncateModelChip(id.split("-").slice(-2).join("-"));
 }
 
 /**
@@ -756,7 +770,7 @@ function AgentRow({ a }: { a: FleetAgent }) {
         <span className={"fleet-agent-chev" + (hasChildren ? "" : " none")}>{hasChildren ? (openRow ? "▾" : "▸") : "·"}</span>
         <span className={"fleet-agent-glyph " + glyphClass}>{glyph}</span>
         <span className="fleet-agent-name">{a.name}</span>
-        {a.model && <span className="fleet-agent-model">{shortModel(a.model)}</span>}
+        {a.alive && a.model && <span className="fleet-agent-model">{shortModel(a.model)}</span>}
         <span className="fleet-agent-status">{a.alive ? a.status : "gone"}</span>
         <span className="fleet-dim fleet-agent-cwd">{shortCwd(a.cwd)}</span>
         <span className="fleet-sp" />

@@ -271,4 +271,43 @@ describe("FleetDrawer roster model chips", () => {
     await waitFor(() => expect(screen.getByText("t")).toBeTruthy());
     expect(document.querySelector(".fleet-agent-row")?.getAttribute("title")).toContain("claude-opus-4-8");
   });
+
+  it("falls back to the last two dash-segments for an unmapped, non-family id", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "u", model: "totally-unknown-future-model-x9" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("u")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")?.textContent).toBe("model-x9");
+  });
+
+  it("never resolves an Object.prototype member for a lookalike model id", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "v", model: "constructor" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("v")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")?.textContent).toBe("constructor");
+  });
+
+  it("hides the model chip on a dead (struck) agent row", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "w", model: "claude-opus-4-8", alive: false }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("w")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")).toBeNull();
+  });
 });

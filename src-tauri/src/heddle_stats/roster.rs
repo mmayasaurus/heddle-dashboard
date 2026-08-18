@@ -57,15 +57,25 @@ fn process_alive(pid: i32) -> bool {
     }
 }
 
+/// Split one `ps -o pid=,...=` output line into its leading pid and the rest of the line (comm or
+/// args, depending on which ps call produced it). Shared by `parse_ps_liveness` and
+/// `parse_ps_args`: both `-o pid=,comm=` and `-o pid=,args=` output share the same "first token is
+/// pid, rest of the line is the field" shape (a combined pid/comm/args line would be ambiguous to
+/// split, since `comm` can itself contain spaces — see the `Google Chrome H` fixture below).
+fn parse_ps_pid_line(line: &str) -> Option<(i32, &str)> {
+    let mut fields = line.trim_start().splitn(2, char::is_whitespace);
+    let pid = fields.next()?.trim().parse().ok()?;
+    let rest = fields.next()?.trim();
+    Some((pid, rest))
+}
+
 /// Parse `ps -o pid=,comm=` output into a liveness verdict per listed PID. A session PID may be
 /// reused after Claude exits, so existence alone is not enough: its executable must still be Claude.
 fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
     output
         .lines()
         .filter_map(|line| {
-            let mut fields = line.trim_start().splitn(2, char::is_whitespace);
-            let pid = fields.next()?.trim().parse().ok()?;
-            let comm = fields.next()?.trim();
+            let (pid, comm) = parse_ps_pid_line(line)?;
             let basename = std::path::Path::new(comm)
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -85,31 +95,48 @@ fn parse_ps_liveness(output: &str, expect: &str) -> HashMap<i32, bool> {
 /// Parse `ps -o pid=,args=` output into the raw argv string per listed PID. A SEPARATE ps call
 /// from `parse_ps_liveness` rather than a third `-o` column tacked onto it: `comm` can itself
 /// contain spaces (see the `Google Chrome H` fixture below), so a combined pid/comm/args line
-/// would be ambiguous to split. Two columns keeps the same "first token is pid, rest of the line
-/// is the field" split the liveness parser already uses.
+/// would be ambiguous to split. Shares the same pid-line split as the liveness parser via
+/// `parse_ps_pid_line`.
 fn parse_ps_args(output: &str) -> HashMap<i32, String> {
     output
         .lines()
         .filter_map(|line| {
-            let mut fields = line.trim_start().splitn(2, char::is_whitespace);
-            let pid = fields.next()?.trim().parse().ok()?;
-            let args = fields.next()?.trim().to_string();
-            Some((pid, args))
+            let (pid, args) = parse_ps_pid_line(line)?;
+            Some((pid, args.to_string()))
         })
         .collect()
 }
 
 /// Parse a `--model <id>` / `--model=<id>` flag out of a process's argv string. The heddle
-/// launcher always passes `--model` on resumes; a process with no flag, or a trailing `--model`
-/// with nothing after it, yields `None` rather than a guess.
+/// launcher always passes `--model` on resumes; a process with no flag, a trailing `--model` with
+/// nothing after it, or a `--model` immediately followed by another flag (never a value) all yield
+/// `None` rather than a guess. Requires argv[0] — the leading token, i.e. the executable path — to
+/// itself be a `claude`/`claude.exe` basename: this argv snapshot comes from a SEPARATE ps call
+/// from the liveness one (see `verify_and_retain`), so a pid reused in the gap between the two
+/// calls (old claude exited, new unrelated process reused the pid) would otherwise hand back that
+/// unrelated process's argv as this agent's "model"; it also blocks a non-claude row whose visible
+/// text (e.g. prompt content in someone else's args) happens to contain the literal `--model`.
 fn parse_model_flag(args: &str) -> Option<String> {
-    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut tokens = args.split_whitespace();
+    let exe = tokens.next()?;
+    let basename = std::path::Path::new(exe)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(exe)
+        .to_ascii_lowercase();
+    if basename != "claude" && basename != "claude.exe" {
+        return None;
+    }
+    let tokens: Vec<&str> = tokens.collect();
     for (index, token) in tokens.iter().enumerate() {
         if let Some(value) = token.strip_prefix("--model=") {
             return (!value.is_empty()).then(|| value.to_string());
         }
         if *token == "--model" {
-            return tokens.get(index + 1).map(|value| value.to_string());
+            return tokens
+                .get(index + 1)
+                .filter(|value| !value.starts_with('-'))
+                .map(|value| value.to_string());
         }
     }
     None
@@ -217,6 +244,39 @@ mod tests {
     fn model_flag_last_token_missing_value_is_none() {
         assert_eq!(parse_model_flag("claude --resume abc123 --model"), None);
     }
+
+    #[test]
+    fn model_flag_next_token_starting_with_dash_is_none() {
+        assert_eq!(
+            parse_model_flag("claude --resume abc123 --model --resume xyz789"),
+            None
+        );
+    }
+
+    #[test]
+    fn model_flag_requires_claude_argv0() {
+        assert_eq!(parse_model_flag("not-claude --model claude-opus-4-8"), None);
+    }
+
+    #[test]
+    fn model_flag_equals_form_with_full_path_argv0() {
+        assert_eq!(
+            parse_model_flag("/usr/local/bin/claude --model=claude-fable-5"),
+            Some("claude-fable-5".to_string())
+        );
+    }
+
+    #[test]
+    fn model_flag_truncated_line_missing_trailing_value_is_none() {
+        // Shape a `-ww`-less ps call could produce: the line runs right up to `--model` and gets
+        // cut before its value — must fail safe to None, never guess from whatever follows.
+        assert_eq!(
+            parse_model_flag(
+                "claude --resume abc123def456ghi789jkl012mno345pqr678stu901vwx234 --model"
+            ),
+            None
+        );
+    }
 }
 
 fn live_fleet_agents() -> Vec<FleetAgent> {
@@ -314,7 +374,11 @@ fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
         HashMap::new()
     } else {
         std::process::Command::new("ps")
-            .args(["-p", &verified_pids, "-o", "pid=,args="])
+            // -ww: unlimited output width. Without it, ps truncates each line to the terminal
+            // width (80 cols when there is none, as here); a real launch argv — resume id, model
+            // flag, cwd-derived flags — regularly exceeds that, and a truncated line would
+            // silently drop `--model` off the end.
+            .args(["-ww", "-p", &verified_pids, "-o", "pid=,args="])
             .output()
             .ok()
             .map(|output| parse_ps_args(&String::from_utf8_lossy(&output.stdout)))
