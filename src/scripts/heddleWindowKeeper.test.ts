@@ -943,7 +943,10 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     // Only the new turn is attributed; prior scanned turns are past their offset.
     // The important guarantee: stale contributions are cleared so the window starts clean.
     expect(transcriptSummary(home, "acct2").weightedTotal).toBe(7);
-  });
+    // Two full keeper subprocess runs; under a saturated machine (parallel cargo) this sits right at
+    // vitest's 5s default and flakes (green in isolation and on re-run — Agent R, 2026-08-18). A
+    // generous per-test budget removes the flake without touching the global default.
+  }, 20000);
 
   it("writes exact Fable OAuth usage without leaking the access token", () => {
     const home = mkHome();
