@@ -181,13 +181,28 @@ fn already_ingested(state: &Attrib, cap: &Capture) -> bool {
 /// The exact-window path: adopt the provider's weekly Fable value verbatim. Entering exact mode
 /// drops the heuristic books; crossing into a new window while exact starts over first.
 fn ingest_exact(state: &mut Attrib, cap: &Capture, exact: f64, now: i64) -> bool {
-    if !state.exact || window_changed(state, cap) {
+    let entered = !state.exact || window_changed(state, cap);
+    if entered {
         *state = Attrib {
             exact: true,
             ..Default::default()
         };
     }
-    let changed = state.fable_pct != exact || state.last_captured_at != Some(cap.captured_at);
+    // What is worth a WRITE. A bare `last_captured_at` bump is not: `claude::attribute` re-stamps
+    // the sidecar's unchanged exact % onto every tap capture (the anti-flicker rule), and the tap
+    // re-renders many times a minute, so counting the timestamp alone rewrote
+    // `claude-<id>.attrib.json` continuously for a percentage that never moved. Entering exact mode,
+    // the exact VALUE moving, the weekly window moving, and the account-wide reading moving (the
+    // seed `expire_exact`/`seed_from_exact` book against) all still persist.
+    //
+    // The in-memory state keeps advancing its timestamps either way — `claude::row` reads
+    // `last_captured_at` to decide whether an exact value is still live — so a skipped write leaves
+    // the file lagging by up to one refresh, which nothing reads as a delta baseline: the exact path
+    // attributes no deltas, and the next real change writes the whole state out.
+    let changed = entered
+        || state.fable_pct != exact
+        || state.last_used_pct != cap.seven_day_used
+        || (cap.seven_day_resets_at.is_some() && state.window_resets_at != cap.seven_day_resets_at);
     state.fable_pct = exact;
     if cap.seven_day_resets_at.is_some() {
         state.window_resets_at = cap.seven_day_resets_at;
@@ -209,6 +224,36 @@ fn seed_from_exact(state: &mut Attrib, cap: &Capture, used: f64, now: i64) {
         last_used_pct: Some(used),
         fable_pct: seed,
         unknown_pct: (used - seed).max(0.0),
+        updated_at: Some(now),
+        ..Default::default()
+    };
+}
+
+/// Leaving exact mode with NO capture to fold in: the value behind `fable_pct` is no longer backed
+/// by a fresh source (the OAuth sidecar went stale or vanished — see `claude::attribute`), and no
+/// capture is arriving to carry `seed_from_exact` for us. Same intent as that function, sourced from
+/// the state's own last reading instead of a capture: keep the last exact share as the seed, book
+/// the remainder of the account-wide total as unknown, rebuild confidence from zero. `estimate()`
+/// then gates on samples, so the stale percentage stops being published as an exact reading instead
+/// of pinning forever.
+pub(super) fn expire_exact(state: &mut Attrib, now: i64) {
+    // The account-wide 7-day total at the last capture we ingested. `None` (a sidecar-only history —
+    // no tap file ever rendered) leaves nothing to book a remainder against, so the seed stands alone.
+    let used = state.last_used_pct;
+    let seed = match used {
+        Some(u) => state.fable_pct.min(u).max(0.0),
+        None => state.fable_pct.max(0.0),
+    };
+    *state = Attrib {
+        window_resets_at: state.window_resets_at,
+        // Keep the ingest baseline: the next capture measures its delta from the last reading we
+        // actually saw, exactly as it would have had the exact window gone away with a capture in
+        // hand. Clearing it would also drop the row's attribution entirely — `claude::attribute`
+        // returns state only once something has been captured.
+        last_captured_at: state.last_captured_at,
+        last_used_pct: used,
+        fable_pct: seed,
+        unknown_pct: used.map(|u| (u - seed).max(0.0)).unwrap_or(0.0),
         updated_at: Some(now),
         ..Default::default()
     };
