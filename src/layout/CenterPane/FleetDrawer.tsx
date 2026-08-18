@@ -302,9 +302,10 @@ export function FleetDrawer() {
               // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
               let win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
-              const promoted = filterExtraWindows(p.windows ?? []);
-              if (shouldPromoteWindows(p.fiveHour, p.sevenDay, promoted)) {
-                const usable = promoted.filter(isUsableWindow);
+              // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
+              // non-empty proof is local to this block — corgea, PR #47.
+              const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
+              if (isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
                 const tightest = usable.reduce((a, b) =>
                   (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
                 win = tightest;
