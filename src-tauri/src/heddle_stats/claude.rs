@@ -12,6 +12,15 @@
 //! you're on"; `accounts[]` carries every registered account (masked email, own windows, own
 //! capture time / staleness, `limitReached` at ≥100%), and `activeAccount` names the row.
 //! Without a registry this degrades to the plain single-file tap entry (`accounts: None`).
+//!
+//! HED-150 pt2: the window-keeper also writes `claude-<id>.oauth-usage.json` — an exact per-account
+//! weekly Fable % pulled from the OAuth usage endpoint, refreshed independently of the tap.
+//! `attribute()` stamps that value onto EVERY capture while the sidecar is fresh, not just when it
+//! changes: a Fable-silent tap capture (the common case) would otherwise demote the drawer's bar
+//! back to the heuristic estimate between OAuth refreshes. The converse is just as load-bearing —
+//! once the sidecar stops being fresh, `attribute()` demotes out of exact mode explicitly, because
+//! an unchanged tap capture never reaches the demotion inside `ingest()`. See `fable_attrib.rs` for
+//! the exact-vs-estimate machinery this feeds.
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +38,72 @@ pub(super) const CODE_NO_CAPTURE: &str = "claude.noCapture";
 /// Unregistered per-account files (`claude-unknown-*.json`) are shown only while this recent.
 const UNREGISTERED_MAX_AGE_SECS: i64 = 24 * 3600;
 pub(super) const CODE_LIMIT_REACHED: &str = "claude.limitReached";
+/// The keeper refreshes each account's `claude-<id>.oauth-usage.json` at most every
+/// `HEDDLE_OAUTH_CACHE_SECS` (300s default) and backs a failing account off for
+/// `HEDDLE_OAUTH_BACKOFF_SECS` (3600s default) — see `scripts/heddle-window-keeper.py`. A few
+/// refresh cycles of slack tolerates one missed poll without falling back to the estimator, while
+/// staying well short of a stuck backoff, so a sidecar the keeper has stopped refreshing goes stale
+/// promptly instead of pinning a week-old % as "exact" indefinitely.
+///
+/// This is the FLOOR; the effective bound is `oauth_exact_stale_after_secs()`, which sizes itself off
+/// the keeper's own configured cache interval.
+const OAUTH_EXACT_STALE_AFTER_SECS: i64 = 900;
+/// The keeper's own default for `HEDDLE_OAUTH_CACHE_SECS`, and the range its `int_env()` clamps that
+/// setting into — mirrored here so a typo'd env can't stretch our freshness bound past what the
+/// keeper itself would honour.
+const OAUTH_CACHE_DEFAULT_SECS: i64 = 300;
+const OAUTH_CACHE_MAX_SECS: i64 = 86_400;
+
+/// Test seam for `HEDDLE_OAUTH_CACHE_SECS`: `cargo test` runs cases in parallel threads of ONE
+/// process, so a real `set_var` would leak one case's keeper config into every other staleness
+/// assertion. Thread-local, so a test only ever configures itself.
+#[cfg(test)]
+thread_local! {
+    static CACHE_SECS_OVERRIDE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn keeper_cache_secs_env() -> Option<String> {
+    #[cfg(test)]
+    if let Some(v) = CACHE_SECS_OVERRIDE.with(|c| c.borrow().clone()) {
+        return Some(v);
+    }
+    std::env::var("HEDDLE_OAUTH_CACHE_SECS").ok()
+}
+
+/// How old the sidecar may be before it stops counting as exact: three of the keeper's own refresh
+/// cycles, floored at `OAUTH_EXACT_STALE_AFTER_SECS`. An operator who sets
+/// `HEDDLE_OAUTH_CACHE_SECS=3600` gets a sidecar that is legitimately up to an hour old, and a fixed
+/// 900s bound would demote that account to the estimator between every single refresh. Unset,
+/// unparseable, or out of the keeper's range → the keeper's own default/clamp, so the bound tracks
+/// what the producer will actually do (at its 86400s maximum, three cycles is ~3 days).
+///
+/// Read per call rather than cached: the app and the launchd keeper are separate processes, and the
+/// keeper's environment can change under a running app.
+fn oauth_exact_stale_after_secs() -> i64 {
+    let cache = keeper_cache_secs_env()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .map(|v| v.clamp(0, OAUTH_CACHE_MAX_SECS))
+        .unwrap_or(OAUTH_CACHE_DEFAULT_SECS);
+    OAUTH_EXACT_STALE_AFTER_SECS.max(cache.saturating_mul(3))
+}
+
+/// Mirror of the keeper's `safe_segment()` (`scripts/heddle-window-keeper.py`): every character
+/// outside `[A-Za-z0-9._-]` becomes `_`. Only the OAuth sidecar is read through it, because that is
+/// the filename the keeper builds this way — the tap/keeper-anchor/attrib reads elsewhere in this
+/// module still use the raw id, a pre-existing inconsistency that is tracked separately rather than
+/// widened here.
+fn safe_segment(id: &str) -> String {
+    id.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
 
 /// One registered Claude account.
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +178,19 @@ fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
+/// `claude-<id>.<suffix>` files in the usage dir that are NOT a tap capture: our attribution state
+/// plus every sidecar the window-keeper writes per account (`scripts/heddle-window-keeper.py`).
+/// Matched by `ends_with`, so a one-off unregistered id literally ending in `.oauth-usage`,
+/// `.keeper`, or `.turns` (e.g. `claude-foo.turns.json`) is excluded too — accepted: real account
+/// ids never end in these tokens, and silently dropping such an id is strictly safer than surfacing a
+/// phantom row for it. This just extends the long-standing `.attrib.json` exclusion to the rest.
+const NON_ACCOUNT_SUFFIXES: [&str; 4] = [
+    ".attrib.json",
+    ".oauth-usage.json",
+    ".keeper.json",
+    ".turns.json",
+];
+
 /// Build the claude entry from `dir` (tap files) and the registry. Pure given the filesystem.
 /// One row per registered account (registry order), plus rows for recent unregistered
 /// `claude-<id>.json` files the tap wrote (a one-off `CLAUDE_CONFIG_DIR`); stale one-offs are
@@ -124,9 +212,12 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            // Attribution state (`claude-<id>.attrib.json`) is never an account file —
-            // excluded by name, not by accident of its schema.
-            if name.ends_with(".attrib.json") {
+            // Our own attribution state and the window-keeper's per-account sidecars are never
+            // account files — excluded BY NAME, not by accident of their schema. `.oauth-usage.json`
+            // is why this list exists: it strips to the id `<id>.oauth-usage`, and unlike the other
+            // sidecars it carries a `capturedAt`, so the recency gate below waved it through as a
+            // phantom account row that inflated the drawer's account count (HED-150 pt2 review).
+            if NON_ACCOUNT_SUFFIXES.iter().any(|s| name.ends_with(s)) {
                 return None;
             }
             let id = name
@@ -184,6 +275,44 @@ fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
     }
 }
 
+/// A fresh, valid reading from `claude-<id>.oauth-usage.json` (the window-keeper's sidecar,
+/// HED-150 pt1): `{fablePct, fiveHourPct, sevenDayPct, byModel, capturedAt, source[, windowResetsAt]}`.
+/// `fiveHourPct`/`sevenDayPct` are for Part-1 reconciliation/other consumers — never read here, the
+/// tap alone drives the displayed 5h/7d windows. `None` for anything absent, malformed, out of
+/// range, or stale — best-effort, same as the rest of `attribute()`.
+struct OauthExact {
+    fable_pct: f64,
+    captured_at: i64,
+    /// The Fable entry's own reset time, when the sidecar carries one — the weekly Fable window is
+    /// not guaranteed to share the tap's `seven_day.resets_at` boundary. Verified against the
+    /// shipped keeper (`scripts/heddle-window-keeper.py::oauth_usage_for`, 2026-08-18): it does NOT
+    /// emit this field today, so callers fall back to the tap's own 7-day reset.
+    window_resets_at: Option<i64>,
+}
+
+fn oauth_exact(dir: &Path, id: &str, now: i64) -> Option<OauthExact> {
+    // Sanitized exactly as the keeper names the file it writes — an id with out-of-class characters
+    // would otherwise look up a path that can never exist.
+    let v = read_json(&dir.join(format!("claude-{}.oauth-usage.json", safe_segment(id))))?;
+    let fable_pct = v["fablePct"]
+        .as_f64()
+        .filter(|p| p.is_finite() && (0.0..=100.0).contains(p))?;
+    let captured_at = v["capturedAt"].as_i64()?;
+    // A stamp from the FUTURE is clock skew or corruption, never freshness: `is_stale` reads its
+    // negative age as "captured moments ago", which would pin that reading as exact indefinitely.
+    if captured_at > now {
+        return None;
+    }
+    if is_stale(Some(captured_at), now, oauth_exact_stale_after_secs()).unwrap_or(true) {
+        return None;
+    }
+    Some(OauthExact {
+        fable_pct,
+        captured_at,
+        window_resets_at: v["windowResetsAt"].as_i64(),
+    })
+}
+
 /// Load this account's attribution state, fold in the current capture (if any), persist when it
 /// changed, and return the state. Best-effort: an unreadable/unwritable attrib file just yields
 /// whatever we could compute in memory.
@@ -197,12 +326,49 @@ fn attribute(dir: &Path, id: &str, file: Option<&Value>, now: i64) -> Option<Att
     let mut state: Attrib = read_json(&path)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let cap = file.and_then(fable_attrib::capture_from_tap);
-    let changed = match &cap {
+    let mut cap = file.and_then(fable_attrib::capture_from_tap);
+    // Stamp the OAuth exact reading onto EVERY capture while the sidecar is fresh, not just when it
+    // changes: a statusline tap carries no Fable field, so a tap-only capture reaching `ingest()`
+    // without `exact_fable_pct` set would hit its `seed_from_exact` branch and demote exact→estimate
+    // — flickering the drawer between OAuth refreshes. Overrides any tap-derived exact (there isn't
+    // one today — the tap never carries a Fable window — but the OAuth reading is authoritative
+    // regardless).
+    if let Some(exact) = oauth_exact(dir, id, now) {
+        match &mut cap {
+            Some(c) => {
+                c.exact_fable_pct = Some(exact.fable_pct);
+                if let Some(w) = exact.window_resets_at {
+                    c.seven_day_resets_at = Some(w);
+                }
+            }
+            None => {
+                cap = Some(fable_attrib::Capture {
+                    captured_at: exact.captured_at,
+                    model: String::new(),
+                    seven_day_used: None,
+                    seven_day_resets_at: exact.window_resets_at,
+                    exact_fable_pct: Some(exact.fable_pct),
+                });
+            }
+        }
+    }
+    // Nothing this run carries an exact reading, yet the persisted state still claims one: the
+    // sidecar went stale or vanished (in pt2 it is the ONLY source of exact), so the value behind it
+    // is no longer backed by anything. Demote HERE rather than leaving it to `ingest`'s
+    // `seed_from_exact` branch: with the tap capture UNCHANGED — the ordinary case when the keeper
+    // stops refreshing — the duplicate guard drops that capture before the branch can run, and the
+    // row would keep publishing the last exact % as exact for as long as the tap sat still. A merely
+    // transient miss demotes too, and should: a fresh sidecar makes this `false` again on the same
+    // run, and the estimator resumes from the seeded books.
+    let demoted = state.exact && !cap.as_ref().is_some_and(|c| c.exact_fable_pct.is_some());
+    if demoted {
+        fable_attrib::expire_exact(&mut state, now);
+    }
+    let ingested = match &cap {
         Some(c) => fable_attrib::ingest(&mut state, c, now),
         None => false,
     };
-    if changed {
+    if demoted || ingested {
         // A lost write means the next process restart re-ingests from the older baseline and
         // double-counts a delta — rare, but never silent.
         match serde_json::to_value(&state) {
@@ -357,10 +523,23 @@ fn row(a: &Account, file: Option<&Value>, now: i64, attrib: Option<&Attrib>) -> 
     let fable_est = attrib.and_then(fable_attrib::estimate);
     let fable_samples = attrib.map(|s| s.samples);
     let Some(v) = file else {
-        // No current capture: don't surface a historical estimate next to a "no capture yet"
-        // note — the drawer renders on non-null alone. The breakdown (with lastCapturedAt)
-        // stays in `detail.fableWeekly` for the tooltip.
-        return row_no_capture(a, label, detail, None, None);
+        // No current capture: don't surface a historical estimate next to a "no capture yet" note —
+        // UNLESS the attribution is a FRESH exact OAuth reading (HED-150 pt2): that's a live current
+        // signal, not a stale guess, so it surfaces even though the tap itself is silent right now.
+        // A non-exact (or now-stale) estimate stays suppressed exactly as before; the breakdown
+        // (with lastCapturedAt) is always in `detail.fableWeekly` for the tooltip.
+        let fresh_exact = attrib.is_some_and(|s| {
+            s.exact
+                && !is_stale(s.last_captured_at, now, oauth_exact_stale_after_secs())
+                    .unwrap_or(true)
+        });
+        return row_no_capture(
+            a,
+            label,
+            detail,
+            if fresh_exact { fable_est } else { None },
+            if fresh_exact { fable_samples } else { None },
+        );
     };
     let rl = &v["rate_limits"];
     let win = |k: &str| LimitWindow {
