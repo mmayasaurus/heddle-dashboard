@@ -300,7 +300,7 @@ export function FleetDrawer() {
               // no 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows,
               // picking the highest-percentage one — closest wall, same question answered (Maya,
               // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
-              let win = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
+              let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
               // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
               // non-empty proof is local to this block — corgea, PR #47.
@@ -311,7 +311,7 @@ export function FleetDrawer() {
                 win = tightest;
                 label = shortWindowLabel(tightest);
               }
-              const pct = win.usedPercentage;
+              const pct = win?.usedPercentage ?? null;
               const color = providerColor(p.provider);
               return (
                 <span
@@ -321,7 +321,7 @@ export function FleetDrawer() {
                 >
                   <span className="fleet-tag" style={{ color }}>{p.provider}</span>
                   <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                 </span>
               );
             })}
@@ -532,7 +532,8 @@ function CapLine({
         if (namedWindow) {
           const reset = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : "";
           const text = [reset, amount].filter(Boolean).join(" · ");
-          return <span className="fleet-dim fleet-capline-reset" title={text}>{text}</span>;
+          const full = [reset, amount, note].filter(Boolean).join(" · ");
+          return <span className="fleet-dim fleet-capline-reset" title={full}>{text}</span>;
         }
         return (
           <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
