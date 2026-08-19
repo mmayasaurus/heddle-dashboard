@@ -19,9 +19,12 @@
 //! fixture: the prompt could not be answered, the run hung to its budget, backed off, and repeated,
 //! so the user was asked to sign in over and over into a flow that structurally could not finish.
 //! Two layers prevent that: (a) we never spawn unless the effective HOME already has an agy profile,
-//! and (b) any attempt that looks like it needed a human (timeout, or an auth-shaped error) sets a
-//! STICKY block that stops automatic refreshes until a person intervenes. Cost of being wrong here
-//! is a stale gauge; cost of being wrong the other way is hijacking the user's browser on a timer.
+//! and (b) any attempt that names the auth flow directly sets a STICKY block immediately; a bare
+//! timeout escalates to the same STICKY block only after `TIMEOUT_STREAK_STICKY` consecutive
+//! timeouts (HED-188: a single transient timeout must not permanently pause background refresh) —
+//! either way the block stops automatic refreshes until a person intervenes. Cost of being wrong
+//! here is a stale gauge; cost of being wrong the other way is hijacking the user's browser on a
+//! timer.
 //!
 //! COST: ~3s wall clock and a few Google round trips per run, so it never runs inline. The Tauri
 //! command reads the snapshot `~/.heddle/usage/gemini.json` (tap format + extras) and, when it is
@@ -59,6 +62,11 @@ pub(super) const STALE_AFTER_SECS: i64 = 600;
 const FAILURE_BACKOFF_SECS: i64 = 120;
 /// Wall-clock budget for one `agy` run (observed ~3s; the language-server startup can be slow).
 const AGY_TIMEOUT: Duration = Duration::from_secs(45);
+/// Consecutive `agy` timeouts before a transient hang is treated as persistent and the sticky
+/// auth block engages (HED-188). Below this, `authBlocked` stays false and the normal
+/// `FAILURE_BACKOFF_SECS` gate keeps retrying — a single timeout must not permanently pause
+/// background refresh.
+const TIMEOUT_STREAK_STICKY: i64 = 3;
 /// The group whose buckets become the entry's 5h/7d — heddle's Gemini workers draw from it.
 const PRIMARY_BUCKET_PREFIX: &str = "gemini-";
 
@@ -71,15 +79,17 @@ fn agy_profile_exists() -> bool {
     home().join(".gemini").join("antigravity-cli").is_dir()
 }
 
-/// Does this failure look like agy wanted a human? Conservative on purpose: a timeout is how an
-/// unanswerable browser prompt manifests for a piped child, and anything naming sign-in/auth is
-/// treated the same. False positives cost a stale gauge until someone clicks refresh; false
-/// negatives cost a browser prompt every 180s.
-pub(super) fn looks_like_auth_attempt(err: &str) -> bool {
+/// Does this failure name the sign-in/auth flow directly? Conservative on purpose: anything
+/// naming sign-in/auth is treated as needing a human. False positives cost a stale gauge until
+/// someone clicks refresh; false negatives cost a browser prompt every 180s.
+///
+/// Split from timeouts (HED-188, see `is_timeout`): a timeout is how an unanswerable browser
+/// prompt manifests for a piped child, but it's also how an ordinary slow round trip manifests —
+/// so on its own it is transient-until-proven-persistent, not immediate proof a human is needed.
+pub(super) fn is_auth_shaped(err: &str) -> bool {
     /// Any of these in a failure means "a human may be needed" — see the doc above for why the
-    /// list errs toward blocking.
+    /// list errs toward blocking. Timeouts are handled separately by `is_timeout`.
     const MARKERS: &[&str] = &[
-        "timed out",
         "sign in",
         "sign-in",
         "signin",
@@ -95,6 +105,14 @@ pub(super) fn looks_like_auth_attempt(err: &str) -> bool {
     ];
     let e = err.to_ascii_lowercase();
     MARKERS.iter().any(|m| e.contains(m))
+}
+
+/// Did the `agy` run hit its wall-clock budget (the exact text `run_with_timeout` produces)? On
+/// its own this is NOT auth-shaped — see `is_auth_shaped` — it only escalates to the sticky block
+/// after `TIMEOUT_STREAK_STICKY` consecutive timeouts (HED-188: a single transient timeout must
+/// not permanently pause background refresh).
+pub(super) fn is_timeout(err: &str) -> bool {
+    err.to_ascii_lowercase().contains("timed out")
 }
 
 /// Why a refresh must not run, or `None` when it may. `forced` is an explicit human action (the
@@ -240,14 +258,14 @@ fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
                 .unwrap_or_else(
                     || json!({"model": "antigravity", "rate_limits": {}, "source": SOURCE}),
                 );
-            snap["lastError"] = Value::String(e.clone());
-            snap["lastAttemptAt"] = json!(now);
-            // Sticky: an attempt that looked like it needed a human stops the 180s timer from
-            // asking again (HED-114). A failure that did NOT look like auth clears any older block:
-            // reaching agy far enough to fail for an ordinary reason (network, parse) proves the
-            // sign-in question is settled, so a transient error after a successful login must not
-            // leave automatic refreshes disabled forever.
-            snap["authBlocked"] = json!(looks_like_auth_attempt(&e));
+            // Sticky: an attempt that names the sign-in flow directly stops the 180s timer from
+            // asking again (HED-114) immediately. A timeout is transient-until-proven-persistent
+            // (HED-188): it only arms the block after TIMEOUT_STREAK_STICKY consecutive timeouts,
+            // so one slow round trip doesn't permanently pause background refresh. A failure that
+            // is neither clears any older block: reaching agy far enough to fail for an ordinary
+            // reason (network, parse) proves the sign-in question is settled, so a transient error
+            // after a successful login must not leave automatic refreshes disabled forever.
+            record_failure(&mut snap, &e, now);
             // A failed snapshot write is a second, distinct failure — say so instead of hiding it
             // behind the agy error.
             match write_json_atomic(&path, &snap) {
@@ -257,6 +275,28 @@ fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
                 )),
             }
         }
+    }
+}
+
+/// Record one failed refresh into `snap`: `lastError` / `lastAttemptAt`, and the sticky-block
+/// state per HED-188 bounded-retry-then-sticky — an auth-shaped error blocks immediately; a
+/// timeout only blocks after `TIMEOUT_STREAK_STICKY` consecutive timeouts (auto-recovering below
+/// that via the normal `FAILURE_BACKOFF_SECS` gate); anything else (agy responded, just not
+/// usefully) clears any older block and streak. Pure — kept separate from `fetch_and_write` so
+/// the streak bookkeeping is testable without spawning `agy`.
+fn record_failure(snap: &mut Value, err: &str, now: i64) {
+    snap["lastError"] = Value::String(err.to_string());
+    snap["lastAttemptAt"] = json!(now);
+    if is_auth_shaped(err) {
+        snap["authBlocked"] = json!(true);
+        snap["timeoutStreak"] = json!(0);
+    } else if is_timeout(err) {
+        let streak = snap["timeoutStreak"].as_i64().unwrap_or(0) + 1;
+        snap["timeoutStreak"] = json!(streak);
+        snap["authBlocked"] = json!(streak >= TIMEOUT_STREAK_STICKY);
+    } else {
+        snap["authBlocked"] = json!(false);
+        snap["timeoutStreak"] = json!(0);
     }
 }
 

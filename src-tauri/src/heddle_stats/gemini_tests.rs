@@ -174,10 +174,8 @@ fn live_agy_smoke() {
 // ── HED-114: a background refresh must never start a sign-in it cannot finish ──────────────────
 
 #[test]
-fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
-    // A browser prompt an unattended child cannot answer shows up as the run hitting its budget.
-    assert!(looks_like_auth_attempt("timed out after 45s"));
-    // …and anything that names the flow directly.
+fn an_auth_shaped_failure_is_read_as_needing_a_human() {
+    // Anything that names the sign-in flow directly.
     for err in [
         "agy exited non-zero: please sign in to continue",
         "Sign-In required",
@@ -187,7 +185,7 @@ fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
         "paste the code here",
         "no credential found",
     ] {
-        assert!(looks_like_auth_attempt(err), "{err}");
+        assert!(is_auth_shaped(err), "{err}");
     }
     // Ordinary failures must NOT arm the block — they retry normally.
     for err in [
@@ -196,10 +194,12 @@ fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
         "agy JSON parse failed: expected value",
         "cannot create /Users/x/.heddle/usage: Permission denied",
     ] {
-        assert!(!looks_like_auth_attempt(err), "{err}");
+        assert!(!is_auth_shaped(err), "{err}");
+        assert!(!is_timeout(err), "{err}");
     }
     // Nothing to go on is not evidence of a human being needed.
-    assert!(!looks_like_auth_attempt(""));
+    assert!(!is_auth_shaped(""));
+    assert!(!is_timeout(""));
 }
 
 /// The detector is deliberately OVER-inclusive, and this pins that boundary so a later "cleanup"
@@ -210,15 +210,15 @@ fn a_timeout_or_auth_shaped_failure_is_read_as_needing_a_human() {
 /// that wants a human, which is HED-114 itself: a browser prompt every three minutes, forever.
 /// Buying the cheap mistake to avoid the expensive one is the whole design; if you tighten these
 /// markers, you are trading in the direction that produced the incident.
+///
+/// "timed out" is deliberately NOT in this list (HED-188): a timeout is bounded-retry-then-sticky
+/// (see `is_timeout` / `TIMEOUT_STREAK_STICKY`), not immediately auth-shaped — see the HED-188
+/// test block below.
 #[test]
 fn ambiguous_wording_is_treated_as_auth_shaped_because_the_two_mistakes_cost_differently() {
-    for err in [
-        "browser cache corrupted",
-        "credential file parse error",
-        "request timed out reading /quota",
-    ] {
+    for err in ["browser cache corrupted", "credential file parse error"] {
         assert!(
-            looks_like_auth_attempt(err),
+            is_auth_shaped(err),
             "deliberately over-inclusive, see doc comment: {err}"
         );
     }
@@ -297,15 +297,18 @@ fn a_blocked_refresh_with_no_snapshot_still_shows_the_row_and_the_way_out() {
 fn an_ordinary_failure_after_signing_in_lifts_a_stale_block() {
     // Reported by review: sign in for real, click refresh, hit a transient network error — the old
     // authBlocked must not survive and disable the timer forever.
-    assert!(!looks_like_auth_attempt(
-        "agy JSON parse failed: expected value"
-    ));
-    // The failure path writes authBlocked = looks_like_auth_attempt(err), so a non-auth failure
-    // clears a previously-set flag rather than leaving it latched.
+    assert!(!is_auth_shaped("agy JSON parse failed: expected value"));
+    assert!(!is_timeout("agy JSON parse failed: expected value"));
+    // record_failure clears a previously-set flag on a non-auth, non-timeout failure rather than
+    // leaving it latched.
     let mut snap = snapshot_from_agy(&data(), 1_786_830_000);
     snap["authBlocked"] = serde_json::json!(true);
     assert!(refresh_blocked_reason(Some(&snap), true, false).is_some());
-    snap["authBlocked"] = serde_json::json!(looks_like_auth_attempt("agy JSON parse failed"));
+    record_failure(
+        &mut snap,
+        "agy JSON parse failed: expected value",
+        1_786_830_100,
+    );
     assert!(
         refresh_blocked_reason(Some(&snap), true, false).is_none(),
         "an ordinary failure must hand the timer back"
@@ -315,16 +318,107 @@ fn an_ordinary_failure_after_signing_in_lifts_a_stale_block() {
 #[test]
 fn the_detector_boundary_is_pinned_including_awkward_cases() {
     // Empty/no-message failures are NOT auth — they retry on the normal backoff.
-    assert!(!looks_like_auth_attempt(""));
-    assert!(!looks_like_auth_attempt("   "));
+    assert!(!is_auth_shaped(""));
+    assert!(!is_auth_shaped("   "));
     // Deliberately accepted over-blocking: these mention auth words without being login flows, and
     // we still pause. A stale gauge until someone clicks refresh is the cheap failure; a browser
     // prompt every 180s is the expensive one, so the detector leans this way ON PURPOSE.
-    assert!(looks_like_auth_attempt("browser cache corrupted"));
-    assert!(looks_like_auth_attempt("credential file parse error"));
+    assert!(is_auth_shaped("browser cache corrupted"));
+    assert!(is_auth_shaped("credential file parse error"));
     // Case and surrounding text do not matter.
-    assert!(looks_like_auth_attempt("FATAL: Please SIGN IN again"));
-    assert!(looks_like_auth_attempt(
+    assert!(is_auth_shaped("FATAL: Please SIGN IN again"));
+    assert!(is_auth_shaped(
         "agy exited non-zero: OAuth token refresh failed"
     ));
+}
+
+// ── HED-188: a transient timeout must not permanently pause background refresh ─────────────────
+//
+// The live incident: a one-off 45s agy timeout ~15h earlier set the sticky flag, which then
+// blocked every background refresh until someone clicked the refresh button. `is_timeout` is
+// still detected, but a single occurrence must not read as auth-shaped — only a run of
+// `TIMEOUT_STREAK_STICKY` consecutive timeouts (a persistent hang) may arm the sticky block.
+
+#[test]
+fn a_timeout_is_recognized_but_is_not_auth_shaped_on_its_own() {
+    // The exact HED-188 split: a timeout is how an unanswerable browser prompt manifests, but
+    // it's also how an ordinary slow round trip manifests, so on its own it must not be treated
+    // as auth-shaped — only a persistent run of them (TIMEOUT_STREAK_STICKY) escalates to sticky.
+    assert!(is_timeout("timed out after 45s"));
+    assert!(!is_auth_shaped("timed out after 45s"));
+}
+
+#[test]
+fn a_transient_timeout_does_not_block_the_next_refresh() {
+    // The exact live incident: one 45s agy timeout with no prior streak.
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    record_failure(&mut snap, "timed out after 45s", 1_045);
+    assert_eq!(snap["authBlocked"], false);
+    assert_eq!(snap["timeoutStreak"], 1);
+    assert_eq!(snap["lastError"], "timed out after 45s");
+    // A subsequent non-forced refresh with a profile present is NOT blocked.
+    assert!(refresh_blocked_reason(Some(&snap), true, false).is_none());
+}
+
+#[test]
+fn three_consecutive_timeouts_escalate_to_a_sticky_block() {
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    for n in 1..TIMEOUT_STREAK_STICKY {
+        record_failure(&mut snap, "timed out after 45s", 1_000 + n * 45);
+        assert_eq!(
+            snap["authBlocked"], false,
+            "still below the streak threshold"
+        );
+    }
+    record_failure(
+        &mut snap,
+        "timed out after 45s",
+        1_000 + TIMEOUT_STREAK_STICKY * 45,
+    );
+    assert_eq!(snap["authBlocked"], true);
+    assert_eq!(snap["timeoutStreak"], TIMEOUT_STREAK_STICKY);
+    let (code, _) = refresh_blocked_reason(Some(&snap), true, false)
+        .expect("a persistent hang must block automatic refresh");
+    assert_eq!(code, CODE_AUTH_BLOCKED);
+}
+
+#[test]
+fn an_auth_shaped_error_blocks_immediately_and_resets_any_timeout_streak() {
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    // A prior transient timeout must not delay an auth-shaped block once one actually arrives.
+    record_failure(&mut snap, "timed out after 45s", 1_045);
+    assert_eq!(snap["timeoutStreak"], 1);
+    record_failure(
+        &mut snap,
+        "agy exited non-zero: please sign in to continue",
+        1_090,
+    );
+    assert_eq!(snap["authBlocked"], true);
+    assert_eq!(snap["timeoutStreak"], 0);
+}
+
+#[test]
+fn a_success_after_a_timeout_streak_resets_it() {
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    record_failure(&mut snap, "timed out after 45s", 1_045);
+    record_failure(&mut snap, "timed out after 45s", 1_090);
+    assert_eq!(snap["timeoutStreak"], 2);
+    // A success builds a wholly fresh snapshot (see snapshot_from_agy) — it never reads the old
+    // one, so authBlocked/timeoutStreak cannot carry forward regardless of the prior streak.
+    let fresh = snapshot_from_agy(&data(), 1_200);
+    assert!(fresh.get("authBlocked").is_none());
+    assert!(fresh.get("timeoutStreak").is_none());
+    assert!(refresh_blocked_reason(Some(&fresh), true, false).is_none());
+}
+
+#[test]
+fn a_non_timeout_failure_clears_the_streak_too() {
+    // agy responded (just not usefully) — this is not a hang, so it must not count toward the
+    // timeout streak, and it clears the block exactly as an ordinary failure always has.
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    record_failure(&mut snap, "timed out after 45s", 1_045);
+    assert_eq!(snap["timeoutStreak"], 1);
+    record_failure(&mut snap, "agy JSON parse failed: expected value", 1_090);
+    assert_eq!(snap["authBlocked"], false);
+    assert_eq!(snap["timeoutStreak"], 0);
 }
