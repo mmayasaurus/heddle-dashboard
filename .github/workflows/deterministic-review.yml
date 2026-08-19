@@ -241,7 +241,7 @@ jobs:
             # (15), and the 30-minute job timeout exceeds the sleeps plus API
             # allowance. Poll fast for ~2 min, then back off to 30s.
             for i in $(seq 1 57); do
-              if ! CR=$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate --slurp 2>/dev/null); then
+              if ! CR=$(gh api "repos/$REPO/commits/$SHA/check-runs?filter=all" --paginate --slurp 2>/dev/null); then
                 echo "  could not read check runs for ${SHA}; scan liveness is unknown — retrying"
                 # A failed read breaks the verifiably-gone proof: an outage cannot
                 # prove the scan is gone, so restart the dry streak.
@@ -452,7 +452,7 @@ jobs:
             # (10), and the 30-minute job timeout exceeds the sleeps plus API
             # allowance. Poll fast for ~2 min, then back off to 30s.
             for i in $(seq 1 57); do
-              if ! CR=$(gh api "repos/$REPO/commits/$SHA/check-runs" --paginate --slurp 2>/dev/null); then
+              if ! CR=$(gh api "repos/$REPO/commits/$SHA/check-runs?filter=all" --paginate --slurp 2>/dev/null); then
                 echo "  could not read check runs for ${SHA}; scan liveness is unknown — retrying"
                 # A failed read breaks the verifiably-gone proof: an outage cannot
                 # prove the scan is gone, so restart the dry streak.
