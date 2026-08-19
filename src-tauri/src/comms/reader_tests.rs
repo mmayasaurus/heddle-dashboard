@@ -607,3 +607,114 @@ fn an_open_needs_human_item_behind_a_long_run_of_replied_ones_is_still_reported(
         "the one open item must survive the walk past 260 replied candidates"
     );
 }
+
+// ─────────────────────────────────── HED-197 participants ───────────────────────────────────
+
+#[test]
+fn participants_missing_db_is_a_fresh_install_not_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("does-not-exist.db");
+
+    let snap = participants_at(&path).unwrap();
+    assert!(snap.schema_ok);
+    assert_eq!(snap.schema_version, 0);
+    assert!(snap.participants.is_empty());
+}
+
+#[test]
+fn participants_unsupported_schema_does_not_read_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v99.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA user_version = 99;").unwrap();
+    drop(conn);
+
+    let snap = participants_at(&path).expect("version mismatch must not query tables");
+    assert!(!snap.schema_ok);
+    assert_eq!(snap.schema_version, 99);
+    assert!(snap.participants.is_empty());
+}
+
+#[test]
+fn participants_surface_kind_liveness_addressability_and_display_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    empty_schema_db(&path);
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        r#"INSERT INTO participants (address, kind, label, first_seen, last_seen) VALUES
+           ('R', 'agent', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('S', 'agent', 'Alive orchestrator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+           INSERT INTO participants (address, kind, parent, seq, dispatch_id, label, first_seen, last_seen) VALUES
+           ('R.1', 'child', 'R', 1, NULL, 'Desk child', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('R.2', 'child', 'R', 2, 42, '', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('R.3', 'child', 'R', 3, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('R.4', 'child', 'R', 4, NULL, '   ', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+           INSERT INTO participants (address, kind, first_seen, last_seen)
+           VALUES ('operator', 'operator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+           INSERT INTO sessions (address, started_at, heartbeat_at) VALUES
+           ('S', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           ('R.1', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+           ('R.2', strftime('%Y-%m-%dT%H:%M:%fZ','now','-10 minutes'), strftime('%Y-%m-%dT%H:%M:%fZ','now','-10 minutes'));"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    let snap = participants_at(&path).unwrap();
+    assert!(snap.schema_ok);
+    assert_eq!(snap.schema_version, 1);
+    assert_eq!(snap.participants.len(), 6, "operator must be excluded");
+
+    let by_address: std::collections::HashMap<_, _> = snap
+        .participants
+        .iter()
+        .map(|participant| (participant.address.as_str(), participant))
+        .collect();
+    let r = by_address["R"];
+    assert_eq!(r.kind, "orchestrator");
+    assert_eq!(r.display_name, "R");
+    assert!(!r.alive);
+    assert!(r.addressable, "dead orchestrators remain addressable");
+    assert_eq!(r.parent, None);
+    assert_eq!(r.dispatch_id, None);
+
+    let s = by_address["S"];
+    assert_eq!(s.display_name, "Alive orchestrator");
+    assert!(s.alive);
+    assert!(s.addressable);
+
+    let desk = by_address["R.1"];
+    assert_eq!(desk.kind, "subagent-desk");
+    assert_eq!(desk.display_name, "Desk child");
+    assert!(desk.alive);
+    assert!(desk.addressable);
+    assert_eq!(desk.parent.as_deref(), Some("R"));
+    assert_eq!(desk.dispatch_id, None);
+
+    let errand = by_address["R.2"];
+    assert_eq!(errand.kind, "subagent-errand");
+    assert_eq!(errand.display_name, "R.2");
+    assert!(!errand.alive);
+    assert!(!errand.addressable);
+    assert_eq!(errand.parent.as_deref(), Some("R"));
+    assert_eq!(errand.dispatch_id, Some(42));
+
+    let retired_desk = by_address["R.3"];
+    assert_eq!(retired_desk.kind, "subagent-desk");
+    assert_eq!(retired_desk.display_name, "R.3");
+    assert!(!retired_desk.alive, "no sessions row means retired");
+    assert!(!retired_desk.addressable);
+
+    let whitespace_label = by_address["R.4"];
+    assert_eq!(whitespace_label.display_name, "R.4");
+}
+
+#[test]
+fn participant_kind_classifies_broker_participants() {
+    assert_eq!(participant_kind("agent", None), Some("orchestrator"));
+    assert_eq!(participant_kind("agent", Some(1)), Some("orchestrator"));
+    assert_eq!(participant_kind("child", None), Some("subagent-desk"));
+    assert_eq!(participant_kind("child", Some(7)), Some("subagent-errand"));
+    assert_eq!(participant_kind("operator", None), None);
+    assert_eq!(participant_kind("bogus", None), None);
+}

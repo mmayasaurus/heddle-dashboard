@@ -134,9 +134,10 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "heddle_discipline",
   "heddle_provider_limits",
   "heddle_refresh_provider_limits",
-  // Fleet chatroom panel: read-only comms.db views (rooms/needs-human/transcript).
+  // Fleet chatroom panel: read-only comms.db views (rooms/needs-human/transcript/participants).
   "heddle_comms_rooms",
   "heddle_comms_transcript",
+  "heddle_comms_participants",
   // Fleet chatroom composer: operator-only write path (send/room management).
   "heddle_comms_operator_status",
   "heddle_comms_send",
