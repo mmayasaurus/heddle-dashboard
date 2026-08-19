@@ -72,7 +72,7 @@ function verdictShell(job: string): string {
   return `${shell.join("\n")}\n`;
 }
 
-describe("regression HED-131 — scanner edit echoes fail closed", () => {
+describe("regression HED-193 — scanner edit echoes reflect fresh commit verdicts", () => {
   const hasJq = spawnSync("jq", ["--version"], { stdio: "ignore" }).status === 0;
 
   for (const scanner of ["semgrep", "gitleaks"]) {
@@ -119,11 +119,11 @@ describe("regression HED-131 — scanner edit echoes fail closed", () => {
       }
     });
 
-    it(`${scanner} uses slurped pagination and distinguishes all echo liveness states`, () => {
+    it(`${scanner} retains the HED-182 echo liveness safeguards`, () => {
       const verdict = jobBlock(scanner);
       const shell = verdictShell(scanner);
 
-      expect(verdict).toContain("    timeout-minutes: 25");
+      expect(verdict).toContain("    timeout-minutes: 30");
       expect(shell).toContain("for i in $(seq 1 57); do");
       expect(shell).toContain("--paginate --slurp");
       expect(shell).toContain("[.[].check_runs[]]");
@@ -131,9 +131,14 @@ describe("regression HED-131 — scanner edit echoes fail closed", () => {
       expect(shell).not.toContain("|| echo '{}'");
       expect(shell).toContain('if [ "$CONC" != "none" ] && [ "$INFLIGHT" = "0" ]; then');
       expect(shell).toContain('if [ "$CONC" = "none" ] && [ "$INFLIGHT" = "0" ]; then');
+      expect(shell).toContain('VERDICT="$CONC"; break');
+      expect(shell).toContain('case "$VERDICT" in');
+      expect(shell).toContain("$m.started_at >= $leaf");
+      expect(shell).toContain('and .conclusion != "skipped"');
+      expect(shell).toMatch(/could not read check runs[\s\S]*?DRY=0[\s\S]*?continue/);
     });
 
-    it.skipIf(!hasJq)(`${scanner} exits zero only for a jq-parsed success marker (requires jq on PATH)`, () => {
+    it.skipIf(!hasJq)(`${scanner} echoes only fresh scanner verdicts across races and outages (requires jq on PATH)`, () => {
       const dir = tempDir();
       const bin = join(dir, "bin");
       const summary = join(dir, "summary.md");
@@ -175,38 +180,73 @@ fi
         });
       };
 
-      const checkPage = (...checkRuns: object[]) => ({ check_runs: checkRuns });
-      const marker = (conclusion: string) => ({
+      const page = (...checkRuns: object[]) => ({ check_runs: checkRuns });
+      const pages = (...allPages: object[]) => JSON.stringify(allPages);
+      const T = (m: number) => `2026-08-19T00:${String(m).padStart(2, "0")}:00Z`;
+      const marker = (conclusion: string, ts: string) => ({
         name: `${scanner}-verdict`,
-        started_at: "2026-08-19T00:00:00Z",
+        started_at: ts,
         status: "completed",
         conclusion,
       });
-      const inFlight = {
+      const leaf = (status: string, ts: string, conclusion: string | null = null) => ({
         name: `${scanner} scan (test)`,
-        started_at: "2026-08-19T00:01:00Z",
-        status: "in_progress",
-        conclusion: null,
-      };
-      const pages = (...page: object[]) => JSON.stringify(page);
+        started_at: ts,
+        status,
+        conclusion,
+      });
 
-      expect(run(pages(checkPage(), checkPage(marker("success")))).status).toBe(0);
-      expect(run(pages(checkPage(marker("failure")))).status).not.toBe(0);
-      expect(run(pages(checkPage())).status).not.toBe(0);
-      expect(run("{malformed").status).not.toBe(0);
+      // Fresh success and the F3 paginated pair both green.
+      expect(run(pages(page(leaf("completed", T(0), "success"), marker("success", T(5))))).status).toBe(0);
+      expect(run(pages(page(leaf("completed", T(0), "success")), page(marker("success", T(5))))).status).toBe(0);
 
-      const race = run("", [
-        pages(checkPage(marker("success"), inFlight)),
-        pages(checkPage(marker("failure"))),
+      // finding-1: a newer skipped edit leaf must not make a fresh marker stale.
+      expect(run(pages(page(
+        leaf("completed", T(0), "success"),
+        marker("success", T(5)),
+        leaf("completed", T(20), "skipped"),
+      ))).status).toBe(0);
+
+      // >= is fresh, while an old success marker during a completed failing leaf
+      // is the D1 gap and must fail closed.
+      expect(run(pages(page(leaf("completed", T(0), "success"), marker("success", T(0))))).status).toBe(0);
+      const staleGap = run(pages(page(marker("success", T(0)), leaf("completed", T(10), "failure"))));
+      expect(staleGap.status).not.toBe(0);
+      expect(staleGap.stdout).not.toContain(`${scanner} green`);
+
+      // D1 transition: a fresh failure following an in-flight leaf stays red.
+      const staleRace = run("", [
+        pages(page(marker("success", T(0)), leaf("in_progress", T(10)))),
+        pages(page(marker("success", T(0)), leaf("completed", T(10), "failure"), marker("failure", T(15)))),
       ]);
-      expect(race.status).not.toBe(0);
-      expect(race.stdout).toContain("real verdict for 0123456789abcdef was 'failure'");
+      expect(staleRace.status).not.toBe(0);
+      expect(staleRace.stdout).toContain("real verdict for 0123456789abcdef was 'failure'");
+
+      // D2: retained CONC=success after an in-flight leaf and API outage cannot green.
+      const staleThenOutage = run("", [
+        pages(page(leaf("in_progress", T(0)), marker("success", T(5)))),
+        ...Array.from({ length: 70 }, () => "__FAIL__"),
+      ]);
+      expect(staleThenOutage.status).not.toBe(0);
+
+      // DRY-reset: a gone streak cannot survive an API outage.
+      const dryStreakBrokenByOutage = run("", [
+        ...Array.from({ length: 5 }, () => pages(page())),
+        ...Array.from({ length: 7 }, () => "__FAIL__"),
+        pages(page()),
+        pages(page(leaf("completed", T(0), "success"), marker("success", T(5)))),
+        ...Array.from({ length: 60 }, () => "__FAIL__"),
+      ]);
+      expect(dryStreakBrokenByOutage.status).toBe(0);
 
       const outageThenSuccess = run("", [
         ...Array.from({ length: 10 }, () => "__FAIL__"),
-        pages(checkPage(marker("success"))),
+        pages(page(leaf("completed", T(0), "success"), marker("success", T(5)))),
       ]);
       expect(outageThenSuccess.status).toBe(0);
+      expect(run(pages(page(leaf("completed", T(0), "failure"), marker("failure", T(5))))).status).not.toBe(0);
+      expect(run(pages(page(leaf("completed", T(0), "success")))).status).not.toBe(0);
+      expect(run("{malformed").status).not.toBe(0);
       // Generous timeout: spawns gh+jq per poll; under full-suite concurrency on
       // a loaded machine subprocess-spawn latency can exceed vitest's 30s default.
       // Hardened alongside the new gate-echo twin, which adds concurrent load (HED-182).
