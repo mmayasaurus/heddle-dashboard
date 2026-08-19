@@ -826,6 +826,17 @@ pub fn worktree_list(repo_root: &str) -> Result<Vec<WorktreeEntry>, String> {
     Ok(entries)
 }
 
+/// Absolute worktree paths registered for the repository rooted at `project_root`, via `git worktree
+/// list --porcelain`. Includes every worktree the repository has registered, even ones checked out as
+/// siblings outside `project_root` itself — git's registration is repository-wide, not root-scoped.
+/// Read-only; returns Err when `project_root` is not a Git repository or `git` is unavailable.
+pub fn list_project_worktrees(project_root: &str) -> Result<Vec<String>, String> {
+    Ok(worktree_list(project_root)?
+        .into_iter()
+        .map(|e| e.path)
+        .collect())
+}
+
 /// Idempotently ignore `.vlx-worktrees/` through repository-local `.git/info/exclude`, keeping
 /// vlx-term-specific configuration out of shared `.gitignore`. Silently ignore lookup/write failures.
 fn ensure_worktrees_ignored(repo_dir: &str) {
@@ -1902,6 +1913,51 @@ mod merge_tests {
         let _ = worktree_remove(&wt.path, true);
         let _ = branch_delete(&repo_str, &wt.branch);
         let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&plain);
+    }
+
+    /// `list_project_worktrees` at a project root enumerates every worktree the repository has
+    /// registered, including ones checked out as siblings OUTSIDE that root — the authoritative
+    /// project-membership source for HED-167 (validated against the real Spinventory layout, where
+    /// the root's registration also lists sibling dirs like `Rebuild-Project-Root.agent-b`).
+    #[test]
+    fn list_project_worktrees_includes_siblings_outside_root() {
+        let repo = init_repo();
+        let repo_str = repo.to_string_lossy().to_string();
+
+        // Registered as a sibling temp dir outside repo, not nested under it.
+        let sibling = std::env::temp_dir().join(format!("vlx-sibling-{}", Uuid::new_v4()));
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                sibling.to_str().unwrap(),
+                "-b",
+                "wt-sibling",
+            ],
+        );
+
+        let paths = list_project_worktrees(&repo_str).expect("listing should succeed");
+        let got: Vec<PathBuf> = paths
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap())
+            .collect();
+        let want_repo = std::fs::canonicalize(&repo).unwrap();
+        let want_sibling = std::fs::canonicalize(&sibling).unwrap();
+        assert!(got.contains(&want_repo), "main worktree should be listed");
+        assert!(
+            got.contains(&want_sibling),
+            "sibling worktree registered outside the root should be listed"
+        );
+
+        // A non-repository directory returns Err so callers can fall back to an empty list.
+        let plain = std::env::temp_dir().join(format!("vlx-plain-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&plain).unwrap();
+        assert!(list_project_worktrees(&plain.to_string_lossy()).is_err());
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&sibling);
         let _ = std::fs::remove_dir_all(&plain);
     }
 
