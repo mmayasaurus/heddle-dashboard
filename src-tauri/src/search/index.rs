@@ -516,6 +516,7 @@ mod tests {
             worktree_base_ref: None,
             archived_at: None,
             browser_url: None,
+            chat_target: None,
             mark: None,
             sort_order: 0,
             created_at: 0,

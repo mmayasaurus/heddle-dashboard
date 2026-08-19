@@ -113,22 +113,24 @@ fn map_session(row: &Row) -> rusqlite::Result<Session> {
         archived_at: row.get(16)?,
         // Append the browser node's last URL at index 17.
         browser_url: row.get(17)?,
-        // Append custom agent arguments at index 18.
-        agent_args: row.get(18)?,
-        // Append permission mode at index 19.
-        permission_mode: row.get(19)?,
-        // Append the full worktree baseline ref at index 20.
-        worktree_base_ref: row.get(20)?,
-        // Append the emoji marker at index 21.
-        mark: row.get(21)?,
+        // Append the chat node's room or direct-message address at index 18.
+        chat_target: row.get(18)?,
+        // Append custom agent arguments at index 19.
+        agent_args: row.get(19)?,
+        // Append permission mode at index 20.
+        permission_mode: row.get(20)?,
+        // Append the full worktree baseline ref at index 21.
+        worktree_base_ref: row.get(21)?,
+        // Append the emoji marker at index 22.
+        mark: row.get(22)?,
     })
 }
 
 /// Session-column list whose order must match `map_session`; shared by tree/archive queries.
 const SESSION_COLUMNS: &str = "id, project_id, group_id, name, shell, cwd, env_json, init_cmd, \
      hotkey, sort_order, created_at, kind, agent_session_id, \
-     parent_session_id, collapsed, worktree_path, archived_at, browser_url, agent_args, \
-     permission_mode, worktree_base_ref, mark";
+     parent_session_id, collapsed, worktree_path, archived_at, browser_url, chat_target, \
+     agent_args, permission_mode, worktree_base_ref, mark";
 
 /// Import an existing directory as a project, using its directory name.
 pub fn import_project(conn: &Connection, root_path: &str) -> Result<Project, String> {
@@ -331,6 +333,7 @@ pub fn create_session_full(
             .filter(|s| !s.is_empty()),
         archived_at: None,
         browser_url: None,
+        chat_target: None,
         mark: None,
         sort_order: now_millis(),
         created_at: now_secs(),
@@ -404,6 +407,7 @@ pub fn persist_session(
         worktree_base_ref: None,
         archived_at: None,
         browser_url: None,
+        chat_target: None,
         mark: None,
         sort_order: now_millis(),
         created_at: now_secs(),
@@ -489,6 +493,16 @@ pub fn set_browser_url(conn: &Connection, id: &str, url: &str) -> Result<(), Str
         params![url, id],
     )
     .map_err(|e| format!("Failed to update browser url: {e}"))?;
+    Ok(())
+}
+
+/// Persist a chat node's comms address, guarded by kind.
+pub fn set_chat_target(conn: &Connection, id: &str, target: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE sessions SET chat_target = ?1 WHERE id = ?2 AND kind = 'chat'",
+        params![target, id],
+    )
+    .map_err(|e| format!("Failed to update chat target: {e}"))?;
     Ok(())
 }
 
@@ -779,6 +793,7 @@ pub fn fork_session(conn: &Connection, source_id: &str) -> Result<Session, Strin
         worktree_base_ref: None,
         archived_at: None,
         browser_url: None,
+        chat_target: None,
         // A fork continues the same line of work, so it keeps the source's marker.
         mark: source.mark.clone(),
         sort_order: now_millis(),
@@ -1716,6 +1731,7 @@ mod tests {
         let conn = Connection::open_in_memory().expect("failed to open the in-memory database");
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         conn.execute_batch(crate::db::schema::SCHEMA).unwrap();
+        crate::db::migrate(&conn).unwrap();
         conn
     }
 
@@ -2053,6 +2069,37 @@ mod tests {
 
         // A missing session returns None without error.
         assert_eq!(get_agent_session_id(&conn, "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn chat_session_kind_and_target_roundtrip() {
+        let conn = mem_conn();
+        let project = import_project(&conn, std::env::temp_dir().to_str().unwrap()).unwrap();
+        let chat = create_session(
+            &conn,
+            &project.id,
+            None,
+            "Fleet",
+            SessionKind::Chat,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(get_session_kind(&conn, &chat.id).unwrap(), Some(SessionKind::Chat));
+        assert_eq!(chat.chat_target, None);
+
+        set_chat_target(&conn, &chat.id, "#fleet").unwrap();
+        let stored = get_session(&conn, &chat.id).unwrap().unwrap();
+        assert_eq!(stored.kind, SessionKind::Chat);
+        assert_eq!(stored.chat_target.as_deref(), Some("#fleet"));
+
+        let tree = list_tree(&conn).unwrap();
+        let listed = tree.sessions.iter().find(|session| session.id == chat.id).unwrap();
+        assert_eq!(listed.chat_target.as_deref(), Some("#fleet"));
     }
 
     #[test]

@@ -794,6 +794,7 @@ pub fn read(kind: SessionKind, agent_session_id: &str) -> Result<Vec<TranscriptM
         }
         SessionKind::Terminal => Err("Terminal sessions have no agent transcript".to_string()),
         SessionKind::Browser => Err("Browser pages have no agent transcript".to_string()),
+        SessionKind::Chat => Err("Chat sessions have no agent transcript".to_string()),
     }
 }
 

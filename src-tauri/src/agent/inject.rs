@@ -345,8 +345,12 @@ pub fn permission_flag(kind: SessionKind, mode: Option<&str>) -> Option<&'static
         SessionKind::Kiro => Some("--trust-all-tools"),
         // Grok Build's documented always-approve mode bypasses tool confirmations.
         SessionKind::Grok => Some("--always-approve"),
-        // OpenCode has no equivalent flag, Pi has no confirmation mechanism, and Terminal/Browser do not apply.
-        SessionKind::Opencode | SessionKind::Pi | SessionKind::Terminal | SessionKind::Browser => {
+        // OpenCode has no equivalent flag, Pi has no confirmation mechanism, and runtime-free kinds do not apply.
+        SessionKind::Opencode
+        | SessionKind::Pi
+        | SessionKind::Terminal
+        | SessionKind::Browser
+        | SessionKind::Chat => {
             None
         }
     }
@@ -712,8 +716,8 @@ pub fn prepare_with_args_capabilities(
     let shell = shell_kind(shell_path);
     let resume = resume_id.and_then(valid_resume_id);
     let mut spawn = match kind {
-        // Browser nodes should never reach PTY launch; handle them defensively like Terminal sessions.
-        SessionKind::Terminal | SessionKind::Browser => AgentSpawn {
+        // Runtime-free nodes should never reach PTY launch; handle them defensively like Terminal sessions.
+        SessionKind::Terminal | SessionKind::Browser | SessionKind::Chat => AgentSpawn {
             env: Vec::new(),
             launch: None,
         },

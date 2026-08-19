@@ -42,6 +42,9 @@ pub enum SessionKind {
     /// Built-in browser page with no PTY or agent. Opening creates a center-pane tab at `browser_url`.
     /// Its name and latest URL are persisted, and it is available only on desktop clients.
     Browser,
+    /// Comms room or direct-message conversation with no PTY or agent runtime. Its address is persisted
+    /// in `chat_target`; a later center-pane surface renders the transcript and composer.
+    Chat,
 }
 
 impl SessionKind {
@@ -63,6 +66,7 @@ impl SessionKind {
             SessionKind::Zoo => "zoo",
             SessionKind::Crush => "crush",
             SessionKind::Browser => "browser",
+            SessionKind::Chat => "chat",
         }
     }
 
@@ -83,6 +87,7 @@ impl SessionKind {
             "zoo" => SessionKind::Zoo,
             "crush" => SessionKind::Crush,
             "browser" => SessionKind::Browser,
+            "chat" => SessionKind::Chat,
             _ => SessionKind::Terminal,
         }
     }
@@ -167,6 +172,8 @@ pub struct Session {
     /// Last URL for browser nodes, empty for other types. The frontend debounces navigation updates through
     /// `set_browser_url` and reloads this value next time.
     pub browser_url: Option<String>,
+    /// Comms address for chat nodes, such as `#fleet` or a direct-message address. Empty for other kinds.
+    pub chat_target: Option<String>,
     /// Optional user-chosen emoji marker, such as `🔥`, displayed before the node name in the sidebar and
     /// usable as a sidebar filter. The stored value is the emoji itself rather than an enumerated code, so
     /// markers written by a newer build survive round-trips here. None or empty means unmarked.
