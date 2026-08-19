@@ -54,6 +54,17 @@ function calls(home: string): string[] {
   return fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8").trimEnd().split("\n") : [];
 }
 
+function writeFailingClaude(home: string, stderr: string, code = 1): string {
+  const fakeClaude = path.join(home, "fake-claude-failing");
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\nprintf '%s\\n' '${stderr}' >&2\nexit ${code}\n`);
+  fs.chmodSync(fakeClaude, 0o755);
+  return fakeClaude;
+}
+
+function dispatch(home: string, account: string) {
+  return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "usage", `claude-${account}.dispatch.json`), "utf8"));
+}
+
 function establishAcct1Window(home: string) {
   const result = runKeeper([], home);
   expect(result.status).toBe(0);
@@ -200,6 +211,7 @@ function expectTokenPrivate(home: string, result: ReturnType<typeof runKeeper>, 
     result.stderr,
     contentsIfPresent(path.join(home, ".heddle", "window-keeper.log")),
     contentsIfPresent(path.join(home, ".heddle", "usage", `claude-${account}.oauth-usage.json`)),
+    contentsIfPresent(path.join(home, ".heddle", "usage", `claude-${account}.dispatch.json`)),
     contentsIfPresent(path.join(home, ".heddle", "window-keeper.state.json")),
     contentsIfPresent(path.join(home, ".heddle", "oauth-usage-state.json")),
     contentsIfPresent(path.join(home, ".heddle", "transcript-usage-state.json")),
@@ -390,6 +402,70 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stderr.match(/warning: unable to write window keeper log/g)).toHaveLength(1);
     expect(result.stdout).toContain("acct1: UNKNOWN (no capture) → WOULD ping (dry-run)");
     expect(result.stdout).toContain("acct2: UNKNOWN (no capture) → WOULD ping (dry-run)");
+  });
+
+  it("emits an ok dispatch signal alongside a successful ping", () => {
+    const home = mkHome();
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(dispatch(home, "acct1")).toEqual({
+      schemaVersion: 1,
+      account: "acct1",
+      dispatchable: true,
+      reason: "ok",
+      checkedAt: expect.any(Number),
+    });
+  });
+
+  it("classifies a billing refusal and excludes the account from dispatch", () => {
+    const home = mkHome();
+    const result = runKeeper([], home, {
+      HEDDLE_CLAUDE_BIN: writeFailingClaude(home, "organization has disabled Claude subscription access"),
+    });
+    expect(result.status).toBe(0);
+    const signal = dispatch(home, "acct1");
+    expect(signal).toMatchObject({ dispatchable: false, reason: "billing" });
+    expect(signal.detail).toContain("disabled Claude subscription access");
+  });
+
+  it("classifies a logged-out refusal and excludes the account from dispatch", () => {
+    const home = mkHome();
+    const result = runKeeper([], home, {
+      HEDDLE_CLAUDE_BIN: writeFailingClaude(home, "Invalid API key · Please run /login"),
+    });
+    expect(result.status).toBe(0);
+    expect(dispatch(home, "acct1")).toMatchObject({ dispatchable: false, reason: "logged-out" });
+  });
+
+  it("records a rate-capped refusal as factually not-dispatchable (the consumer, not the producer, declines to exclude on rate)", () => {
+    const home = mkHome();
+    const result = runKeeper([], home, {
+      HEDDLE_CLAUDE_BIN: writeFailingClaude(home, "Error: rate limit exceeded (429)"),
+    });
+    expect(result.status).toBe(0);
+    expect(dispatch(home, "acct1")).toMatchObject({ dispatchable: false, reason: "rate-capped" });
+  });
+
+  it("records an unavailable Claude binary as an ambiguous error, factually not-dispatchable (the consumer fails open on error)", () => {
+    const home = mkHome();
+    const result = runKeeper([], home, { HEDDLE_CLAUDE_BIN: path.join(home, "does-not-exist") });
+    expect(result.status).toBe(0);
+    expect(dispatch(home, "acct1")).toMatchObject({ dispatchable: false, reason: "error" });
+  });
+
+  it("logs and continues when the dispatch signal write fails, without losing the ping", () => {
+    const home = mkHome();
+    fs.mkdirSync(path.join(home, ".heddle", "usage", "claude-acct1.dispatch.json"), { recursive: true });
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-acct1.keeper.json"))).toBe(true);
+  });
+
+  it("writes the dispatch sidecar on --verify as a free on-demand probe", () => {
+    const home = mkHome();
+    const result = runKeeper(["--verify", "acct1"], home);
+    expect(result.status).toBe(0);
+    expect(dispatch(home, "acct1").reason).toBe("ok");
   });
 
   it("writes rotation advice for the freshest tap-sourced active account", () => {
