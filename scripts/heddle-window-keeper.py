@@ -364,6 +364,34 @@ def window(acct_id):
     return max(cands, key=lambda c: c["captured"] or 0)
 
 
+def classify_ping(ok, returncode, stdout, stderr):
+    """Classify a ping outcome into a per-account dispatchability reason (HED-178 producer).
+
+    Conservative by design: a FALSE EXCLUSION (a healthy account misread as billing/logged-out) is
+    the costly failure, so only tight, high-confidence markers may emit "billing" or "logged-out".
+    Anything ambiguous falls through to "error". `dispatchable` stays FACTUAL (reason == "ok"); the
+    CONSUMER (not this producer) fails open on error/unknown — it excludes only on billing/logged-out —
+    so a missed refusal is a no-op, not a regression from today's behavior.
+    """
+    if ok:
+        return "ok"
+    haystack = ((stderr or "") + " " + (stdout or "")).lower()
+    if "disabled" in haystack and "subscription" in haystack:
+        return "billing"
+    # SPECULATIVE + CONSERVATIVE — only login/session-specific phrases map to logged-out. A false
+    # exclusion of a HEALTHY account is the costly failure, so generic markers ("unauthorized",
+    # "invalid api key") are DELIBERATELY excluded: a model-scoped or request-level auth error must
+    # fall through to "error" (fail-open in the consumer), never "logged-out" (which the consumer
+    # excludes on). Revise when a real logged-out refusal is observed.
+    if any(marker in haystack for marker in (
+        "please run /login", "not logged in", "oauth token has expired",
+    )):
+        return "logged-out"
+    if any(marker in haystack for marker in ("rate limit", "429", "too many requests")):
+        return "rate-capped"
+    return "error"
+
+
 def ping(acct):
     env = dict(os.environ)
     if acct.get("configDir"):
@@ -377,9 +405,39 @@ def ping(acct):
         r = subprocess.run([CLAUDE, "-p", "Reply with exactly: ok", "--model", PING_MODEL, "--output-format", "json"],
                            capture_output=True, text=True, timeout=120, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
-        return False, round(time.time() - t0, 1), str(e)[-160:]
+        return False, round(time.time() - t0, 1), str(e)[-160:], "error"
     ok = r.returncode == 0 and '"ok"' in r.stdout
-    return ok, round(time.time() - t0, 1), (r.stderr or "")[-160:]
+    reason = classify_ping(ok, r.returncode, r.stdout, r.stderr)
+    err = ((r.stderr or "").strip() or (r.stdout or "").strip())[-160:]
+    return ok, round(time.time() - t0, 1), err, reason
+
+
+def write_dispatch(acct_id, reason, err):
+    """Persist the per-account dispatchability signal (HED-178 producer half of HED-176).
+
+    Rides the keeper's EXISTING staggered pings — no new loop. A live window is skipped, so a
+    HEALTHY account's checkedAt only refreshes when its 5h window expires (hours); a SUSPENDED
+    account (window never goes live) refreshes every few stagger slots. checkedAt lets the
+    consumer gate on staleness — a mid-window suspension is caught at the next ping, not instantly.
+    checkedAt is stamped HERE, after the ping has already returned, so a slow or timed-out ping
+    (up to 120s) never backdates the signal below a consumer's freshness window.
+    """
+    payload = {"schemaVersion": 1, "account": acct_id,
+               # FACTUAL ground truth: "can this account take work right now" (HED-176/U). The
+               # exclusion POLICY (which reasons exclude; fail-open on error/rate) lives in the
+               # CONSUMER, keyed off `reason` — Maya's selection-semantics call, not the producer's.
+               "dispatchable": reason == "ok",
+               "reason": reason, "checkedAt": int(time.time())}
+    # detail ONLY for the specific-marker account-state refusals (billing/logged-out): those are
+    # known-format messages and are exactly the "next-lapse alert" signal. Arbitrary error/rate
+    # subprocess output is NOT persisted — the OAuth path in this file likewise never retains
+    # stdout/stderr, since a generic failure can carry request-level diagnostics we must not store.
+    if reason in ("billing", "logged-out") and err:
+        payload["detail"] = err
+    try:
+        write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.dispatch.json"), payload)
+    except Exception as e:                      # noqa: BLE001 - signal write must never cost us a ping
+        log(f"[dispatch] {acct_id}: signal write failed ({type(e).__name__})")
 
 
 def fmt(ts):
@@ -917,7 +975,8 @@ def main():
             log(f"--verify: unknown account {verify}"); return
         before = window(verify)
         log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
-        ok, secs, err = ping(a)
+        ok, secs, err, reason = ping(a)
+        write_dispatch(verify, reason, err)
         time.sleep(3)
         after = window(verify)
         log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
@@ -943,8 +1002,9 @@ def main():
             continue
         if dry:
             log(f"{a['id']}: {status} → WOULD ping (dry-run)"); continue
-        ok, secs, err = ping(a)
+        ok, secs, err, reason = ping(a)
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
+        write_dispatch(a["id"], reason, err)
         if ok:
             # Remember the window WE just started (the tap can't see headless pings).
             write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.keeper.json"),
