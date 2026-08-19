@@ -648,7 +648,8 @@ fn participants_surface_kind_liveness_addressability_and_display_names() {
            INSERT INTO participants (address, kind, parent, seq, dispatch_id, label, first_seen, last_seen) VALUES
            ('R.1', 'child', 'R', 1, NULL, 'Desk child', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
            ('R.2', 'child', 'R', 2, 42, '', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-           ('R.3', 'child', 'R', 3, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+           ('R.3', 'child', 'R', 3, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+           ('R.4', 'child', 'R', 4, NULL, '   ', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
            INSERT INTO participants (address, kind, first_seen, last_seen)
            VALUES ('operator', 'operator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
            INSERT INTO sessions (address, started_at, heartbeat_at) VALUES
@@ -662,7 +663,7 @@ fn participants_surface_kind_liveness_addressability_and_display_names() {
     let snap = participants_at(&path).unwrap();
     assert!(snap.schema_ok);
     assert_eq!(snap.schema_version, 1);
-    assert_eq!(snap.participants.len(), 5, "operator must be excluded");
+    assert_eq!(snap.participants.len(), 6, "operator must be excluded");
 
     let by_address: std::collections::HashMap<_, _> = snap
         .participants
@@ -703,4 +704,17 @@ fn participants_surface_kind_liveness_addressability_and_display_names() {
     assert_eq!(retired_desk.display_name, "R.3");
     assert!(!retired_desk.alive, "no sessions row means retired");
     assert!(!retired_desk.addressable);
+
+    let whitespace_label = by_address["R.4"];
+    assert_eq!(whitespace_label.display_name, "R.4");
+}
+
+#[test]
+fn participant_kind_classifies_broker_participants() {
+    assert_eq!(participant_kind("agent", None), Some("orchestrator"));
+    assert_eq!(participant_kind("agent", Some(1)), Some("orchestrator"));
+    assert_eq!(participant_kind("child", None), Some("subagent-desk"));
+    assert_eq!(participant_kind("child", Some(7)), Some("subagent-errand"));
+    assert_eq!(participant_kind("operator", None), None);
+    assert_eq!(participant_kind("bogus", None), None);
 }

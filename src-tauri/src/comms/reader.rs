@@ -1,9 +1,10 @@
 //! Read-only queries over `~/.heddle/comms.db` for the dashboard's fleet-chatroom panel.
 //!
 //! Schema authority is the heddle repo's `src/comms/log.ts` (the broker that writes this
-//! database). Two Tauri commands are exposed: `heddle_comms_rooms` (rooms overview +
+//! database). Three Tauri commands are exposed: `heddle_comms_rooms` (rooms overview +
 //! open needs-human/permission-request queue + a 24h refusal counter) and
-//! `heddle_comms_transcript` (one target's paged message history + its room's floor lease).
+//! `heddle_comms_transcript` (one target's paged message history + its room's floor lease), and
+//! `heddle_comms_participants` (fleet agents + subagents with broker-derived kind, liveness, and comms address).
 //!
 //! READ-ONLY CONTRACT: every connection here is opened `SQLITE_OPEN_READ_ONLY` (SQLite itself
 //! refuses any write on the connection — see `open_readonly`) with `PRAGMA query_only = ON` on
@@ -11,8 +12,8 @@
 //! the fleet contract with the broker that owns it.
 //!
 //! SCHEMA STATE MACHINE (never deviate): missing db file → `schemaOk: true, schemaVersion: 0`,
-//! empty payloads (fresh install, not an error). `user_version != 1` on an existing file →
-//! `schemaOk: false` with the observed version, empty payloads, and no table is ever queried in
+//! empty payloads (fresh install, not an error). a `user_version` OUTSIDE the supported range (see
+//! `schema_supported`) → `schemaOk: false` with the observed version, empty payloads, and no table is ever queried in
 //! that state. Only a supported `user_version` reads tables.
 
 use std::collections::{HashMap, HashSet};
@@ -274,6 +275,18 @@ fn empty_participants_snapshot(version: i64, ok: bool) -> ParticipantsSnapshot {
     ParticipantsSnapshot { schema_ok: ok, schema_version: version, participants: vec![] }
 }
 
+/// Map (broker `participants.kind`, `dispatch_id`) to the reader's participant kind. `None` for the operator
+/// or any unexpected broker kind (the caller skips that row). `dispatch_id` presence is the desk-vs-errand
+/// discriminator (broker `mintChild` stamps it only for heddle-dispatched workers).
+fn participant_kind(broker_kind: &str, dispatch_id: Option<i64>) -> Option<&'static str> {
+    match (broker_kind, dispatch_id) {
+        ("agent", _) => Some("orchestrator"),
+        ("child", None) => Some("subagent-desk"),
+        ("child", Some(_)) => Some("subagent-errand"),
+        _ => None,
+    }
+}
+
 fn query_participants(conn: &Connection) -> Result<Vec<Participant>, String> {
     let stale_modifier = format!("-{SESSION_STALE_SECS} seconds");
     let mut stmt = conn
@@ -290,17 +303,15 @@ fn query_participants(conn: &Connection) -> Result<Vec<Participant>, String> {
         .query_map([stale_modifier], |r| {
             let broker_kind: String = r.get("kind")?;
             let dispatch_id: Option<i64> = r.get("dispatch_id")?;
-            let kind = match (broker_kind.as_str(), dispatch_id) {
-                ("agent", _) => "orchestrator",
-                ("child", None) => "subagent-desk",
-                ("child", Some(_)) => "subagent-errand",
-                _ => return Ok(None),
+            let kind = match participant_kind(&broker_kind, dispatch_id) {
+                Some(k) => k,
+                None => return Ok(None),
             };
             let address: String = r.get("address")?;
             let label: Option<String> = r.get("label")?;
             let alive = r.get::<_, i64>("alive")? != 0;
             Ok(Some(Participant {
-                display_name: label.filter(|label| !label.is_empty()).unwrap_or_else(|| address.clone()),
+                display_name: label.filter(|label| !label.trim().is_empty()).unwrap_or_else(|| address.clone()),
                 address,
                 kind: kind.to_string(),
                 addressable: kind == "orchestrator" || (kind == "subagent-desk" && alive),
