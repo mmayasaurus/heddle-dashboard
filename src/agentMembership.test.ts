@@ -42,4 +42,22 @@ describe("agentInProjectWorktrees", () => {
   it("returns false against an empty worktree set", () => {
     expect(agentInProjectWorktrees("/x/Rebuild-Project-Root", [])).toBe(false);
   });
+
+  it("matches a nested cwd across Windows-style backslash paths", () => {
+    const windowsWorktrees = ["C:\\x\\Root", "C:\\x\\Root.agent-b"];
+    expect(agentInProjectWorktrees("C:\\x\\Root.agent-b\\sub", windowsWorktrees)).toBe(true);
+  });
+
+  it("matches case-insensitively", () => {
+    expect(agentInProjectWorktrees("/X/REBUILD-PROJECT-ROOT.AGENT-B", WORKTREES)).toBe(true);
+  });
+
+  it("skips an empty worktree-path entry instead of matching every cwd", () => {
+    expect(agentInProjectWorktrees("/x/foo", [""])).toBe(false);
+  });
+
+  it("still matches only real entries when an empty entry is mixed into the set", () => {
+    expect(agentInProjectWorktrees("/x/foo", ["/x/foo", ""])).toBe(true);
+    expect(agentInProjectWorktrees("/x/bar", ["/x/foo", ""])).toBe(false);
+  });
 });
