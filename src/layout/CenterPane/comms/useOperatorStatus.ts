@@ -124,15 +124,24 @@ export function isCommsOperatorResult(v: unknown): v is CommsOperatorResult {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
   if (typeof o.outcome !== "string") return false;
-  if (o.code !== null && typeof o.code !== "string") return false;
-  if (o.reason !== null && typeof o.reason !== "string") return false;
+  // `code`/`reason` are OPTIONAL in the broker's replies: a room post returns
+  // `{outcome:"logged", code:"room-pull"}` with NO `reason` key (HED-196). `!= null` (not `!== null`)
+  // accepts both null and a missing key (undefined) — normalized to null in parseOperatorResult —
+  // and rejects only a present, wrong-typed value. The old `!== null` rejected the whole room-post
+  // payload, so parseOperatorResult fell to the error sentinel and the composer showed the generic
+  // "broker refused" banner on a message the broker had actually LOGGED to the room.
+  if (o.code != null && typeof o.code !== "string") return false;
+  if (o.reason != null && typeof o.reason !== "string") return false;
   return true;
 }
 
 /** Parses an invoke() result into a typed CommsOperatorResult. A malformed/unexpected shape
- *  becomes the local 'error' sentinel rather than being trusted or thrown. */
+ *  becomes the local 'error' sentinel rather than being trusted or thrown. A valid payload with a
+ *  missing code/reason is normalized so the returned value is always `string | null`, never
+ *  undefined, for every downstream consumer (refusalText, isOperatorFailure). */
 export function parseOperatorResult(raw: unknown): CommsOperatorResult {
-  return isCommsOperatorResult(raw) ? raw : { outcome: "error", code: null, reason: null };
+  if (!isCommsOperatorResult(raw)) return { outcome: "error", code: null, reason: null };
+  return { outcome: raw.outcome, code: raw.code ?? null, reason: raw.reason ?? null };
 }
 
 /** Sentinel for a thrown/rejected invoke() call, carrying the caught error's message as the
