@@ -117,10 +117,20 @@ backend for per-provider refresh buttons.
      (agy *creates* that directory as part of first-run sign-in, so its absence means "a refresh would
      prompt"). Blocked with `gemini.noProfile`, which names the HOME and says to run `agy` once in a
      terminal. This one is refused even for the drawer's refresh button.
-  2. **Sticky auth block** — any attempt whose failure looks like it needed a human (the run timing
-     out, or an error naming sign-in/OAuth/credentials/browser) sets `authBlocked` in the snapshot and
-     stops *automatic* refreshes (`gemini.authBlocked`, with the original error). The drawer's refresh
-     button may retry once (an explicit human action, at most one prompt); a successful run clears it.
+  2. **Bounded-retry-then-sticky (HED-188)** — an error naming sign-in/OAuth/credentials/browser
+     directly sets `authBlocked` in the snapshot immediately (still at most one prompt). A bare
+     **timeout** is treated as transient first: it increments `timeoutStreak` and auto-retries on the
+     normal 120s failure backoff, only setting `authBlocked` once `timeoutStreak` reaches
+     `TIMEOUT_STREAK_STICKY` (3) *consecutive* timeouts within `TIMEOUT_STREAK_WINDOW_SECS` (900s) —
+     `gemini.json` persists across app restarts, so timeouts further apart than that don't compound;
+     the streak restarts at 1. Either way `authBlocked` stops *automatic* refreshes
+     (`gemini.authBlocked`, with the original error); the drawer's refresh button may retry once (an
+     explicit human action). A successful run clears the block and the streak outright, and so does an
+     ordinary (non-timeout, non-auth-shaped) failure — but a sub-threshold timeout never clears an
+     *existing* block on its own, since a timeout is never proof auth is resolved. A snapshot written
+     before `timeoutStreak` existed (`authBlocked` set on a single timeout, no streak field) is
+     detected as legacy on read and treated as unblocked so it self-heals on the next refresh instead
+     of staying stuck forever — this is the exact shape of the incident that motivated the fix.
   Being wrong here costs a stale gauge; being wrong the other way hijacks the operator's browser on a
   timer, so both layers fail toward "don't run".
 
@@ -137,9 +147,14 @@ backend for per-provider refresh buttons.
   first ~15 minutes the failing loop stopped touching the HOME **entirely** while still prompting, so
   any mtime-derived backoff would read "last attempt hours ago, safe to retry" in the middle of an
   active prompt loop. `agy` also exposes no documented non-interactive-auth flag (`agy --help`,
-  v1.1.11) to probe with instead. So layer 2 is what actually bounds the damage: **at most one prompt
-  per HOME state, then automatic refresh is paused until a human clicks the refresh button.** The
-  incident being closed is the *repeat* — a prompt every 180s, forever — not the first one.
+  v1.1.11) to probe with instead. So layer 2 is what actually bounds the damage: **an auth-shaped
+  failure pauses after one prompt; a genuinely-hanging agy still escalates to the same pause, just
+  after `TIMEOUT_STREAK_STICKY` bounded, backed-off tries instead of the first one.** (HED-188: the
+  original version paused after a single timeout, which caught ordinary transient timeouts as false
+  positives and needed a manual refresh-button click to recover — a live one-off 45s timeout did
+  exactly that ~15h before the fix, with the drawer's Gemini bar dark the whole time.) The incident
+  being closed is the *repeat* — a prompt every 180s, forever — not a bounded handful of retries on
+  an ordinary timeout.
 - **Cost / cadence**: ~3s wall clock and a few Google round trips per run, so it never runs inline.
   `heddle_provider_limits` reads the snapshot and, when it is older than 180s, kicks ONE detached
   refresh thread (`agy … --log-file /dev/null`, so no log file per run under `~/.gemini/…/log/`; 45s
