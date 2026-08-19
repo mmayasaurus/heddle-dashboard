@@ -48,8 +48,8 @@ describe("agentInProjectWorktrees", () => {
     expect(agentInProjectWorktrees("C:\\x\\Root.agent-b\\sub", windowsWorktrees)).toBe(true);
   });
 
-  it("matches case-insensitively", () => {
-    expect(agentInProjectWorktrees("/X/REBUILD-PROJECT-ROOT.AGENT-B", WORKTREES)).toBe(true);
+  it("is case-sensitive — a case-variant path is not treated as the same worktree", () => {
+    expect(agentInProjectWorktrees("/X/REBUILD-PROJECT-ROOT.AGENT-B", WORKTREES)).toBe(false);
   });
 
   it("skips an empty worktree-path entry instead of matching every cwd", () => {
