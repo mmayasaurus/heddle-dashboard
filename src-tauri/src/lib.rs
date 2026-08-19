@@ -877,9 +877,10 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             heddle_stats::discipline::heddle_discipline,
             heddle_stats::heddle_provider_limits,
             heddle_stats::heddle_refresh_provider_limits,
-            // Fleet chatroom panel (read-only comms.db views): rooms/needs-human/transcript.
+            // Fleet chatroom panel (read-only comms.db views): rooms/needs-human/transcript/participants.
             comms::reader::heddle_comms_rooms,
             comms::reader::heddle_comms_transcript,
+            comms::reader::heddle_comms_participants,
             // Fleet chatroom composer (write path, operator-only): status + send + room management.
             comms::operator::heddle_comms_operator_status,
             comms::operator::heddle_comms_send,

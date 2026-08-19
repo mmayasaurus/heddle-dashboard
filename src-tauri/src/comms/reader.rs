@@ -26,7 +26,7 @@ use serde::Serialize;
 ///
 /// A RANGE rather than one pinned version, because the broker's bumps so far are purely ADDITIVE:
 /// v2 added a `message_mentions` table and changed nothing this reader touches (`messages`,
-/// `deliveries`, `participants`, `rooms`, `room_members`, `room_floor`). Pinning v1 meant the panel
+/// `deliveries`, `participants`, `sessions`, `rooms`, `room_members`, `room_floor`). Pinning v1 meant the panel
 /// refused a live v2 database and rendered "unsupported" while perfectly readable data sat there —
 /// found by pointing it at the real fleet log.
 ///
@@ -35,6 +35,8 @@ use serde::Serialize;
 /// after checking the broker's migration is additive for those tables.
 const COMMS_SCHEMA_MIN: i64 = 1;
 const COMMS_SCHEMA_MAX: i64 = 2;
+/// Matches the broker's `DEFAULT_SESSION_STALE_MS` (90_000 ms).
+const SESSION_STALE_SECS: i64 = 90;
 
 fn schema_supported(v: i64) -> bool {
     (COMMS_SCHEMA_MIN..=COMMS_SCHEMA_MAX).contains(&v)
@@ -140,6 +142,26 @@ pub struct FloorInfo {
     until_ts: Option<String>,
 }
 
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipantsSnapshot {
+    schema_ok: bool,
+    schema_version: i64,
+    participants: Vec<Participant>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Participant {
+    address: String,
+    display_name: String,
+    kind: String,
+    addressable: bool,
+    alive: bool,
+    parent: Option<String>,
+    dispatch_id: Option<i64>,
+}
+
 // ───────────────────────────────── path / connection helpers ──────────────────────────────────
 
 /// `None` when no home directory exists — callers treat that as a fresh install rather than
@@ -216,6 +238,81 @@ fn empty_rooms_snapshot(version: i64, ok: bool) -> RoomsSnapshot {
         needs_human: vec![],
         recent_refusals: 0,
     }
+}
+
+// ───────────────────────────────── heddle_comms_participants ─────────────────────────────────
+
+/// Fleet agents and their subagents, including broker-derived kind, liveness, and comms address.
+/// This is a read-only raw-fact view for member pickers; it deliberately does not apply UI session
+/// classifications or delivery policy.
+#[tauri::command]
+pub async fn heddle_comms_participants() -> Result<ParticipantsSnapshot, String> {
+    blocking(|| match comms_db_path() {
+        Some(p) => participants_at(&p),
+        None => Ok(empty_participants_snapshot(0, true)),
+    })
+    .await
+}
+
+fn participants_at(path: &Path) -> Result<ParticipantsSnapshot, String> {
+    if !path.exists() {
+        return Ok(empty_participants_snapshot(0, true));
+    }
+    let conn = open_readonly(path)?;
+    let version = read_user_version(&conn)?;
+    if !schema_supported(version) {
+        return Ok(empty_participants_snapshot(version, false));
+    }
+    Ok(ParticipantsSnapshot {
+        schema_ok: true,
+        schema_version: version,
+        participants: query_participants(&conn)?,
+    })
+}
+
+fn empty_participants_snapshot(version: i64, ok: bool) -> ParticipantsSnapshot {
+    ParticipantsSnapshot { schema_ok: ok, schema_version: version, participants: vec![] }
+}
+
+fn query_participants(conn: &Connection) -> Result<Vec<Participant>, String> {
+    let stale_modifier = format!("-{SESSION_STALE_SECS} seconds");
+    let mut stmt = conn
+        .prepare(
+            "SELECT p.address, p.kind, p.parent, p.dispatch_id, p.label, \
+             (s.heartbeat_at IS NOT NULL AND s.heartbeat_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now',?1)) AS alive \
+             FROM participants p \
+             LEFT JOIN sessions s ON s.address = p.address \
+             WHERE p.kind <> 'operator' \
+             ORDER BY p.kind, p.address",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([stale_modifier], |r| {
+            let broker_kind: String = r.get("kind")?;
+            let dispatch_id: Option<i64> = r.get("dispatch_id")?;
+            let kind = match (broker_kind.as_str(), dispatch_id) {
+                ("agent", _) => "orchestrator",
+                ("child", None) => "subagent-desk",
+                ("child", Some(_)) => "subagent-errand",
+                _ => return Ok(None),
+            };
+            let address: String = r.get("address")?;
+            let label: Option<String> = r.get("label")?;
+            let alive = r.get::<_, i64>("alive")? != 0;
+            Ok(Some(Participant {
+                display_name: label.filter(|label| !label.is_empty()).unwrap_or_else(|| address.clone()),
+                address,
+                kind: kind.to_string(),
+                addressable: kind == "orchestrator" || (kind == "subagent-desk" && alive),
+                alive,
+                parent: r.get("parent")?,
+                dispatch_id,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.filter_map(Result::transpose)
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())
 }
 
 fn query_rooms(conn: &Connection) -> Result<Vec<RoomSummary>, String> {

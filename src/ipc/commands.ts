@@ -434,6 +434,29 @@ export function listRoomAssociations(): Promise<RoomAssociation[]> {
   return invoke<RoomAssociation[]>("list_room_associations");
 }
 
+/** One comms participant available to member pickers and addressable by its broker address. */
+export interface Participant {
+  address: string;
+  displayName: string;
+  kind: "orchestrator" | "subagent-desk" | "subagent-errand";
+  addressable: boolean;
+  alive: boolean;
+  parent: string | null;
+  dispatchId: number | null;
+}
+
+/** Read-only comms participant snapshot, including reader schema compatibility. */
+export interface ParticipantsSnapshot {
+  schemaOk: boolean;
+  schemaVersion: number;
+  participants: Participant[];
+}
+
+/** Lists broker participants for member pickers and project trees. */
+export function heddleCommsParticipants(): Promise<ParticipantsSnapshot> {
+  return invoke<ParticipantsSnapshot>("heddle_comms_participants");
+}
+
 /** Lists worktrees associated with a session and descendants for deletion confirmation. */
 export function worktreesInSubtree(sessionId: string): Promise<string[]> {
   return invoke<string[]>("worktrees_in_subtree", { sessionId });
