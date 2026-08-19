@@ -6,7 +6,14 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../../ipc/transport";
 import { t } from "../../../i18n";
-import { operatorHint, useOperatorStatus, type OperatorStatusReason } from "./useOperatorStatus";
+import {
+  isCommsOperatorResult,
+  isOperatorFailure,
+  operatorHint,
+  parseOperatorResult,
+  useOperatorStatus,
+  type OperatorStatusReason,
+} from "./useOperatorStatus";
 
 vi.mock("../../../ipc/transport", () => ({ invoke: vi.fn(), isTauri: true }));
 
@@ -149,5 +156,64 @@ describe("operatorHint", () => {
     }
     // Every reason maps to a DIFFERENT hint — never a shared generic string.
     expect(new Set(hints).size).toBe(reasons.length);
+  });
+});
+
+// HED-196: the composer showed the generic "The broker refused this message." on a message the
+// broker had actually LOGGED to the room. Root cause: a room (pull-model) post returns
+// {outcome:"logged", code:"room-pull"} with NO `reason` key, and the old validator rejected any
+// payload whose `reason` was not null-or-string (undefined failed), collapsing a successful send to
+// the error sentinel. Fixtures below are the REAL broker payloads captured under a clean operator
+// env (scratchpad repro2/repro3/verify), so this regression cannot silently return.
+describe("write-path result shape (HED-196)", () => {
+  it("accepts a room post that omits `reason` and treats it as SUCCESS, not a refusal", () => {
+    const roomPost = { outcome: "logged", code: "room-pull" }; // real #fleet post payload — no reason key
+    expect(isCommsOperatorResult(roomPost)).toBe(true);
+    expect(parseOperatorResult(roomPost)).toEqual({ outcome: "logged", code: "room-pull", reason: null });
+    // The fix: a logged room post is success — no banner, and the composer clears + the poll surfaces it.
+    expect(isOperatorFailure(parseOperatorResult(roomPost))).toBe(false);
+  });
+
+  it("normalizes a missing `code` too (not only `reason`)", () => {
+    const onlyOutcome = { outcome: "logged" };
+    expect(isCommsOperatorResult(onlyOutcome)).toBe(true);
+    expect(parseOperatorResult(onlyOutcome)).toEqual({ outcome: "logged", code: null, reason: null });
+  });
+
+  it("keeps a broker 'refused' outcome a failure, surfacing its real reason", () => {
+    const refused = { outcome: "refused", code: "floor-held", reason: "S holds the floor" };
+    expect(isCommsOperatorResult(refused)).toBe(true);
+    expect(isOperatorFailure(parseOperatorResult(refused))).toBe(true);
+    expect(parseOperatorResult(refused).reason).toBe("S holds the floor");
+  });
+
+  it("treats a no-live-session DM (has reason) as success — the message is logged for pull", () => {
+    const dm = { outcome: "failed", code: "no-live-session", reason: "R has no live comms session; it can pull the message from the log" };
+    expect(isCommsOperatorResult(dm)).toBe(true);
+    expect(isOperatorFailure(parseOperatorResult(dm))).toBe(false);
+  });
+
+  it("accepts an @all broadcast reply (has a reason string)", () => {
+    const bcast = { outcome: "sent", code: "broadcast", reason: "0/10 pushed, 10/10 to inbox" };
+    expect(isCommsOperatorResult(bcast)).toBe(true);
+    expect(isOperatorFailure(parseOperatorResult(bcast))).toBe(false);
+  });
+
+  it("still rejects a present-but-wrong-typed code/reason, falling to the error sentinel", () => {
+    expect(isCommsOperatorResult({ outcome: "logged", code: 5 })).toBe(false);
+    expect(isCommsOperatorResult({ outcome: "logged", reason: {} })).toBe(false);
+    expect(parseOperatorResult({ outcome: "logged", code: 5 })).toEqual({ outcome: "error", code: null, reason: null });
+  });
+
+  it("documents the SEPARATE room-management shape gap: success payloads carry no `outcome`", () => {
+    // HED-196 discovery (scratchpad repro4b): create_room/join_room/leave_room SUCCESS return
+    // {room}/{member}/{removed} with NO `outcome` field — a DIFFERENT shape the shared
+    // CommsOperatorResult model does not cover, so isOperatorFailure would flag a *successful* room
+    // creation/member change as a failure. The missing-key fix here does NOT address that; wiring the
+    // room-management UIs is tracked separately (folds into the HED-166 room-management surface). This
+    // test pins the current behavior so that follow-up is deliberate, not an accidental regression.
+    expect(isCommsOperatorResult({ room: { name: "#fleet" } })).toBe(false);
+    expect(isCommsOperatorResult({ member: { room: "#fleet", address: "T" } })).toBe(false);
+    expect(isCommsOperatorResult({ removed: true })).toBe(false);
   });
 });
