@@ -434,6 +434,31 @@ export function listRoomAssociations(): Promise<RoomAssociation[]> {
   return invoke<RoomAssociation[]>("list_room_associations");
 }
 
+export type NotifLevel = "mute" | "normal" | "all";
+
+/** Operator-owned read cursor, unread count, and notification preference for one conversation. */
+export interface ConversationUnread {
+  conversationAddress: string;
+  unreadCount: number;
+  lastReadId: number;
+  notifLevel: NotifLevel;
+}
+
+/** Lists unread state for rooms and direct-message peers, seeding newly seen conversations as read. */
+export function heddleUnreadState(): Promise<ConversationUnread[]> {
+  return invoke<ConversationUnread[]>("heddle_unread_state");
+}
+
+/** Advances the operator's read cursor for a room or direct-message peer. */
+export function markRead(address: string, lastId: number): Promise<void> {
+  return invoke("heddle_mark_read", { address, lastId });
+}
+
+/** Persists a notification level for a room or direct-message peer. */
+export function setNotifLevel(address: string, level: NotifLevel): Promise<void> {
+  return invoke("heddle_set_notif_level", { address, level });
+}
+
 /** One comms participant available to member pickers and addressable by its broker address. */
 export interface Participant {
   address: string;

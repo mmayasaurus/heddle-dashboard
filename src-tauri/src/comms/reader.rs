@@ -67,6 +67,14 @@ pub struct RoomSummary {
     latest_id: i64,
 }
 
+/// Read-only comms facts for one address, joined with heddle.db state by command_core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadConversation {
+    pub address: String,
+    pub unread_count: i64,
+    pub latest_id: i64,
+}
+
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct NeedsHumanRow {
@@ -181,6 +189,111 @@ fn open_readonly(path: &Path) -> Result<Connection, String> {
     conn.busy_timeout(std::time::Duration::from_secs(3)).ok();
     conn.execute_batch("PRAGMA query_only = ON;").ok();
     Ok(conn)
+}
+
+/// Enumerate conversations and their unread facts from comms.db. Any unavailable or unsupported
+/// broker database is an empty read-only view: persisted addresses remain visible with zero counts.
+pub fn unread_conversations(read_states: &HashMap<String, i64>) -> Result<Vec<UnreadConversation>, String> {
+    match comms_db_path() {
+        Some(path) => unread_conversations_at(&path, read_states),
+        None => Ok(empty_unread_conversations(read_states)),
+    }
+}
+
+fn unread_conversations_at(
+    path: &Path,
+    read_states: &HashMap<String, i64>,
+) -> Result<Vec<UnreadConversation>, String> {
+    if !path.exists() {
+        return Ok(empty_unread_conversations(read_states));
+    }
+    let Ok(conn) = open_readonly(path) else {
+        return Ok(empty_unread_conversations(read_states));
+    };
+    let Ok(version) = read_user_version(&conn) else {
+        return Ok(empty_unread_conversations(read_states));
+    };
+    if !schema_supported(version) {
+        return Ok(empty_unread_conversations(read_states));
+    }
+
+    let mut rooms = HashSet::new();
+    let mut addresses = HashSet::new();
+    let mut room_stmt = conn
+        .prepare("SELECT name FROM rooms")
+        .map_err(|e| format!("Failed to prepare unread rooms query: {e}"))?;
+    let room_rows = room_stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query unread rooms: {e}"))?;
+    for row in room_rows {
+        let name = row.map_err(|e| format!("Failed to read unread room: {e}"))?;
+        rooms.insert(name.clone());
+        addresses.insert(name);
+    }
+
+    let mut dm_stmt = conn
+        .prepare(
+            "SELECT DISTINCT sender FROM messages WHERE target = 'operator' AND sender <> 'operator'
+             UNION
+             SELECT DISTINCT target FROM messages WHERE sender = 'operator' AND target <> 'operator'",
+        )
+        .map_err(|e| format!("Failed to prepare unread DM query: {e}"))?;
+    let dm_rows = dm_stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query unread DM peers: {e}"))?;
+    for row in dm_rows {
+        addresses.insert(row.map_err(|e| format!("Failed to read unread DM peer: {e}"))?);
+    }
+    addresses.extend(read_states.keys().cloned());
+
+    let mut rows = Vec::with_capacity(addresses.len());
+    for address in addresses {
+        let last_read = read_states.get(&address).copied().unwrap_or(0);
+        let (unread_count, latest_id) = if rooms.contains(&address) {
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM messages WHERE target = ?1 AND id > ?2 AND sender <> 'operator'",
+                    rusqlite::params![address, last_read],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to count unread room messages: {e}"))?,
+                conn.query_row(
+                    "SELECT COALESCE(MAX(id), 0) FROM messages WHERE target = ?1",
+                    rusqlite::params![address],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to find latest room message: {e}"))?,
+            )
+        } else {
+            (
+                conn.query_row(
+                    "SELECT COUNT(*) FROM messages WHERE sender = ?1 AND target = 'operator' AND id > ?2",
+                    rusqlite::params![address, last_read],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to count unread DM messages: {e}"))?,
+                conn.query_row(
+                    "SELECT COALESCE(MAX(id), 0) FROM messages WHERE sender = ?1 AND target = 'operator'",
+                    rusqlite::params![address],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("Failed to find latest DM message: {e}"))?,
+            )
+        };
+        rows.push(UnreadConversation { address, unread_count, latest_id });
+    }
+    rows.sort_by(|a, b| a.address.cmp(&b.address));
+    Ok(rows)
+}
+
+fn empty_unread_conversations(read_states: &HashMap<String, i64>) -> Vec<UnreadConversation> {
+    let mut rows: Vec<_> = read_states
+        .keys()
+        .cloned()
+        .map(|address| UnreadConversation { address, unread_count: 0, latest_id: 0 })
+        .collect();
+    rows.sort_by(|a, b| a.address.cmp(&b.address));
+    rows
 }
 
 fn read_user_version(conn: &Connection) -> Result<i64, String> {

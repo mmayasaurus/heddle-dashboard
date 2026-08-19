@@ -232,6 +232,15 @@ pub fn dispatch(app: &AppCtx, cmd: &str, args: &Value, source: &str) -> Result<V
             Ok(Value::Null)
         }
         "list_room_associations" => to_value(core::list_room_associations(app)?),
+        "heddle_unread_state" => to_value(core::heddle_unread_state(app)?),
+        "heddle_mark_read" => {
+            core::heddle_mark_read(app, &req_str(args, "address")?, req_i64(args, "lastId")?)?;
+            Ok(Value::Null)
+        }
+        "heddle_set_notif_level" => {
+            core::heddle_set_notif_level(app, &req_str(args, "address")?, &req_str(args, "level")?)?;
+            Ok(Value::Null)
+        }
         "set_session_archived" => {
             core::set_session_archived(app, &req_str(args, "id")?, req_bool(args, "archived")?)?;
             Ok(Value::Null)
