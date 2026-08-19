@@ -620,6 +620,17 @@ fn keeper_sidecars_are_never_mistaken_for_unregistered_account_rows() {
             now - 30
         ),
     );
+    // HED-181: a dispatch sidecar given a FRESH capturedAt. The real sidecar uses `checkedAt` and is
+    // skipped by the recency gate anyway; the capturedAt here forces the would-be-phantom path so the
+    // NAME exclusion is what's under test — without it, `acct1.dispatch` would surface as a 5th row.
+    s.write(
+        "claude-acct1.dispatch.json",
+        &format!(
+            r#"{{"schemaVersion":1,"account":"acct1","dispatchable":true,"reason":"ok","checkedAt":{},"capturedAt":{}}}"#,
+            now - 30,
+            now - 30
+        ),
+    );
     let l = build(&s.0, &reg, None, now).unwrap();
     let rows = l.accounts.unwrap();
     let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
