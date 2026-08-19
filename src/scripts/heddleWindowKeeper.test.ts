@@ -56,7 +56,11 @@ function calls(home: string): string[] {
 
 function writeFailingClaude(home: string, stderr: string, code = 1): string {
   const fakeClaude = path.join(home, "fake-claude-failing");
-  fs.writeFileSync(fakeClaude, `#!/bin/sh\nprintf '%s\\n' '${stderr}' >&2\nexit ${code}\n`);
+  const stderrFile = path.join(home, "fake-claude-failing.stderr");
+  // Write the fixture text to a FILE (never interpolated into the shell script), so arbitrary
+  // stderr — including single quotes — cannot make the generated script syntactically invalid.
+  fs.writeFileSync(stderrFile, `${stderr}\n`);
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\ncat ${JSON.stringify(stderrFile)} >&2\nexit ${code}\n`);
   fs.chmodSync(fakeClaude, 0o755);
   return fakeClaude;
 }
@@ -443,14 +447,32 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
       HEDDLE_CLAUDE_BIN: writeFailingClaude(home, "Error: rate limit exceeded (429)"),
     });
     expect(result.status).toBe(0);
-    expect(dispatch(home, "acct1")).toMatchObject({ dispatchable: false, reason: "rate-capped" });
+    const signal = dispatch(home, "acct1");
+    expect(signal).toMatchObject({ dispatchable: false, reason: "rate-capped" });
+    // detail is persisted ONLY for the specific-marker billing/logged-out refusals — never for
+    // arbitrary rate/error subprocess output.
+    expect(signal).not.toHaveProperty("detail");
   });
 
   it("records an unavailable Claude binary as an ambiguous error, factually not-dispatchable (the consumer fails open on error)", () => {
     const home = mkHome();
     const result = runKeeper([], home, { HEDDLE_CLAUDE_BIN: path.join(home, "does-not-exist") });
     expect(result.status).toBe(0);
-    expect(dispatch(home, "acct1")).toMatchObject({ dispatchable: false, reason: "error" });
+    const signal = dispatch(home, "acct1");
+    expect(signal).toMatchObject({ dispatchable: false, reason: "error" });
+    expect(signal).not.toHaveProperty("detail");
+  });
+
+  it('does NOT map a generic "unauthorized" failure to logged-out (conservatism: a model-scoped or request-level auth error must fail open, never exclude a healthy account)', () => {
+    const home = mkHome();
+    const result = runKeeper([], home, {
+      HEDDLE_CLAUDE_BIN: writeFailingClaude(home, "API Error: 401 Unauthorized (model access denied)"),
+    });
+    expect(result.status).toBe(0);
+    const signal = dispatch(home, "acct1");
+    // "unauthorized"/"invalid api key" are deliberately NOT logged-out markers -> fall through to error.
+    expect(signal).toMatchObject({ dispatchable: false, reason: "error" });
+    expect(signal).not.toHaveProperty("detail");
   });
 
   it("logs and continues when the dispatch signal write fails, without losing the ping", () => {

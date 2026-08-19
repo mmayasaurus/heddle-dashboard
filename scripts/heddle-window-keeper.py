@@ -378,12 +378,16 @@ def classify_ping(ok, returncode, stdout, stderr):
     haystack = ((stderr or "") + " " + (stdout or "")).lower()
     if "disabled" in haystack and "subscription" in haystack:
         return "billing"
-    # SPECULATIVE — unverified; revise when a real logged-out refusal is seen
+    # SPECULATIVE + CONSERVATIVE — only login/session-specific phrases map to logged-out. A false
+    # exclusion of a HEALTHY account is the costly failure, so generic markers ("unauthorized",
+    # "invalid api key") are DELIBERATELY excluded: a model-scoped or request-level auth error must
+    # fall through to "error" (fail-open in the consumer), never "logged-out" (which the consumer
+    # excludes on). Revise when a real logged-out refusal is observed.
     if any(marker in haystack for marker in (
-        "please run /login", "not logged in", "invalid api key", "unauthorized", "oauth token has expired",
+        "please run /login", "not logged in", "oauth token has expired",
     )):
         return "logged-out"
-    if any(marker in haystack for marker in ("rate limit", "429", "too many requests", "usage limit")):
+    if any(marker in haystack for marker in ("rate limit", "429", "too many requests")):
         return "rate-capped"
     return "error"
 
@@ -408,21 +412,27 @@ def ping(acct):
     return ok, round(time.time() - t0, 1), err, reason
 
 
-def write_dispatch(acct_id, reason, err, now):
+def write_dispatch(acct_id, reason, err):
     """Persist the per-account dispatchability signal (HED-178 producer half of HED-176).
 
     Rides the keeper's EXISTING staggered pings — no new loop. A live window is skipped, so a
     HEALTHY account's checkedAt only refreshes when its 5h window expires (hours); a SUSPENDED
     account (window never goes live) refreshes every few stagger slots. checkedAt lets the
     consumer gate on staleness — a mid-window suspension is caught at the next ping, not instantly.
+    checkedAt is stamped HERE, after the ping has already returned, so a slow or timed-out ping
+    (up to 120s) never backdates the signal below a consumer's freshness window.
     """
     payload = {"schemaVersion": 1, "account": acct_id,
                # FACTUAL ground truth: "can this account take work right now" (HED-176/U). The
                # exclusion POLICY (which reasons exclude; fail-open on error/rate) lives in the
                # CONSUMER, keyed off `reason` — Maya's selection-semantics call, not the producer's.
                "dispatchable": reason == "ok",
-               "reason": reason, "checkedAt": int(now)}
-    if reason != "ok" and err:
+               "reason": reason, "checkedAt": int(time.time())}
+    # detail ONLY for the specific-marker account-state refusals (billing/logged-out): those are
+    # known-format messages and are exactly the "next-lapse alert" signal. Arbitrary error/rate
+    # subprocess output is NOT persisted — the OAuth path in this file likewise never retains
+    # stdout/stderr, since a generic failure can carry request-level diagnostics we must not store.
+    if reason in ("billing", "logged-out") and err:
         payload["detail"] = err
     try:
         write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(acct_id)}.dispatch.json"), payload)
@@ -966,7 +976,7 @@ def main():
         before = window(verify)
         log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
         ok, secs, err, reason = ping(a)
-        write_dispatch(verify, reason, err, now)
+        write_dispatch(verify, reason, err)
         time.sleep(3)
         after = window(verify)
         log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
@@ -994,7 +1004,7 @@ def main():
             log(f"{a['id']}: {status} → WOULD ping (dry-run)"); continue
         ok, secs, err, reason = ping(a)
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
-        write_dispatch(a["id"], reason, err, now)
+        write_dispatch(a["id"], reason, err)
         if ok:
             # Remember the window WE just started (the tap can't see headless pings).
             write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.keeper.json"),
