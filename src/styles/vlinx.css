@@ -396,27 +396,20 @@ svg { display: block; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
 .fleet-capline { --fleet-capline-row-height: 14px; display: grid; grid-template-columns: 40px 140px 44px minmax(72px, 1fr); align-items: center; column-gap: 8px; min-height: var(--fleet-capline-row-height); line-height: var(--fleet-capline-row-height); }
 .fleet-capline-lbl { min-width: 0; overflow: hidden; color: var(--text-faint); font-size: 10px; text-transform: uppercase; text-overflow: ellipsis; }
-.fleet-namedwin { grid-template-columns: 112px 140px 44px minmax(72px, 1fr); }
-.fleet-namedwin-lbl { min-width: 0; overflow: hidden; color: var(--text-faint); font-size: 10px; text-transform: uppercase; text-overflow: ellipsis; }
 .fleet-seg { position: relative; display: inline-block; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* the tick anchors to the GLYPH RUN, not the 140px track — the box is wider than the ░█ text, so
    50% of the box overstates the cap (llamapreview, PR #33); 50% of the run is the true cell boundary */
 .fleet-seg-run { position: relative; display: inline-block; }
 .fleet-capline > .fleet-seg { width: 140px; }
-.fleet-capline-indeterminate { width: 140px; color: var(--text-faint); font-size: 11px; text-align: center; }
 .fleet-seg-empty { opacity: 0.3; }
 .fleet-seg-soft-cap-tick { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: currentColor; opacity: 0.8; }
 .fleet-capline-pct { min-width: 0; overflow: hidden; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; text-overflow: ellipsis; }
+/* Named pool with pct=null (pool OFF, not absent) — a centered dash in the bar track (#51's design, grafted). */
+.fleet-capline-indeterminate { width: 140px; text-align: center; color: var(--text-faint); }
 .fleet-capline-reset { min-width: 72px; overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; }
 .fleet-provcap-extras { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
-.fleet-provcap-accounts { display: flex; flex-direction: column; gap: 2px; }
-.fleet-provcap-account-toggle { align-self: flex-start; color: var(--text-dim); font-size: 10px; padding: 0 2px; }
-.fleet-provcap-account-toggle:hover { color: var(--text-faint); background: var(--bg-hover); }
-.fleet-provcap-account { display: flex; align-items: baseline; gap: 3px; min-width: 0; color: var(--text-dim); font-size: 10px; }
 .fleet-provcap-account-label { min-width: 0; overflow: hidden; color: var(--text-faint); text-overflow: ellipsis; }
 .fleet-provcap-account-plan { min-width: 0; overflow: hidden; color: var(--text-dim); text-overflow: ellipsis; }
-.fleet-provcap-account-caps { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
-.fleet-provcap-account-separator { color: var(--text-faint); margin-left: 2px; }
 .fleet-provcap-limit-reached { color: var(--red); margin-left: 2px; }
 .fleet-provcap-account-detail { display: flex; flex-direction: column; gap: 2px; }
 .fleet-provcap-account-row { min-height: 14px; line-height: 14px; }
@@ -426,7 +419,7 @@ svg { display: block; }
 .fleet-provcap-account-rotate:hover { color: var(--accent); background: var(--bg-hover); }
 .fleet-provcap-account-state { display: flex; flex-wrap: nowrap; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; align-items: baseline; font-size: 9.5px; }
 .fleet-provcap-fable-weekly { color: var(--text-dim); font-size: 10px; }
-.fleet-provcap-fable-label, .fleet-provcap-fable-est, .fleet-provcap-captured, .fleet-provcap-account-caps { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fleet-provcap-fable-label, .fleet-provcap-fable-est, .fleet-provcap-captured { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .fleet-provcap-spacer { visibility: hidden; }
 .fleet-provcap-logged-out { color: var(--yellow); }
 .fleet-provcap-keeper-estimate { color: var(--text-faint); }

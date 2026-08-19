@@ -84,6 +84,7 @@ certs/
 
 # ─── memtrace's per-repo local store ───
 .memdb/
+.memtrace/
 
 # pnpm repo (pnpm@11.5.2 / pnpm-lock.yaml) — an npm-install accident must never recommit this
 package-lock.json
