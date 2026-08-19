@@ -18,6 +18,11 @@ use crate::host::{AppCtx, TREE_CHANGED};
 use crate::models::{Group, NodeKind, Project, RoomAssociation, Session, SessionKind, Tree};
 
 /// Dashboard-facing unread state for one room or direct-message peer.
+///
+/// GUI-only: the unread commands read the desktop-only `comms` module (in lib.rs `comms` is
+/// `#[cfg(feature = "gui")]`), so the whole unread feature is excluded from the minimal
+/// `--no-default-features` server build — matching the desktop-only chat surface.
+#[cfg(feature = "gui")]
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationUnread {
@@ -517,6 +522,8 @@ pub fn list_room_associations(ctx: &AppCtx) -> Result<Vec<RoomAssociation>, Stri
 
 /// Lists every known room/DM conversation with operator-owned unread state. New conversations are
 /// seeded to their current read-only comms cursor so pre-dashboard backlog is not presented unread.
+/// GUI-only (reads the desktop-only `comms` module; see ConversationUnread).
+#[cfg(feature = "gui")]
 pub fn heddle_unread_state(ctx: &AppCtx) -> Result<Vec<ConversationUnread>, String> {
     let existing = {
         let conn = ctx.db().conn.lock().unwrap();
@@ -564,12 +571,16 @@ pub fn heddle_unread_state(ctx: &AppCtx) -> Result<Vec<ConversationUnread>, Stri
 }
 
 /// Advances a room or DM cursor in heddle.db; stale UI calls cannot move it backwards.
+/// GUI-only: part of the desktop-only chat unread feature (see heddle_unread_state).
+#[cfg(feature = "gui")]
 pub fn heddle_mark_read(ctx: &AppCtx, address: &str, last_id: i64) -> Result<(), String> {
     let conn = ctx.db().conn.lock().unwrap();
     repo::mark_read(&conn, address, last_id)
 }
 
 /// Sets a room or DM notification level in heddle.db.
+/// GUI-only: part of the desktop-only chat unread feature (see heddle_unread_state).
+#[cfg(feature = "gui")]
 pub fn heddle_set_notif_level(ctx: &AppCtx, address: &str, level: &str) -> Result<(), String> {
     let conn = ctx.db().conn.lock().unwrap();
     repo::set_notif_level(&conn, address, level)
