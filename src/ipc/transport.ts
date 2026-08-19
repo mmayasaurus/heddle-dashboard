@@ -184,18 +184,27 @@ export function listen<T>(
 /** Subscribes to a host Tauri event-bus event, returning an unsubscribe function. Unlike [`listen`], this
  *  always uses the Tauri bus: SSH remote windows are physically Tauri WebViews (they retain
  *  `__TAURI_INTERNALS__` while forcing WebSocket transport), so host events such as `ssh://tunnel-state`
- *  arrive through Tauri's bus, not the WebSocket. Callers gate on `isRemoteWindow`/`isTauri` and keep their
- *  own handling for when the bus is unavailable. */
+ *  arrive through Tauri's bus, not the WebSocket. The host bus exists only where `__TAURI_INTERNALS__`
+ *  does, so a plain-browser context is rejected with a clear error rather than a cryptic Tauri internal. */
 export function listenHostEvent<T>(
   name: string,
   cb: (payload: T) => void,
 ): Promise<UnlistenFn> {
-  return tauriListen<T>(name, (e) => cb(e.payload));
+  if (!isTauri && !isRemoteWindow) {
+    return Promise.reject(new Error(`listenHostEvent(${name}) requires a Tauri host window`));
+  }
+  return tauriListen<T>(name, (e) => {
+    cb(e.payload);
+  });
 }
 
 /** Emits an event onto the host Tauri event bus (e.g. `vlx://ssh-reconnect`). Same remote-window rationale
- *  as [`listenHostEvent`]: a remote context reaches its host through Tauri's bus, not app commands. */
+ *  and host-bus guard as [`listenHostEvent`]: a remote context reaches its host through Tauri's bus, not
+ *  app commands, and a plain-browser context is rejected rather than failing opaquely. */
 export function emitHostEvent(name: string, payload?: unknown): Promise<void> {
+  if (!isTauri && !isRemoteWindow) {
+    return Promise.reject(new Error(`emitHostEvent(${name}) requires a Tauri host window`));
+  }
   return tauriEmit(name, payload);
 }
 
