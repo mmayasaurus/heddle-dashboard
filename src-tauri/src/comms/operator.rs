@@ -347,8 +347,8 @@ const SCRUBBED_LOADER_ENV_VARS: &[&str] = &["LD_LIBRARY_PATH", "LD_PRELOAD", "AP
 /// it silently "binds as the worker instead" and the app's operator messages are DOWNGRADED from
 /// tier=operator to agent-message — the composer's send appears to go out but never posts with
 /// operator authority (HED-183). A Dock/Finder-launched app can inherit these stamps from whatever
-/// context started it, and `tokio::Command` passes this process's full environment to the child, so
-/// they are scrubbed here alongside `HEDDLE_COMMS_PUSH`. `HEDDLE_AGENT`/`FLEET_AGENT` are stripped too
+/// context started it, and `tokio::process::Command` passes this process's full environment to the
+/// child, so they are scrubbed here alongside `HEDDLE_COMMS_PUSH`. `HEDDLE_AGENT`/`FLEET_AGENT` are stripped too
 /// (defense-in-depth): they can never bind the operator, but leaving them would let the child bind as
 /// that agent on any fall-through — the exact silent mis-binding this guards against.
 const SCRUBBED_FLEET_IDENTITY_VARS: &[&str] =
