@@ -22,7 +22,7 @@ import { TranscriptViewer } from "./TranscriptViewer";
 
 /** Whether this session type inherently lacks an agent transcript and should use recording playback. */
 function hasNoTranscript(kind: Session["kind"]): boolean {
-  return kind === "terminal" || kind === "browser";
+  return kind === "terminal" || kind === "browser" || kind === "chat";
 }
 
 export function SessionContentViewer({

@@ -318,7 +318,8 @@ export function InfoTab({ session, cwd }: { session: Session; cwd: string | null
   const runtime = useTermStore((s) => s.runtimes[session.id]);
   const display = effectiveStatus(runtime);
   const branch = useGitBranch(cwd);
-  const isAgent = session.kind !== "terminal";
+  const isAgent =
+    session.kind !== "terminal" && session.kind !== "browser" && session.kind !== "chat";
   const isClaude = session.kind === "claude";
   const isCodex = session.kind === "codex";
   const isGrok = session.kind === "grok";

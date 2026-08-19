@@ -263,13 +263,13 @@ export function useSessionMenu(): SessionMenu {
     return { label: t("mark.menu"), submenu };
   };
 
-  // Quick create/resume inherits a parent group's worktree into cwd/path/baseRef for local sessions. Browser nodes
-  // do not inherit, and explicit custom-dialog worktree choices always take precedence.
+  // Quick create/resume inherits a parent group's worktree into cwd/path/baseRef for local sessions. Runtime-free
+  // browser and chat nodes do not inherit, and explicit custom-dialog worktree choices always take precedence.
   const groupWorktreeDefault = (
     groupId: string | null,
     kind: SessionKind,
   ): { cwd: string; worktreePath: string; worktreeBaseRef: string | null } | null => {
-    if (!groupId || kind === "browser") return null;
+    if (!groupId || kind === "browser" || kind === "chat") return null;
     const g = useTermStore.getState().groups.find((x) => x.id === groupId);
     if (!g?.worktreePath) return null;
     return {
@@ -320,9 +320,11 @@ export function useSessionMenu(): SessionMenu {
                             ? "Grok Build"
                           : kind === "zoo"
                             ? "Zoo Code"
-                        : kind === "browser"
-                          ? t("kind.browser")
-                        : t("kind.terminal");
+                            : kind === "browser"
+                              ? t("kind.browser")
+                              : kind === "chat"
+                                ? "Chat"
+                                : t("kind.terminal");
     // Use the maximum existing same-kind suffix plus one; total counts regress after deletion and can collide.
     const re = new RegExp(`^${label} (\\d+)$`);
     const maxN = all
@@ -784,8 +786,8 @@ export function useSessionMenu(): SessionMenu {
     };
 
     const sessionRec = sessions.find((s) => s.id === node.id);
-    // Browser nodes keep only Open, optional Rename, Move, and Delete; PTY/agent-specific actions do not apply.
-    if (sessionRec?.kind === "browser") {
+    // Runtime-free nodes keep only Open, optional Rename, Move, and Delete; PTY/agent-specific actions do not apply.
+    if (sessionRec?.kind === "browser" || sessionRec?.kind === "chat") {
       const items: MenuItem[] = [
         { label: t("common.open"), onClick: () => openSession(node.id) },
         sep,

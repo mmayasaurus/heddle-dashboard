@@ -383,7 +383,8 @@ export function TabBar() {
         }
         const session = sessions.find((s) => s.id === tabId) ?? ephemeralSessions[tabId];
         if (!session) return null;
-        const isAgent = session.kind !== "terminal";
+        const isAgent =
+          session.kind !== "terminal" && session.kind !== "browser" && session.kind !== "chat";
         const isActive = tabId === activeTabId;
         // SessionTabStatus owns status/unread subscriptions. Compute one breadcrumb for both tooltip paths.
         const pathTitle = sessionPathTitle(session);
