@@ -7,7 +7,7 @@
 //! Higher layers depend only on this module, allowing the same React code to run on desktop and browser.
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen as tauriListen, emit as tauriEmit, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { t } from "../i18n";
 import { recordRequestError } from "./reqLog";
@@ -179,6 +179,24 @@ export function listen<T>(
   return isTauri
     ? tauriListen<T>(name, (e) => cb(e.payload))
     : wsClient.listen<T>(name, cb);
+}
+
+/** Subscribes to a host Tauri event-bus event, returning an unsubscribe function. Unlike [`listen`], this
+ *  always uses the Tauri bus: SSH remote windows are physically Tauri WebViews (they retain
+ *  `__TAURI_INTERNALS__` while forcing WebSocket transport), so host events such as `ssh://tunnel-state`
+ *  arrive through Tauri's bus, not the WebSocket. Callers gate on `isRemoteWindow`/`isTauri` and keep their
+ *  own handling for when the bus is unavailable. */
+export function listenHostEvent<T>(
+  name: string,
+  cb: (payload: T) => void,
+): Promise<UnlistenFn> {
+  return tauriListen<T>(name, (e) => cb(e.payload));
+}
+
+/** Emits an event onto the host Tauri event bus (e.g. `vlx://ssh-reconnect`). Same remote-window rationale
+ *  as [`listenHostEvent`]: a remote context reaches its host through Tauri's bus, not app commands. */
+export function emitHostEvent(name: string, payload?: unknown): Promise<void> {
+  return tauriEmit(name, payload);
 }
 
 // PTY output streams.
