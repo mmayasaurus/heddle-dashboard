@@ -1634,19 +1634,24 @@ pub fn associate_room_to_project(
     project_id: &str,
     is_default: bool,
 ) -> Result<(), String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to begin room association tx: {e}"))?;
     if is_default {
-        conn.execute(
+        tx.execute(
             "UPDATE project_rooms SET is_default = 0 WHERE project_id = ?1 AND is_default = 1",
             params![project_id],
         )
         .map_err(|e| format!("Failed to clear existing default room: {e}"))?;
     }
-    conn.execute(
+    tx.execute(
         "INSERT INTO project_rooms(room_name, project_id, is_default, created_at) VALUES(?1, ?2, ?3, ?4) \
          ON CONFLICT(room_name) DO UPDATE SET project_id = excluded.project_id, is_default = excluded.is_default",
         params![room_name, project_id, is_default, now_secs()],
     )
     .map_err(|e| format!("Failed to associate room {room_name}: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("Failed to commit room association tx: {e}"))?;
     Ok(())
 }
 
@@ -1662,10 +1667,15 @@ pub fn unassociate_room(conn: &Connection, room_name: &str) -> Result<(), String
 
 /// List every room-to-project association. The frontend joins this against its polled comms room list
 /// to group rooms by project; whatever comms room is left over is the unassociated Fleet bucket.
+/// Excludes associations whose project is a hidden `deleted_at` tombstone (retained by `delete_node`
+/// only because it still has archived sessions) — matches how `list_tree` hides those same tombstones.
 pub fn list_room_associations(conn: &Connection) -> Result<Vec<RoomAssociation>, String> {
     query_all(
         conn,
-        "SELECT room_name, project_id, is_default FROM project_rooms",
+        "SELECT pr.room_name, pr.project_id, pr.is_default
+         FROM project_rooms pr
+         JOIN projects p ON p.id = pr.project_id
+         WHERE p.deleted_at IS NULL",
         map_room_association,
     )
 }
@@ -2789,5 +2799,62 @@ mod tests {
         delete_node(&conn, NodeKind::Project, &project.id).unwrap();
 
         assert!(list_room_associations(&conn).unwrap().is_empty());
+    }
+
+    /// Regression PR#56: a project with an archived session is tombstoned (`deleted_at` set) rather than
+    /// physically deleted, so `ON DELETE CASCADE` never fires and a stale room association would linger
+    /// unless `list_room_associations` also joins out tombstoned projects, matching `list_tree`.
+    #[test]
+    fn regression_pr_56_list_room_associations_excludes_tombstoned_project() {
+        let conn = mem_conn();
+        let root_tombstoned =
+            std::env::temp_dir().join(format!("hed168-tombstoned-{}", Uuid::new_v4()));
+        let root_live = std::env::temp_dir().join(format!("hed168-live-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root_tombstoned).unwrap();
+        std::fs::create_dir_all(&root_live).unwrap();
+        let tombstoned_project = import_project(&conn, root_tombstoned.to_str().unwrap()).unwrap();
+        let live_project = import_project(&conn, root_live.to_str().unwrap()).unwrap();
+
+        // An archived session makes delete_node tombstone the project instead of physically deleting it.
+        let s = create_session(
+            &conn,
+            &tombstoned_project.id,
+            None,
+            "archived",
+            SessionKind::Claude,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        set_archived(&conn, &s.id, true).unwrap();
+
+        associate_room_to_project(&conn, "tombstoned-room", &tombstoned_project.id, false).unwrap();
+        associate_room_to_project(&conn, "live-room", &live_project.id, false).unwrap();
+
+        delete_node(&conn, NodeKind::Project, &tombstoned_project.id).unwrap();
+
+        let cnt: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE id = ?1",
+                rusqlite::params![tombstoned_project.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cnt, 1, "the tombstoned project row stays in the database, just hidden");
+
+        let rows = list_room_associations(&conn).unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "the tombstoned project's association must not surface"
+        );
+        assert_eq!(rows[0].room_name, "live-room");
+        assert_eq!(rows[0].project_id, live_project.id);
+
+        let _ = std::fs::remove_dir_all(root_tombstoned);
+        let _ = std::fs::remove_dir_all(root_live);
     }
 }
