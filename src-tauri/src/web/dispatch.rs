@@ -215,6 +215,23 @@ pub fn dispatch(app: &AppCtx, cmd: &str, args: &Value, source: &str) -> Result<V
             )?;
             Ok(Value::Null)
         }
+        // Dashboard-side comms room <-> project association (HED-168): lets the UI group rooms by
+        // project and mark a per-project default room, without depending on room names/topics, which
+        // can't survive a project rename.
+        "associate_room_to_project" => {
+            core::associate_room_to_project(
+                app,
+                &req_str(args, "roomName")?,
+                &req_str(args, "projectId")?,
+                req_bool(args, "isDefault")?,
+            )?;
+            Ok(Value::Null)
+        }
+        "unassociate_room" => {
+            core::unassociate_room(app, &req_str(args, "roomName")?)?;
+            Ok(Value::Null)
+        }
+        "list_room_associations" => to_value(core::list_room_associations(app)?),
         "set_session_archived" => {
             core::set_session_archived(app, &req_str(args, "id")?, req_bool(args, "archived")?)?;
             Ok(Value::Null)

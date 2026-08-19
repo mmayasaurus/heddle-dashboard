@@ -121,6 +121,14 @@ export interface Tree {
   sessions: Session[];
 }
 
+/** Dashboard-side mapping of a comms room to a project (HED-168). A room with no association is
+ *  unassociated — the Fleet bucket, computed by diffing the polled comms room list against this. */
+export interface RoomAssociation {
+  roomName: string;
+  projectId: string;
+  isDefault: boolean;
+}
+
 /** In-memory session runtime state. */
 export interface SessionRuntime {
   status: SessionStatus;

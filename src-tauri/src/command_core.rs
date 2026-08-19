@@ -15,7 +15,7 @@
 
 use crate::db::repo;
 use crate::host::{AppCtx, TREE_CHANGED};
-use crate::models::{Group, NodeKind, Project, Session, SessionKind, Tree};
+use crate::models::{Group, NodeKind, Project, RoomAssociation, Session, SessionKind, Tree};
 
 // Private helpers.
 
@@ -476,6 +476,33 @@ pub fn land_gitea_pr(
         title,
         body,
     )
+}
+
+// Dashboard-side comms room <-> project association (HED-168). Rooms cannot be renamed (no broker
+// API) but projects can, so this maps by stable project_id rather than name/topic. comms.db stays
+// project-agnostic; these commands only ever touch heddle.db.
+
+/// Associates a comms room with a project, optionally as that project's default room.
+pub fn associate_room_to_project(
+    ctx: &AppCtx,
+    room_name: &str,
+    project_id: &str,
+    is_default: bool,
+) -> Result<(), String> {
+    let conn = ctx.db().conn.lock().unwrap();
+    repo::associate_room_to_project(&conn, room_name, project_id, is_default)
+}
+
+/// Removes a room's project association; a no-op if it has none.
+pub fn unassociate_room(ctx: &AppCtx, room_name: &str) -> Result<(), String> {
+    let conn = ctx.db().conn.lock().unwrap();
+    repo::unassociate_room(&conn, room_name)
+}
+
+/// Lists every room-to-project association for the frontend to join against its polled room list.
+pub fn list_room_associations(ctx: &AppCtx) -> Result<Vec<RoomAssociation>, String> {
+    let conn = ctx.db().conn.lock().unwrap();
+    repo::list_room_associations(&conn)
 }
 
 // SSH host history and remembered passwords. These commands are **desktop-only** because Connect Remote is hidden

@@ -8,7 +8,7 @@ import {
   type PtySpawnArgs,
   type PtySpawnResult,
 } from "./transport";
-import type { Session } from "../types";
+import type { RoomAssociation, Session } from "../types";
 
 /** PTY launch parameters, including a child session's first-launch prompt. */
 export type SpawnArgs = PtySpawnArgs;
@@ -406,6 +406,32 @@ export function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
  */
 export function listProjectWorktrees(projectRoot: string): Promise<string[]> {
   return invoke<string[]>("list_project_worktrees", { projectRoot });
+}
+
+/**
+ * Associates a comms room with a project (HED-168), optionally as that project's default room.
+ * Upserts by room name, so re-associating an already-mapped room moves it (and moves the default
+ * flag, if set) rather than erroring.
+ */
+export function associateRoomToProject(
+  roomName: string,
+  projectId: string,
+  isDefault: boolean,
+): Promise<void> {
+  return invoke("associate_room_to_project", { roomName, projectId, isDefault });
+}
+
+/** Removes a room's project association; a no-op if it has none. */
+export function unassociateRoom(roomName: string): Promise<void> {
+  return invoke("unassociate_room", { roomName });
+}
+
+/**
+ * Lists every room-to-project association. Join against the polled comms room list to group rooms
+ * by project; whatever room is left over is the unassociated Fleet bucket.
+ */
+export function listRoomAssociations(): Promise<RoomAssociation[]> {
+  return invoke<RoomAssociation[]>("list_room_associations");
 }
 
 /** Lists worktrees associated with a session and descendants for deletion confirmation. */

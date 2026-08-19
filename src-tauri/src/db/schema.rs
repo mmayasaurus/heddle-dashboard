@@ -129,6 +129,22 @@ CREATE TABLE IF NOT EXISTS search_index_state (
   PRIMARY KEY (session_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_search_state_session ON search_index_state(session_id);
+
+-- Dashboard-side association of a comms room to a project, so the UI can group rooms by project and
+-- mark a per-project default room. Rooms cannot be renamed (no broker API) but projects can, via
+-- rename_node; keying on the stable project_id rather than a name- or topic-derived link means renaming
+-- a project never orphans its rooms. One room maps to at most one project. is_default flags that
+-- project's default room, kept unique per project by idx_project_rooms_default. ON DELETE CASCADE drops
+-- associations when their project is deleted. Rooms with no row here are unassociated — the Fleet
+-- bucket, computed in the frontend from the comms room list and this table. comms.db stays
+-- project-agnostic; this table lives only in heddle.db.
+CREATE TABLE IF NOT EXISTS project_rooms (
+  room_name   TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  is_default  INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_rooms_default ON project_rooms(project_id) WHERE is_default = 1;
 "#;
 
 /// Creation statement for the `session_fts` virtual full-text index using a trigram tokenizer for substring/CJK

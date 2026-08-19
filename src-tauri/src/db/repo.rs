@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
-use crate::models::{Group, NodeKind, Project, Session, SessionKind, Tree};
+use crate::models::{Group, NodeKind, Project, RoomAssociation, Session, SessionKind, Tree};
 
 /// Converts Windows verbatim paths returned by `std::fs::canonicalize` into the ordinary form used
 /// by the UI and persisted session configuration. Drive paths become `D:\dir`; verbatim UNC paths
@@ -1623,6 +1623,61 @@ pub fn session_ids_in_subtree(conn: &Connection, id: &str) -> Result<Vec<String>
     Ok(out)
 }
 
+// ─────────────────────────── Project-room associations (HED-168) ───────────────────────────
+
+/// Associate a comms room with a project, upserting by room name. Setting `is_default` first clears
+/// any existing default for that project, so the partial-unique index on `project_rooms(project_id)
+/// WHERE is_default = 1` never conflicts and moving the default is a single atomic call.
+pub fn associate_room_to_project(
+    conn: &Connection,
+    room_name: &str,
+    project_id: &str,
+    is_default: bool,
+) -> Result<(), String> {
+    if is_default {
+        conn.execute(
+            "UPDATE project_rooms SET is_default = 0 WHERE project_id = ?1 AND is_default = 1",
+            params![project_id],
+        )
+        .map_err(|e| format!("Failed to clear existing default room: {e}"))?;
+    }
+    conn.execute(
+        "INSERT INTO project_rooms(room_name, project_id, is_default, created_at) VALUES(?1, ?2, ?3, ?4) \
+         ON CONFLICT(room_name) DO UPDATE SET project_id = excluded.project_id, is_default = excluded.is_default",
+        params![room_name, project_id, is_default, now_secs()],
+    )
+    .map_err(|e| format!("Failed to associate room {room_name}: {e}"))?;
+    Ok(())
+}
+
+/// Remove a room's project association; a no-op if it has none.
+pub fn unassociate_room(conn: &Connection, room_name: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM project_rooms WHERE room_name = ?1",
+        params![room_name],
+    )
+    .map_err(|e| format!("Failed to unassociate room {room_name}: {e}"))?;
+    Ok(())
+}
+
+/// List every room-to-project association. The frontend joins this against its polled comms room list
+/// to group rooms by project; whatever comms room is left over is the unassociated Fleet bucket.
+pub fn list_room_associations(conn: &Connection) -> Result<Vec<RoomAssociation>, String> {
+    query_all(
+        conn,
+        "SELECT room_name, project_id, is_default FROM project_rooms",
+        map_room_association,
+    )
+}
+
+fn map_room_association(row: &Row) -> rusqlite::Result<RoomAssociation> {
+    Ok(RoomAssociation {
+        room_name: row.get(0)?,
+        project_id: row.get(1)?,
+        is_default: row.get::<_, i64>(2)? != 0,
+    })
+}
+
 fn query_all<T>(
     conn: &Connection,
     sql: &str,
@@ -2653,5 +2708,86 @@ mod tests {
         let f = fork_session(&conn, &s.id).unwrap();
         assert_eq!(f.agent_args.as_deref(), Some("--model sonnet"));
         assert_eq!(f.permission_mode.as_deref(), Some("skip"));
+    }
+
+    // ─────────────────────────── Project-room associations (HED-168) ───────────────────────────
+
+    #[test]
+    fn associate_room_then_list_returns_the_row() {
+        let conn = mem_conn();
+        let project = import_project(&conn, std::env::temp_dir().to_str().unwrap()).unwrap();
+
+        associate_room_to_project(&conn, "general", &project.id, false).unwrap();
+
+        let rows = list_room_associations(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].room_name, "general");
+        assert_eq!(rows[0].project_id, project.id);
+        assert!(!rows[0].is_default);
+    }
+
+    /// Re-associating an already-mapped room name upserts in place rather than duplicating the row.
+    #[test]
+    fn associate_room_to_project_upserts_by_room_name() {
+        let conn = mem_conn();
+        let root_a = std::env::temp_dir().join(format!("hed168-upsert-a-{}", Uuid::new_v4()));
+        let root_b = std::env::temp_dir().join(format!("hed168-upsert-b-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root_a).unwrap();
+        std::fs::create_dir_all(&root_b).unwrap();
+        let project_a = import_project(&conn, root_a.to_str().unwrap()).unwrap();
+        let project_b = import_project(&conn, root_b.to_str().unwrap()).unwrap();
+
+        associate_room_to_project(&conn, "general", &project_a.id, false).unwrap();
+        associate_room_to_project(&conn, "general", &project_b.id, true).unwrap();
+
+        let rows = list_room_associations(&conn).unwrap();
+        assert_eq!(rows.len(), 1, "upsert should update the existing row, not duplicate it");
+        assert_eq!(rows[0].project_id, project_b.id);
+        assert!(rows[0].is_default);
+
+        let _ = std::fs::remove_dir_all(root_a);
+        let _ = std::fs::remove_dir_all(root_b);
+    }
+
+    #[test]
+    fn unassociate_room_removes_it() {
+        let conn = mem_conn();
+        let project = import_project(&conn, std::env::temp_dir().to_str().unwrap()).unwrap();
+        associate_room_to_project(&conn, "general", &project.id, false).unwrap();
+        assert_eq!(list_room_associations(&conn).unwrap().len(), 1);
+
+        unassociate_room(&conn, "general").unwrap();
+
+        assert!(list_room_associations(&conn).unwrap().is_empty());
+    }
+
+    /// The partial unique index allows at most one default per project: making a second room default
+    /// moves the flag rather than leaving two rows default at once.
+    #[test]
+    fn setting_default_on_a_second_room_moves_the_default() {
+        let conn = mem_conn();
+        let project = import_project(&conn, std::env::temp_dir().to_str().unwrap()).unwrap();
+        associate_room_to_project(&conn, "room-1", &project.id, true).unwrap();
+        associate_room_to_project(&conn, "room-2", &project.id, true).unwrap();
+
+        let rows = list_room_associations(&conn).unwrap();
+        assert_eq!(rows.len(), 2, "both associations should still exist");
+        let defaults: Vec<&RoomAssociation> = rows.iter().filter(|r| r.is_default).collect();
+        assert_eq!(defaults.len(), 1, "exactly one default room should remain for the project");
+        assert_eq!(defaults[0].room_name, "room-2");
+    }
+
+    /// Deleting a project with no archived sessions physically deletes its row, which must cascade to
+    /// its room associations via `project_rooms.project_id REFERENCES projects(id) ON DELETE CASCADE`.
+    #[test]
+    fn deleting_a_project_cascades_its_room_associations() {
+        let conn = mem_conn();
+        let project = import_project(&conn, std::env::temp_dir().to_str().unwrap()).unwrap();
+        associate_room_to_project(&conn, "general", &project.id, true).unwrap();
+        assert_eq!(list_room_associations(&conn).unwrap().len(), 1);
+
+        delete_node(&conn, NodeKind::Project, &project.id).unwrap();
+
+        assert!(list_room_associations(&conn).unwrap().is_empty());
     }
 }
