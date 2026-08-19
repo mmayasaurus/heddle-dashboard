@@ -496,15 +496,9 @@ pub fn set_browser_url(conn: &Connection, id: &str, url: &str) -> Result<(), Str
     Ok(())
 }
 
-/// Persist a chat node's comms address, guarded by kind.
-pub fn set_chat_target(conn: &Connection, id: &str, target: &str) -> Result<(), String> {
-    conn.execute(
-        "UPDATE sessions SET chat_target = ?1 WHERE id = ?2 AND kind = 'chat'",
-        params![target, id],
-    )
-    .map_err(|e| format!("Failed to update chat target: {e}"))?;
-    Ok(())
-}
+// chat_target has no write-path in this foundation PR: it is set by the pieces that CREATE chat
+// sessions (HED-166 room-management / default-room provisioning), where the target is known. #1 only
+// defines + persists + reads the column so those pieces have it to write. (HED-195)
 
 // ─────────────────────────── Application preferences shared across shells ───────────────────────────
 
@@ -2092,7 +2086,14 @@ mod tests {
         assert_eq!(get_session_kind(&conn, &chat.id).unwrap(), Some(SessionKind::Chat));
         assert_eq!(chat.chat_target, None);
 
-        set_chat_target(&conn, &chat.id, "#fleet").unwrap();
+        // chat_target's app write-path lands with the pieces that create chat sessions (HED-166
+        // #4/#6); write it directly here to prove the column + the map_session index-18 reindexing
+        // round-trip through get_session and list_tree.
+        conn.execute(
+            "UPDATE sessions SET chat_target = ?1 WHERE id = ?2",
+            rusqlite::params!["#fleet", chat.id],
+        )
+        .unwrap();
         let stored = get_session(&conn, &chat.id).unwrap().unwrap();
         assert_eq!(stored.kind, SessionKind::Chat);
         assert_eq!(stored.chat_target.as_deref(), Some("#fleet"));
