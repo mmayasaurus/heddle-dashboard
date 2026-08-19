@@ -241,9 +241,12 @@ fn without_an_agy_profile_no_refresh_may_run_not_even_a_forced_one() {
 
 #[test]
 fn a_sticky_auth_block_stops_the_timer_but_not_the_person() {
+    // timeoutStreak at the sticky threshold: a genuine (non-legacy) block reached via three
+    // consecutive timeouts — see the HED-188 migration tests below for the legacy shape.
     let blocked: Value = serde_json::json!({
         "authBlocked": true,
         "lastError": "timed out after 45s",
+        "timeoutStreak": TIMEOUT_STREAK_STICKY,
     });
     // The 180s timer is silenced — this is what stops the repeat-prompt loop.
     let (code, why) =
@@ -273,6 +276,7 @@ fn a_successful_refresh_clears_the_block_and_a_failed_one_re_arms_it() {
     let mut armed = snap.clone();
     armed["authBlocked"] = serde_json::json!(true);
     armed["lastError"] = serde_json::json!("timed out after 45s");
+    armed["timeoutStreak"] = serde_json::json!(TIMEOUT_STREAK_STICKY);
     let (code, _) = refresh_blocked_reason(Some(&armed), true, false).unwrap();
     assert_eq!(code, CODE_AUTH_BLOCKED);
 }
@@ -339,6 +343,16 @@ fn the_detector_boundary_is_pinned_including_awkward_cases() {
 // still detected, but a single occurrence must not read as auth-shaped — only a run of
 // `TIMEOUT_STREAK_STICKY` consecutive timeouts (a persistent hang) may arm the sticky block.
 
+/// Shared setup for the streak tests below: a fresh snapshot run through `n` consecutive
+/// `record_failure` timeouts, `AGY_TIMEOUT` apart (matching the real cadence).
+fn setup_timeout_streak_snap(n: i64) -> Value {
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    for i in 1..=n {
+        record_failure(&mut snap, "timed out after 45s", 1_000 + i * 45);
+    }
+    snap
+}
+
 #[test]
 fn a_timeout_is_recognized_but_is_not_auth_shaped_on_its_own() {
     // The exact HED-188 split: a timeout is how an unanswerable browser prompt manifests, but
@@ -349,11 +363,41 @@ fn a_timeout_is_recognized_but_is_not_auth_shaped_on_its_own() {
 }
 
 #[test]
+fn is_timeout_matches_only_the_exact_budget_timeout_string_not_any_mention_of_timed_out() {
+    // The real wall-clock-budget kill, byte-for-byte what run_with_timeout produces.
+    assert!(is_timeout("timed out after 45s"));
+    // agy itself answering with wording that happens to mention a timeout is NOT our timeout —
+    // agy responded, it didn't hang — so a loose "contains" match would misclassify it.
+    assert!(!is_timeout("agy exited non-zero: request timed out"));
+    assert!(!is_timeout(
+        "agy exited non-zero: request timed out reading /quota"
+    ));
+    assert!(!is_timeout("TIMED OUT AFTER 45S"));
+    assert!(!is_timeout("timed out after 46s"));
+}
+
+#[test]
+fn a_non_budget_timeout_mention_is_treated_as_an_ordinary_failure() {
+    // Seeded as already-blocked with a live streak (e.g. from a prior persistent hang or an
+    // auth-shaped error) — agy answering (even with wording that mentions a timeout) proves the
+    // sign-in question is settled, so this must fall through to the ordinary-failure branch and
+    // clear both, exactly like any other non-timeout, non-auth-shaped failure.
+    let mut snap = snapshot_from_agy(&data(), 1_000);
+    snap["authBlocked"] = json!(true);
+    snap["timeoutStreak"] = json!(2);
+    record_failure(&mut snap, "agy exited non-zero: request timed out", 1_045);
+    assert_eq!(snap["authBlocked"], false);
+    assert_eq!(snap["timeoutStreak"], 0);
+}
+
+#[test]
 fn a_transient_timeout_does_not_block_the_next_refresh() {
     // The exact live incident: one 45s agy timeout with no prior streak.
-    let mut snap = snapshot_from_agy(&data(), 1_000);
-    record_failure(&mut snap, "timed out after 45s", 1_045);
-    assert_eq!(snap["authBlocked"], false);
+    let snap = setup_timeout_streak_snap(1);
+    assert_ne!(
+        snap["authBlocked"], true,
+        "a sub-threshold timeout must not arm the block"
+    );
     assert_eq!(snap["timeoutStreak"], 1);
     assert_eq!(snap["lastError"], "timed out after 45s");
     // A subsequent non-forced refresh with a profile present is NOT blocked.
@@ -361,15 +405,26 @@ fn a_transient_timeout_does_not_block_the_next_refresh() {
 }
 
 #[test]
-fn three_consecutive_timeouts_escalate_to_a_sticky_block() {
+fn a_sub_threshold_timeout_does_not_clear_an_existing_auth_block() {
+    // A timeout is not proof auth is resolved — only a success or a non-timeout failure clears an
+    // existing block. Seeded pre-armed (as if by a prior auth-shaped error or persistent streak).
     let mut snap = snapshot_from_agy(&data(), 1_000);
-    for n in 1..TIMEOUT_STREAK_STICKY {
-        record_failure(&mut snap, "timed out after 45s", 1_000 + n * 45);
-        assert_eq!(
-            snap["authBlocked"], false,
-            "still below the streak threshold"
-        );
-    }
+    snap["authBlocked"] = json!(true);
+    record_failure(&mut snap, "timed out after 45s", 1_045);
+    assert_eq!(
+        snap["authBlocked"], true,
+        "a sub-threshold timeout must not clear the block"
+    );
+    assert_eq!(snap["timeoutStreak"], 1);
+}
+
+#[test]
+fn three_consecutive_timeouts_escalate_to_a_sticky_block() {
+    let mut snap = setup_timeout_streak_snap(TIMEOUT_STREAK_STICKY - 1);
+    assert!(
+        refresh_blocked_reason(Some(&snap), true, false).is_none(),
+        "still below the streak threshold"
+    );
     record_failure(
         &mut snap,
         "timed out after 45s",
@@ -383,10 +438,28 @@ fn three_consecutive_timeouts_escalate_to_a_sticky_block() {
 }
 
 #[test]
+fn a_timeout_gap_longer_than_the_window_restarts_the_streak() {
+    // gemini.json persists across app restarts, so two timeouts separated by a real idle gap
+    // (not just normal back-to-back retries) must not compound into the same streak.
+    let mut snap = setup_timeout_streak_snap(TIMEOUT_STREAK_STICKY - 1);
+    assert_eq!(snap["timeoutStreak"], TIMEOUT_STREAK_STICKY - 1);
+    let last_attempt = snap["lastAttemptAt"].as_i64().unwrap();
+    record_failure(
+        &mut snap,
+        "timed out after 45s",
+        last_attempt + TIMEOUT_STREAK_WINDOW_SECS + 1,
+    );
+    assert_eq!(
+        snap["timeoutStreak"], 1,
+        "a gap past the window restarts the streak instead of incrementing it"
+    );
+    assert_ne!(snap["authBlocked"], true);
+}
+
+#[test]
 fn an_auth_shaped_error_blocks_immediately_and_resets_any_timeout_streak() {
-    let mut snap = snapshot_from_agy(&data(), 1_000);
     // A prior transient timeout must not delay an auth-shaped block once one actually arrives.
-    record_failure(&mut snap, "timed out after 45s", 1_045);
+    let mut snap = setup_timeout_streak_snap(1);
     assert_eq!(snap["timeoutStreak"], 1);
     record_failure(
         &mut snap,
@@ -399,9 +472,7 @@ fn an_auth_shaped_error_blocks_immediately_and_resets_any_timeout_streak() {
 
 #[test]
 fn a_success_after_a_timeout_streak_resets_it() {
-    let mut snap = snapshot_from_agy(&data(), 1_000);
-    record_failure(&mut snap, "timed out after 45s", 1_045);
-    record_failure(&mut snap, "timed out after 45s", 1_090);
+    let snap = setup_timeout_streak_snap(2);
     assert_eq!(snap["timeoutStreak"], 2);
     // A success builds a wholly fresh snapshot (see snapshot_from_agy) — it never reads the old
     // one, so authBlocked/timeoutStreak cannot carry forward regardless of the prior streak.
@@ -415,10 +486,36 @@ fn a_success_after_a_timeout_streak_resets_it() {
 fn a_non_timeout_failure_clears_the_streak_too() {
     // agy responded (just not usefully) — this is not a hang, so it must not count toward the
     // timeout streak, and it clears the block exactly as an ordinary failure always has.
-    let mut snap = snapshot_from_agy(&data(), 1_000);
-    record_failure(&mut snap, "timed out after 45s", 1_045);
+    let mut snap = setup_timeout_streak_snap(1);
     assert_eq!(snap["timeoutStreak"], 1);
     record_failure(&mut snap, "agy JSON parse failed: expected value", 1_090);
     assert_eq!(snap["authBlocked"], false);
     assert_eq!(snap["timeoutStreak"], 0);
+}
+
+#[test]
+fn a_legacy_timeout_only_block_self_heals_instead_of_staying_stuck_forever() {
+    // The exact reported bug: a snapshot written by the OLD code (before timeoutStreak existed)
+    // set authBlocked=true on a single timeout and never cleared it. refresh_blocked_reason gates
+    // the only path back to a refresh, so without migration record_failure would never run again
+    // to correct it — the gauge would stay dark forever. timeoutStreak absent (as here) or 0
+    // alongside a timeout-shaped lastError is only ever this legacy shape (current code's minimum
+    // write for a timeout is streak=1), so it's safe to treat as unblocked and let it self-heal.
+    let legacy: Value = json!({
+        "authBlocked": true,
+        "lastError": "timed out after 45s",
+        "lastAttemptAt": 500,
+    });
+    assert!(
+        refresh_blocked_reason(Some(&legacy), true, false).is_none(),
+        "a pre-HED-188 timeout-only block must not stay stuck forever"
+    );
+    // A profile check and a genuine (non-legacy) block are unaffected by the migration.
+    assert!(refresh_blocked_reason(Some(&legacy), false, false).is_some());
+    let genuine: Value = json!({
+        "authBlocked": true,
+        "lastError": "timed out after 45s",
+        "timeoutStreak": TIMEOUT_STREAK_STICKY,
+    });
+    assert!(refresh_blocked_reason(Some(&genuine), true, false).is_some());
 }
