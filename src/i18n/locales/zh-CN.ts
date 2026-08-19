@@ -32,6 +32,7 @@ const zhCN: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "终端",
   "kind.browser": "浏览器",
+  "kind.chat": "聊天",
   "status.idle": "空闲",
   "status.running": "运行中",
   "status.exited": "已退出",

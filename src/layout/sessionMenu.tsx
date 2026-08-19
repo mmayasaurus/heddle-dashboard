@@ -323,7 +323,7 @@ export function useSessionMenu(): SessionMenu {
                             : kind === "browser"
                               ? t("kind.browser")
                               : kind === "chat"
-                                ? "Chat"
+                                ? t("kind.chat")
                                 : t("kind.terminal");
     // Use the maximum existing same-kind suffix plus one; total counts regress after deletion and can collide.
     const re = new RegExp(`^${label} (\\d+)$`);
@@ -795,7 +795,7 @@ export function useSessionMenu(): SessionMenu {
         items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
       }
       if (renameItem) items.push(renameItem, sep);
-      if (refreshStatusItem) items.push(refreshStatusItem);
+      if (refreshStatusItem && sessionRec.kind !== "chat") items.push(refreshStatusItem);
       items.push(buildMarkItem("session", node.id), sep, buildMoveTo(), sep, remove);
       return items;
     }

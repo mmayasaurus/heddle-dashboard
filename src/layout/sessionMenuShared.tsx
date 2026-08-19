@@ -57,7 +57,7 @@ export type WorktreeChoice =
 export function kindLabel(kind: SessionKind): string {
   if (kind === "terminal") return t("kind.terminal");
   if (kind === "browser") return t("kind.browser");
-  if (kind === "chat") return "Chat";
+  if (kind === "chat") return t("kind.chat");
   if (kind === "claude") return "Claude";
   if (kind === "codex") return "Codex";
   if (kind === "opencode") return "OpenCode";

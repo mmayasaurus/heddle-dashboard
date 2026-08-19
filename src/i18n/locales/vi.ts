@@ -32,6 +32,7 @@ const vi: typeof en = {
   // Loại và trạng thái phiên
   "kind.terminal": "Terminal",
   "kind.browser": "Trình duyệt",
+  "kind.chat": "Trò chuyện",
   "status.idle": "Rảnh",
   "status.running": "Đang chạy",
   "status.exited": "Đã thoát",

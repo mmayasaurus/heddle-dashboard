@@ -27,7 +27,7 @@ import { collectSessionIds } from "../CenterPane/paneTree";
 /** Localized display name for a session type; brand names remain untranslated. */
 function kindLabel(kind: SessionKind): string {
   if (kind === "terminal") return t("kind.terminal");
-  if (kind === "chat") return "Chat";
+  if (kind === "chat") return t("kind.chat");
   if (kind === "claude") return "Claude";
   if (kind === "codex") return "Codex";
   if (kind === "opencode") return "OpenCode";

@@ -32,6 +32,7 @@ const ptBR: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "Terminal", // Terminal
   "kind.browser": "Navegador", // Browser
+  "kind.chat": "Bate-papo", // Chat
   "status.idle": "Ocioso", // Idle
   "status.running": "Em execução", // Running
   "status.exited": "Encerrado", // Exited

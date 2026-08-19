@@ -50,6 +50,7 @@ const en = {
   // ── Session types and status ──
   "kind.terminal": "Terminal",
   "kind.browser": "Browser",
+  "kind.chat": "Chat",
   "status.idle": "Idle",
   "status.running": "Running",
   "status.exited": "Exited",
