@@ -109,10 +109,16 @@ export function useOperatorStatus(expanded: boolean): UseOperatorStatusResult {
   return { ...status, loaded };
 }
 
-// ── Shared write-path result shape (send / create-room / add-member / remove-member) ──
-// The broker's post_message (and, by the same HED-74c contract shape, create_room/join_room/
-// leave_room) results carry {outcome, code, reason}; a 'refused' outcome (e.g. floor-held) is a
-// NORMAL result, never a thrown error.
+// ── Write-path result shape — models post_message ──
+// A post_message result carries {outcome, code, reason}; a 'refused' outcome (e.g. floor-held) is a
+// NORMAL result, never a thrown error. Note that a room (pull-model) post OMITS reason entirely:
+// {outcome:"logged", code:"room-pull"} — hence parseOperatorResult normalizes a missing key to null
+// (HED-196). CAVEAT: the room-management writes do NOT share this shape on SUCCESS — create_room
+// returns {room}, join_room {member}, leave_room {removed}, with NO `outcome` field (only their
+// REFUSALS use {outcome,code,reason}). So this type models post_message only; feeding a room-mgmt
+// success through isCommsOperatorResult wrongly flags it as an error — wiring correct room-mgmt
+// success handling is tracked for the HED-166 room-management surface (see the characterization test
+// in useOperatorStatus.test.ts pinning that gap).
 
 export interface CommsOperatorResult {
   outcome: string;
