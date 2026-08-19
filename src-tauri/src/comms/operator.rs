@@ -341,11 +341,26 @@ async fn resolve_spawn_plan(ctx: &AppCtx) -> Result<(String, Vec<String>, String
 /// no-op, so this is harmless on every other platform/packaging.
 const SCRUBBED_LOADER_ENV_VARS: &[&str] = &["LD_LIBRARY_PATH", "LD_PRELOAD", "APPDIR", "PYTHONHOME", "GTK_PATH"];
 
+/// Fleet worker/agent identity stamps that must NEVER reach the operator child. The broker's
+/// `resolveCommsIdentity` (heddle `src/comms/server.ts`) binds `HEDDLE_COMMS_ROLE=operator` as the
+/// operator ONLY when neither `HEDDLE_WORKER` nor `HEDDLE_COMMS_ADDRESS` is present; if either is set
+/// it silently "binds as the worker instead" and the app's operator messages are DOWNGRADED from
+/// tier=operator to agent-message — the composer's send appears to go out but never posts with
+/// operator authority (HED-183). A Dock/Finder-launched app can inherit these stamps from whatever
+/// context started it, and `tokio::Command` passes this process's full environment to the child, so
+/// they are scrubbed here alongside `HEDDLE_COMMS_PUSH`. `HEDDLE_AGENT`/`FLEET_AGENT` are stripped too
+/// (defense-in-depth): they can never bind the operator, but leaving them would let the child bind as
+/// that agent on any fall-through — the exact silent mis-binding this guards against.
+const SCRUBBED_FLEET_IDENTITY_VARS: &[&str] =
+    &["HEDDLE_WORKER", "HEDDLE_COMMS_ADDRESS", "HEDDLE_AGENT", "FLEET_AGENT"];
+
 /// Builds the child's `Command`: `PATH` augmented the same way `ccusage`/`agy` launches are (a
 /// Dock/Finder-launched GUI app does not inherit a shell `PATH`), plus EXACTLY the two mandated
 /// env vars — nothing else is ever ADDED here, and neither is ever passed as an argument.
-/// `HEDDLE_COMMS_PUSH` and `SCRUBBED_LOADER_ENV_VARS` are explicitly REMOVED (not merely left
-/// unset), so neither can leak in from this process's own environment — see the module doc.
+/// `HEDDLE_COMMS_PUSH`, `SCRUBBED_LOADER_ENV_VARS`, and `SCRUBBED_FLEET_IDENTITY_VARS` are explicitly
+/// REMOVED (not merely left unset), so none can leak in from this process's own environment — see the
+/// module doc. Scrubbing the fleet-identity stamps is what lets the child actually bind as the
+/// OPERATOR (HED-183) instead of being silently downgraded to a worker/agent by the broker.
 fn build_command(program: &str, args: &[String], token: &str) -> tokio::process::Command {
     tokio::process::Command::new(program).configure(|cmd| {
         cmd.args(args)
@@ -354,6 +369,9 @@ fn build_command(program: &str, args: &[String], token: &str) -> tokio::process:
             .env("HEDDLE_COMMS_OPERATOR_TOKEN", token)
             .env_remove("HEDDLE_COMMS_PUSH");
         for var in SCRUBBED_LOADER_ENV_VARS {
+            cmd.env_remove(var);
+        }
+        for var in SCRUBBED_FLEET_IDENTITY_VARS {
             cmd.env_remove(var);
         }
     })

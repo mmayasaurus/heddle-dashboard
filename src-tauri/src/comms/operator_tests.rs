@@ -270,6 +270,24 @@ fn build_command_removes_every_scrubbed_loader_env_var() {
     }
 }
 
+/// HED-183: every var in `SCRUBBED_FLEET_IDENTITY_VARS` must be an explicit removal, so a
+/// Dock/Finder-launched app that inherited a fleet worker/agent stamp (HEDDLE_WORKER /
+/// HEDDLE_COMMS_ADDRESS / HEDDLE_AGENT / FLEET_AGENT) can never pass it to the operator child. The
+/// broker's `resolveCommsIdentity` silently DOWNGRADES an operator whose env carries such a stamp to
+/// a worker/agent — which is why the app's operator sends were posting without operator authority.
+#[test]
+fn build_command_strips_fleet_identity_stamps() {
+    let cmd = build_command("heddle-comms", &[], "irrelevant-token-for-this-test");
+    let envs: Vec<_> = cmd.as_std().get_envs().collect();
+    for var in SCRUBBED_FLEET_IDENTITY_VARS {
+        assert_eq!(
+            envs.iter().find(|(k, _)| *k == std::ffi::OsStr::new(var)),
+            Some(&(std::ffi::OsStr::new(var), None)),
+            "{var} must be an explicit removal marker (HED-183 operator-downgrade fix)"
+        );
+    }
+}
+
 // ─────────────────────────────── Test 4a (pure half): closed by default ──────────────────────
 
 #[test]
