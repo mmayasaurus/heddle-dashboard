@@ -217,6 +217,7 @@ fn unread_conversations_at(
         return Ok(empty_unread_conversations(read_states));
     }
 
+    conn.execute_batch("BEGIN DEFERRED").map_err(|e| e.to_string())?;
     let mut rooms = HashSet::new();
     let mut addresses = HashSet::new();
     let mut room_stmt = conn
@@ -235,7 +236,7 @@ fn unread_conversations_at(
         .prepare(
             "SELECT DISTINCT sender FROM messages WHERE target = 'operator' AND sender <> 'operator'
              UNION
-             SELECT DISTINCT target FROM messages WHERE sender = 'operator' AND target <> 'operator'",
+             SELECT DISTINCT target FROM messages WHERE sender = 'operator' AND target <> 'operator' AND target NOT LIKE '@%'",
         )
         .map_err(|e| format!("Failed to prepare unread DM query: {e}"))?;
     let dm_rows = dm_stmt
@@ -246,42 +247,47 @@ fn unread_conversations_at(
     }
     addresses.extend(read_states.keys().cloned());
 
+    let mut room_count_stmt = conn
+        .prepare("SELECT COUNT(*) FROM messages WHERE target = ?1 AND id > ?2 AND sender <> 'operator'")
+        .map_err(|e| format!("Failed to prepare unread room count query: {e}"))?;
+    let mut room_latest_stmt = conn
+        .prepare("SELECT COALESCE(MAX(id), 0) FROM messages WHERE target = ?1")
+        .map_err(|e| format!("Failed to prepare latest room message query: {e}"))?;
+    let mut dm_count_stmt = conn
+        .prepare("SELECT COUNT(*) FROM messages WHERE sender = ?1 AND target = 'operator' AND id > ?2")
+        .map_err(|e| format!("Failed to prepare unread DM count query: {e}"))?;
+    let mut dm_latest_stmt = conn
+        .prepare("SELECT COALESCE(MAX(id), 0) FROM messages WHERE sender = ?1 AND target = 'operator'")
+        .map_err(|e| format!("Failed to prepare latest DM message query: {e}"))?;
     let mut rows = Vec::with_capacity(addresses.len());
     for address in addresses {
         let last_read = read_states.get(&address).copied().unwrap_or(0);
         let (unread_count, latest_id) = if rooms.contains(&address) {
             (
-                conn.query_row(
-                    "SELECT COUNT(*) FROM messages WHERE target = ?1 AND id > ?2 AND sender <> 'operator'",
-                    rusqlite::params![address, last_read],
-                    |row| row.get(0),
-                )
+                room_count_stmt
+                .query_row(rusqlite::params![&address, last_read], |row| row.get(0))
                 .map_err(|e| format!("Failed to count unread room messages: {e}"))?,
-                conn.query_row(
-                    "SELECT COALESCE(MAX(id), 0) FROM messages WHERE target = ?1",
-                    rusqlite::params![address],
-                    |row| row.get(0),
-                )
+                room_latest_stmt
+                .query_row(rusqlite::params![&address], |row| row.get(0))
                 .map_err(|e| format!("Failed to find latest room message: {e}"))?,
             )
         } else {
             (
-                conn.query_row(
-                    "SELECT COUNT(*) FROM messages WHERE sender = ?1 AND target = 'operator' AND id > ?2",
-                    rusqlite::params![address, last_read],
-                    |row| row.get(0),
-                )
+                dm_count_stmt
+                .query_row(rusqlite::params![&address, last_read], |row| row.get(0))
                 .map_err(|e| format!("Failed to count unread DM messages: {e}"))?,
-                conn.query_row(
-                    "SELECT COALESCE(MAX(id), 0) FROM messages WHERE sender = ?1 AND target = 'operator'",
-                    rusqlite::params![address],
-                    |row| row.get(0),
-                )
+                dm_latest_stmt
+                .query_row(rusqlite::params![&address], |row| row.get(0))
                 .map_err(|e| format!("Failed to find latest DM message: {e}"))?,
             )
         };
         rows.push(UnreadConversation { address, unread_count, latest_id });
     }
+    drop(room_count_stmt);
+    drop(room_latest_stmt);
+    drop(dm_count_stmt);
+    drop(dm_latest_stmt);
+    conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
     rows.sort_by(|a, b| a.address.cmp(&b.address));
     Ok(rows)
 }

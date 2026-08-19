@@ -574,7 +574,8 @@ fn regression_hed_198_unread_enumeration_classifies_rooms_from_rooms_table_and_e
          ('2026-01-01T00:00:00.000Z', 'P', 'not-a-prefix-room', 'chat', 'agent-message', 0, 'room inbound'), \
          ('2026-01-01T00:00:00.000Z', 'operator', 'not-a-prefix-room', 'chat', 'operator', 1, 'room outbound'), \
          ('2026-01-01T00:00:00.000Z', 'P', 'operator', 'chat', 'agent-message', 0, 'dm inbound'), \
-         ('2026-01-01T00:00:00.000Z', 'operator', 'P', 'chat', 'operator', 1, 'dm outbound');",
+         ('2026-01-01T00:00:00.000Z', 'operator', 'P', 'chat', 'operator', 1, 'dm outbound'), \
+         ('2026-01-01T00:00:00.000Z', 'operator', '@all', 'chat', 'operator', 1, 'broadcast');",
     )
     .unwrap();
     drop(conn);
@@ -596,12 +597,14 @@ fn regression_hed_198_unread_enumeration_classifies_rooms_from_rooms_table_and_e
     assert_eq!(by_address["P"].latest_id, 3);
     assert_eq!(by_address["empty"].unread_count, 0);
     assert_eq!(by_address["empty"].latest_id, 0);
+    assert!(!by_address.contains_key("@all"));
 }
 
 #[test]
 fn regression_hed_198_unread_missing_or_unsupported_db_returns_zero_for_existing_states() {
     let states = HashMap::from([("P".to_string(), 4)]);
-    let missing = std::env::temp_dir().join("hed198-unread-no-such-comms.db");
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("no-such-comms.db");
     let rows = unread_conversations_at(&missing, &states).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].address, "P");

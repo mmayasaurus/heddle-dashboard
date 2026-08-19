@@ -587,6 +587,9 @@ pub fn set_notif_level(conn: &Connection, address: &str, level: &str) -> Result<
 
 /// Advance a conversation cursor. Older client events cannot move it backwards.
 pub fn mark_read(conn: &Connection, address: &str, last_id: i64) -> Result<(), String> {
+    if last_id < 0 {
+        return Err(format!("Invalid read cursor (negative): {last_id}"));
+    }
     conn.execute(
         "INSERT INTO conversation_read_state(conversation_address, last_read_id, updated_at)
          VALUES(?1, ?2, ?3)
@@ -2952,5 +2955,18 @@ mod tests {
 
         assert!(set_notif_level(&conn, "#general", "loud").is_err());
         assert_eq!(get_read_states(&conn).unwrap()[0].notif_level, "mute");
+    }
+
+    #[test]
+    fn regression_pr_66_mark_read_rejects_negative_cursor_without_changing_existing_cursor() {
+        let conn = mem_conn();
+        mark_read(&conn, "#general", 8).unwrap();
+
+        assert!(mark_read(&conn, "#general", -1).is_err());
+        assert_eq!(
+            get_read_states(&conn).unwrap()[0].last_read_id,
+            8,
+            "negative read cursors must not alter an existing cursor"
+        );
     }
 }

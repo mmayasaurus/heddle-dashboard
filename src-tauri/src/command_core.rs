@@ -534,12 +534,14 @@ pub fn heddle_unread_state(ctx: &AppCtx) -> Result<Vec<ConversationUnread>, Stri
         .map(|fact| fact.address.clone())
         .collect();
     let states = {
-        let conn = ctx.db().conn.lock().unwrap();
+        let mut conn = ctx.db().conn.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
         for fact in &facts {
             if unseen.contains(&fact.address) {
-                repo::seed_read_state(&conn, &fact.address, fact.latest_id)?;
+                repo::seed_read_state(&tx, &fact.address, fact.latest_id)?;
             }
         }
+        tx.commit().map_err(|e| e.to_string())?;
         repo::get_read_states(&conn)?
     };
     let by_address: std::collections::HashMap<_, _> = states
