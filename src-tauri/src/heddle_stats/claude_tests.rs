@@ -18,6 +18,23 @@ fn tap_file(model: &str, five: f64, seven: f64, captured: i64, acct: &str) -> St
     )
 }
 
+/// A `claude-<id>.oauth-usage.json` sidecar shaped exactly like the shipped keeper's
+/// `oauth_usage_for()` (`scripts/heddle-window-keeper.py`) — no `windowResetsAt` field, since that
+/// keeper doesn't emit one today.
+fn oauth_file(fable_pct: f64, captured: i64) -> String {
+    format!(
+        r#"{{"fablePct":{fable_pct},"fiveHourPct":10.0,"sevenDayPct":20.0,"byModel":{{"Fable":{fable_pct}}},"capturedAt":{captured},"source":"oauth-usage"}}"#
+    )
+}
+
+/// Same shape, but with a `windowResetsAt` — for exercising the (not-yet-shipped) case where the
+/// endpoint's Fable entry carries its own reset, distinct from the tap's 7-day boundary.
+fn oauth_file_with_window(fable_pct: f64, captured: i64, window_resets_at: i64) -> String {
+    format!(
+        r#"{{"fablePct":{fable_pct},"fiveHourPct":null,"sevenDayPct":null,"byModel":{{}},"capturedAt":{captured},"source":"oauth-usage","windowResetsAt":{window_resets_at}}}"#
+    )
+}
+
 /// A scratch usage dir under the crate's own (gitignored) `target/` — not the shared OS temp dir —
 /// unique per test and process, removed on drop.
 struct Scratch(PathBuf);
@@ -43,6 +60,29 @@ impl Drop for Scratch {
 
 fn registry() -> Vec<Account> {
     parse_registry(&serde_json::from_str(REGISTRY).unwrap())
+}
+
+/// Sets the keeper's `HEDDLE_OAUTH_CACHE_SECS` for THIS TEST THREAD only (see
+/// `CACHE_SECS_OVERRIDE`), and clears it on drop so a panic can't leak it into the rest of the case.
+/// The process env is deliberately untouched: these tests run in parallel threads of one process.
+struct CacheSecs;
+impl CacheSecs {
+    fn set(v: &str) -> Self {
+        CACHE_SECS_OVERRIDE.with(|c| *c.borrow_mut() = Some(v.to_string()));
+        CacheSecs
+    }
+}
+impl Drop for CacheSecs {
+    fn drop(&mut self) {
+        CACHE_SECS_OVERRIDE.with(|c| *c.borrow_mut() = None);
+    }
+}
+
+fn persisted_attrib(s: &Scratch, id: &str) -> Attrib {
+    serde_json::from_str(
+        &std::fs::read_to_string(s.0.join(format!("claude-{id}.attrib.json"))).unwrap(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -405,4 +445,468 @@ fn a_row_without_a_current_capture_never_surfaces_a_historical_estimate() {
     let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
     assert_eq!(fw["samples"], 3);
     assert_eq!(fw["fablePct"], 4.0);
+}
+
+// ─────────────────────── HED-150 pt2: exact OAuth Fable % sidecar ───────────────────────
+
+#[test]
+fn a_fresh_oauth_sidecar_surfaces_the_exact_fable_pct_and_drops_the_estimate_flag() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-exact");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(77.0));
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["exact"], true);
+    assert_eq!(fw["fablePct"], 77.0);
+}
+
+#[test]
+fn exact_survives_a_tap_only_capture_while_the_sidecar_stays_fresh() {
+    // The anti-flicker guarantee: a statusline tap carries no Fable field, so a tap-only capture
+    // must not demote the drawer from exact back to the heuristic estimate while the OAuth sidecar
+    // is still fresh (HED-150 pt2) — attribute() has to re-stamp exact_fable_pct on every call, not
+    // only when the sidecar itself changes.
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-anti-flicker");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 60));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(77.0)
+    );
+
+    // A later tap-only capture: different model, new seven_day% — the sidecar file itself is
+    // untouched (still fresh, same reading).
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-haiku-4-5", 32.0, 26.0, now + 30, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now + 30).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct,
+        Some(77.0),
+        "must not demote to the estimator"
+    );
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+}
+
+#[test]
+fn tap_absent_with_a_fresh_sidecar_still_surfaces_the_exact_value() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-no-tap");
+    let reg = registry();
+    // No claude-acct1.json (no tap, no keeper anchor) — only the OAuth sidecar.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(55.0, now - 10));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(55.0));
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    // The 5h/7d windows stay unknown — the sidecar never substitutes for a tap capture there.
+    assert_eq!(r.five_hour, LimitWindow::default());
+    assert_eq!(r.seven_day, LimitWindow::default());
+}
+
+#[test]
+fn a_stale_oauth_sidecar_is_ignored_and_the_estimator_path_still_runs() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-stale");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now, "acct1"),
+    );
+    // Captured well beyond OAUTH_EXACT_STALE_AFTER_SECS before `now`.
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file(77.0, now - OAUTH_EXACT_STALE_AFTER_SECS - 100),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct, None,
+        "stale sidecar must not force exact (too few samples for the estimator yet either)"
+    );
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(fw["exact"], false);
+    assert_eq!(fw["fablePct"], 0.0);
+}
+
+#[test]
+fn a_new_window_resets_the_exact_share_via_the_sidecars_own_reset() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-new-window");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 120, "acct1"),
+    );
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file_with_window(40.0, now - 120, 1_786_892_400),
+    );
+    let l = build(&s.0, &reg, None, now - 120).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(40.0)
+    );
+
+    // A new weekly window: the sidecar's OWN windowResetsAt moves (the tap's hardcoded resets_at in
+    // `tap_file` does not) — the new, lower share must not be blended with the old window's 40%.
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 1.0, now, "acct1"),
+    );
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file_with_window(5.0, now, 1_786_892_400 + 7 * 86_400),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct,
+        Some(5.0),
+        "re-adopts, doesn't blend"
+    );
+    assert_eq!(
+        r.detail.as_ref().unwrap()["fableWeekly"]["windowResetsAt"],
+        1_786_892_400 + 7 * 86_400
+    );
+}
+
+// ───────────────── HED-150 pt2, review round 2: sidecar hygiene + demotion ─────────────────
+
+/// The keeper writes several per-account sidecars next to the tap files. None of them is an account:
+/// `claude-acct1.oauth-usage.json` strips to the id `acct1.oauth-usage`, and (unlike the others) it
+/// carries a `capturedAt`, so the unregistered-file scan used to surface it as a phantom row and
+/// inflate the drawer's account count.
+#[test]
+fn keeper_sidecars_are_never_mistaken_for_unregistered_account_rows() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-phantom");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    // Both other sidecars given a FRESH `capturedAt`, so only the name keeps them out of the roster —
+    // the keeper anchor stays older than the tap so it doesn't also change acct1's windows.
+    s.write(
+        "claude-acct1.keeper.json",
+        &format!(
+            r#"{{"account":"acct1","startedAt":{},"capturedAt":{},"resets_at":{},"used":null}}"#,
+            now - 90,
+            now - 90,
+            now + 5 * 3600
+        ),
+    );
+    s.write(
+        "claude-acct1.turns.json",
+        &format!(
+            r#"{{"account":"acct1","capturedAt":{},"turns":3}}"#,
+            now - 30
+        ),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let rows = l.accounts.unwrap();
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["acct1", "acct2", "acct3", "acct4"], "no phantom rows");
+    assert_eq!(l.model.as_deref(), Some("claude-fable-5 · 4 acct"));
+    // The real row is unaffected: still exact, still its own tap windows.
+    assert_eq!(rows[0].fable_weekly_estimate_pct, Some(77.0));
+    assert_eq!(rows[0].five_hour.used_percentage, Some(32.0));
+}
+
+/// THE round-2 regression: once a fresh sidecar set `exact`, a sidecar that then goes stale while
+/// the tap capture is UNCHANGED used to leave `exact` true forever — the unchanged capture is
+/// dropped by `already_ingested()` before `ingest()`'s demotion branch can run, so the old
+/// percentage kept being published as an exact reading after the keeper stopped refreshing.
+#[test]
+fn a_sidecar_gone_stale_demotes_exact_even_when_the_tap_capture_is_unchanged() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-demote");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(77.0)
+    );
+    assert!(persisted_attrib(&s, "acct1").exact);
+
+    // The keeper stops refreshing: the sidecar ages out while the tap file is byte-identical, so no
+    // new capture arrives to carry the demotion.
+    let later = now + OAUTH_EXACT_STALE_AFTER_SECS + 60;
+    let l = build(&s.0, &reg, None, later).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    let fw = &r.detail.as_ref().unwrap()["fableWeekly"];
+    assert_eq!(
+        fw["exact"], false,
+        "a stale sidecar cannot still claim exact"
+    );
+    assert_eq!(
+        r.fable_weekly_estimate_pct, None,
+        "the old percentage must not survive as a live number"
+    );
+    // Demoted like `seed_from_exact`: the last exact share seeds the books (capped by the
+    // account-wide total), confidence restarts, and the demotion is PERSISTED so a fresh process
+    // can't resurrect it.
+    let p = persisted_attrib(&s, "acct1");
+    assert!(!p.exact);
+    assert_eq!((p.fable_pct, p.samples), (24.0, 0));
+    assert_eq!(p.window_resets_at, Some(1_786_892_400));
+    // Deleting the sidecar outright keeps it demoted (and doesn't re-enter exact mode).
+    std::fs::remove_file(s.0.join("claude-acct1.oauth-usage.json")).unwrap();
+    let l = build(&s.0, &reg, None, later + 60).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], false);
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+}
+
+/// The demotion's no-tap branch (`expire_exact` when `last_used_pct == None`). An IDLE account
+/// (acct3/acct4 never render a statusline, so no tap file ever exists) still gets a fresh exact
+/// reading from the sidecar alone via the synthesized capture — the HED-165 idle-account pattern —
+/// and when that sidecar goes stale, expire_exact must demote it too (seed from `fable_pct` alone,
+/// `unknown_pct` stays 0), or an idle account would pin the last exact % forever.
+#[test]
+fn a_sidecar_only_history_with_no_tap_surfaces_then_demotes_when_stale() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-sidecar-only");
+    let reg = registry();
+    // ONLY the OAuth sidecar for acct1 — no tap file, no keeper anchor ever rendered.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.fable_weekly_estimate_pct, Some(77.0));
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    assert!(persisted_attrib(&s, "acct1").exact);
+
+    // The sidecar ages out with no tap ever seen: expire_exact's None branch demotes — the last
+    // exact share alone is the seed, unknown stays 0, exact cleared, the estimate hidden.
+    let later = now + OAUTH_EXACT_STALE_AFTER_SECS + 60;
+    let l = build(&s.0, &reg, None, later).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], false);
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+    let p = persisted_attrib(&s, "acct1");
+    assert_eq!(
+        (p.exact, p.fable_pct, p.unknown_pct, p.samples),
+        (false, 77.0, 0.0, 0)
+    );
+}
+
+/// The keeper names the sidecar with `safe_segment()`, so an id carrying out-of-class characters is
+/// written as `claude-team_a.oauth-usage.json` — reading the raw id finds nothing at all.
+#[test]
+fn the_oauth_sidecar_is_read_through_the_keepers_own_filename_sanitizing() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-safe-segment");
+    let reg = vec![Account {
+        id: "team:a".to_string(),
+        config_dir: None,
+        email: None,
+        logged_in: None,
+    }];
+    s.write(
+        "claude-team_a.oauth-usage.json",
+        &oauth_file(42.0, now - 30),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.id, "team:a");
+    assert_eq!(r.fable_weekly_estimate_pct, Some(42.0));
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    // The mapping itself, against the keeper's `[^A-Za-z0-9._-] → _`.
+    assert_eq!(safe_segment("team:a"), "team_a");
+    assert_eq!(safe_segment("acct1"), "acct1");
+    assert_eq!(safe_segment("ok.id-1_2"), "ok.id-1_2");
+    assert_eq!(safe_segment("a/../b"), "a_.._b");
+}
+
+/// A `capturedAt` in the future is clock skew or corruption; the age test alone reads it as "captured
+/// moments ago" and would pin that reading as exact indefinitely.
+#[test]
+fn a_sidecar_captured_in_the_future_is_ignored_rather_than_treated_as_fresh() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-future");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now, "acct1"),
+    );
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file(77.0, now + 3600),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], false);
+    assert_eq!(r.fable_weekly_estimate_pct, None);
+}
+
+/// The freshness bound follows the keeper's configured refresh cadence: with a bigger
+/// `HEDDLE_OAUTH_CACHE_SECS`, a legitimately older sidecar must not be demoted between refreshes.
+#[test]
+fn the_freshness_bound_follows_the_keepers_configured_cache_interval() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-cache-secs");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    // ~20 minutes old: past the 900s floor, but well inside three cycles of an hourly cache.
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &oauth_file(77.0, now - 1_200),
+    );
+    let l = build(&s.0, &reg, None, now).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        None,
+        "stale under the default 900s bound"
+    );
+
+    let _cache = CacheSecs::set("3600");
+    let l = build(&s.0, &reg, None, now).unwrap();
+    let r = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        r.fable_weekly_estimate_pct,
+        Some(77.0),
+        "a keeper told to cache for an hour makes this sidecar fresh"
+    );
+    assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
+    assert_eq!(oauth_exact_stale_after_secs(), 10_800);
+    drop(_cache);
+    assert_eq!(oauth_exact_stale_after_secs(), OAUTH_EXACT_STALE_AFTER_SECS);
+}
+
+/// The env→bound mapping itself: floored at the const, three keeper cycles above it, clamped to the
+/// keeper's own maximum, and never widened by a value the keeper wouldn't honour either.
+#[test]
+fn the_freshness_bound_floors_clamps_and_ignores_unusable_config() {
+    assert_eq!(oauth_exact_stale_after_secs(), OAUTH_EXACT_STALE_AFTER_SECS);
+    for (cache, want) in [
+        ("60", OAUTH_EXACT_STALE_AFTER_SECS),
+        ("300", OAUTH_EXACT_STALE_AFTER_SECS),
+        (" 3600 ", 10_800),
+        ("999999", OAUTH_CACHE_MAX_SECS * 3),
+        ("-5", OAUTH_EXACT_STALE_AFTER_SECS),
+        ("not-a-number", OAUTH_EXACT_STALE_AFTER_SECS),
+        ("", OAUTH_EXACT_STALE_AFTER_SECS),
+    ] {
+        let _c = CacheSecs::set(cache);
+        assert_eq!(
+            oauth_exact_stale_after_secs(),
+            want,
+            "HEDDLE_OAUTH_CACHE_SECS={cache:?}"
+        );
+    }
+    assert_eq!(
+        oauth_exact_stale_after_secs(),
+        OAUTH_EXACT_STALE_AFTER_SECS,
+        "cleared once the guards drop"
+    );
+}
+
+/// Stamping the sidecar's value onto every tap capture must not turn into a write per render: the
+/// tap re-renders many times a minute per active account, and the exact % it carries rarely moves.
+#[test]
+fn an_unchanged_exact_value_does_not_rewrite_the_attrib_file_on_every_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-no-rewrite");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    build(&s.0, &reg, None, now).unwrap();
+    let attrib = s.0.join("claude-acct1.attrib.json");
+    let after_first = std::fs::read_to_string(&attrib).unwrap();
+
+    // A later render: same account-wide reading, same exact %, only `capturedAt` moved. (A rewrite
+    // would show up in the file's own `updatedAt`/`lastCapturedAt`.)
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now + 30, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now + 30).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&attrib).unwrap(),
+        after_first,
+        "a bare timestamp bump must not rewrite the attribution file"
+    );
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(77.0),
+        "…and the value is still surfaced from the in-memory state"
+    );
+
+    // The exact VALUE moving still persists, immediately.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(78.0, now + 40));
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now + 60, "acct1"),
+    );
+    let l = build(&s.0, &reg, None, now + 60).unwrap();
+    assert_eq!(
+        l.accounts.as_ref().unwrap()[0].fable_weekly_estimate_pct,
+        Some(78.0)
+    );
+    let p = persisted_attrib(&s, "acct1");
+    assert!(p.exact);
+    assert_eq!(p.fable_pct, 78.0);
+    // …as does the account-wide reading moving, which seeds a later demotion.
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(78.0, now + 70));
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 26.0, now + 90, "acct1"),
+    );
+    build(&s.0, &reg, None, now + 90).unwrap();
+    assert_eq!(persisted_attrib(&s, "acct1").last_used_pct, Some(26.0));
+}
+
+#[test]
+fn malformed_or_out_of_range_fable_pct_in_the_sidecar_is_ignored_without_panicking() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-malformed");
+    let reg = registry();
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 30.0, 10.0, now, "acct1"),
+    );
+    for bad in [
+        r#"{"fablePct":-5.0,"capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":150.0,"capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":"not-a-number","capturedAt":REPL,"source":"oauth-usage"}"#,
+        r#"{"fablePct":NaN,"capturedAt":REPL,"source":"oauth-usage"}"#,
+    ] {
+        let body = bad.replace("REPL", &now.to_string());
+        s.write("claude-acct1.oauth-usage.json", &body);
+        let l = build(&s.0, &reg, None, now).unwrap();
+        let r = &l.accounts.as_ref().unwrap()[0];
+        assert_eq!(
+            r.detail.as_ref().unwrap()["fableWeekly"]["exact"],
+            false,
+            "malformed sidecar {body:?} must not flip exact on"
+        );
+    }
 }

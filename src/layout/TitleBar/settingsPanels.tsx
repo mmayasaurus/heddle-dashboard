@@ -19,7 +19,7 @@ import {
   giteaSetConfig,
   type GiteaStatus,
 } from "../../ipc/commands";
-import { isTauri } from "../../ipc/transport";
+import { invoke, isTauri } from "../../ipc/transport";
 import { env } from "../../platform";
 import { useTermStore } from "../../store/termStore";
 import type { SessionKind } from "../../types";
@@ -423,6 +423,88 @@ function AgentPathBlock({
   );
 }
 
+/** Optional heddle-comms installation root. Empty deliberately removes the override so Rust can
+ * resume its normal PATH and conventional-location resolution. */
+export function HeddleCoreRootField() {
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [value, setValue] = useState("");
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void invoke<Record<string, string>>("get_app_settings")
+      .then((appSettings) => {
+        const raw = appSettings["vlx-settings"];
+        let parsed: Record<string, unknown> = {};
+        try {
+          const candidate: unknown = raw ? JSON.parse(raw) : {};
+          if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+            parsed = candidate as Record<string, unknown>;
+          }
+        } catch {
+          // A malformed existing settings blob must not prevent the modal from opening.
+        }
+        if (!alive) return;
+        setSettings(parsed);
+        const comms = parsed.comms;
+        if (comms && typeof comms === "object" && !Array.isArray(comms)) {
+          const root = (comms as Record<string, unknown>).heddleCoreRoot;
+          setValue(typeof root === "string" ? root : "");
+        }
+      })
+      .catch(() => {
+        // Other settings fields keep the UI usable when the backend is unavailable.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const commit = async (draft: string) => {
+    const root = draft.trim();
+    setSaveError("");
+    const next = { ...settings };
+    const currentComms = next.comms;
+    const comms =
+      currentComms && typeof currentComms === "object" && !Array.isArray(currentComms)
+        ? { ...(currentComms as Record<string, unknown>) }
+        : {};
+    if (root) {
+      comms.heddleCoreRoot = root;
+      next.comms = comms;
+    } else {
+      delete comms.heddleCoreRoot;
+      if (Object.keys(comms).length) next.comms = comms;
+      else delete next.comms;
+    }
+    try {
+      await invoke("set_app_settings", { entries: { "vlx-settings": JSON.stringify(next) } });
+      setSettings(next);
+      setValue(root);
+    } catch (error) {
+      // Preserve the current field value for a later retry if the backend is unavailable.
+      setSaveError(String(error));
+    }
+  };
+
+  return (
+    <div>
+      <AgentPathBlock
+        label="Fleet chat — heddle core path"
+        hint="Folder of your heddle install (contains dist/comms/). Leave blank to auto-detect ~/Developer/heddle."
+        placeholder="~/Developer/heddle"
+        value={value}
+        onCommit={(draft) => void commit(draft)}
+      />
+      {saveError && (
+        <div role="alert" style={{ marginTop: 6, color: "var(--danger, #ef4444)", fontSize: 11 }}>
+          {saveError}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Agents category. Select an agent, then configure its executable path, default launch arguments,
  * and default permission mode in `store.agentDefaults`. New sessions use these when no explicit value
  * is supplied. Per-session values override defaults, except executable paths, which are always global. */
@@ -455,6 +537,8 @@ export function AgentsPanel() {
         value={cfg.path ?? ""}
         onCommit={(v) => setAgentDefault(selKind, { path: v })}
       />
+
+      <HeddleCoreRootField />
 
       <AgentArgsBlock
         key={selKind}

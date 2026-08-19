@@ -8,17 +8,10 @@ const invoke = vi.hoisted(() => vi.fn());
 
 vi.mock("../../ipc/transport", () => ({ invoke, isTauri: true }));
 vi.mock("../../i18n", () => ({
-  useT: () => (key: string, ...args: number[]) => ({
-    "fleet.loggedOut": "logged out — /login needed",
-    "fleet.keeperEstimate": "window live (keeper est.) — % appears after the first render on this account",
-    "fleet.loginUnknown": "login state unknown",
-    "fleet.rotateAccounts": "Rotate Claude accounts",
-    "fleet.capturedMinutesAgo": `captured ${args[0]} min ago`,
-    "fleet.fableWeekly": `Fable ≈${args[0]}% of weekly (est.)`,
-    "fleet.fableWeeklyExact": `Fable ${args[0]}% of weekly`,
-    "fleet.fableWeeklyEstMark": "estimate",
-    "fleet.fableWeeklyBreakdown": `breakdown: ${args[0]}/${args[1]}/${args[2]} (${args[3]})`,
-  }[key] ?? key),
+  // Key + interpolated args, so assertions pin BOTH the key and the numbers users would see —
+  // a static English dictionary here would mask a real i18n key mismatch in the component.
+  useT: () => (key: string, ...args: unknown[]) =>
+    args.length ? `${key}:${args.join(",")}` : key,
 }));
 vi.mock("../../store/termStore", () => ({
   useTermStore: (selector: (state: object) => unknown) => selector({
@@ -77,18 +70,18 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.queryByText("acct2")).toBeNull();
     expect(screen.getByText("3/3")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
+    fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
     expect(screen.getByText("acct1")).toBeTruthy();
-    expect(screen.getByText("logged out — /login needed")).toBeTruthy();
+    expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
     expect(screen.queryByText("acct3")).toBeNull();
     expect(accountRowCount("acct1")).toBe(rowCount);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
+    fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
     expect(screen.getByText("acct2")).toBeTruthy();
-    expect(screen.getByText("window live (keeper est.) — % appears after the first render on this account")).toBeTruthy();
+    expect(screen.getByText("fleet.keeperEstimate")).toBeTruthy();
     expect(accountRowCount("acct2")).toBe(rowCount);
 
-    fireEvent.click(screen.getByRole("button", { name: "Rotate Claude accounts" }));
+    fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
     expect(screen.getByText("acct3")).toBeTruthy();
     expect(accountRowCount("acct3")).toBe(rowCount);
   });
@@ -106,7 +99,7 @@ describe("FleetDrawer Claude account cycler", () => {
     render(<FleetDrawer />);
 
     await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Rotate Claude accounts" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "fleet.rotateAccounts" })).toBeNull();
     expect(screen.queryByText("1/1")).toBeNull();
     expect(screen.getAllByText("5h")).toHaveLength(1);
   });
@@ -122,8 +115,8 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("login state unknown")).toBeTruthy());
-    expect(screen.queryByText("window live (keeper est.) — % appears after the first render on this account")).toBeNull();
+    await waitFor(() => expect(screen.getByText("fleet.loginUnknown")).toBeTruthy());
+    expect(screen.queryByText("fleet.keeperEstimate")).toBeNull();
   });
 
   it("reserves an empty Fable weekly row when its estimate is unavailable", async () => {
@@ -150,11 +143,11 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("Fable ≈37% of weekly (est.)"));
+    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("fleet.fableWeekly:37"));
     const row = document.querySelector(".fleet-provcap-fable-weekly");
-    expect(row?.getAttribute("title")).toBe("breakdown: 37/8/2 (4)");
+    expect(row?.getAttribute("title")).toBe("fleet.fableWeeklyBreakdown:37,8,2,4");
     expect(row?.querySelector(".fleet-seg-soft-cap")).toBeTruthy();
-    expect(row?.querySelector(".fleet-capline-reset")?.textContent).toBe("estimate");
+    expect(row?.querySelector(".fleet-capline-reset")?.textContent).toBe("fleet.fableWeeklyEstMark");
   });
 
   it("keeps provider cap bars free of inline widths under one fixed CSS rule", async () => {
@@ -191,8 +184,8 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("Fable 50% of weekly"));
-    expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).not.toBe("Fable ≈50% of weekly (est.)");
+    await waitFor(() => expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).toBe("fleet.fableWeeklyExact:50"));
+    expect(document.querySelector(".fleet-provcap-fable-label")?.getAttribute("title")).not.toBe("fleet.fableWeekly:50");
     expect(document.querySelector(".fleet-provcap-fable-weekly .fleet-capline-reset")?.textContent).toBe("");
   });
 
@@ -207,7 +200,274 @@ describe("FleetDrawer Claude account cycler", () => {
     render(<FleetDrawer />);
 
     await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
-    expect(screen.getByText(/captured \d+ min ago/)).toBeTruthy();
+    expect(screen.getByText(/fleet\.capturedMinutesAgo:\d+/)).toBeTruthy();
+  });
+});
+
+// Real cursor payload shape (src-tauri/src/heddle_stats/cursor.rs + tests/fixtures/heddle_stats/
+// limits.golden.json): both rolling windows are always null for cursor — it has no 5h/7d notion —
+// while the three named pools (included-total / included-api / usage-based) carry the real numbers.
+const cursorWindows = [
+  { id: "included-total", label: "included total (Auto / Cursor models)", usedPercentage: 17.34, resetsAt: now + 86_400 * 5, usedAmount: null, limitAmount: null, unit: null },
+  { id: "included-api", label: "included API (named 3rd-party models)", usedPercentage: 86.69, resetsAt: now + 86_400 * 5, usedAmount: 400, limitAmount: 400, unit: "usd" },
+  { id: "usage-based", label: "on-demand (usage-based)", usedPercentage: 0, resetsAt: now + 86_400 * 5, usedAmount: 0, limitAmount: 100, unit: "usd" },
+];
+const cursor = {
+  provider: "cursor",
+  model: "cursor.com",
+  capturedAt: now,
+  fiveHour: { usedPercentage: null, resetsAt: null },
+  sevenDay: { usedPercentage: null, resetsAt: null },
+  windows: cursorWindows,
+};
+
+describe("FleetDrawer real-windows promotion (cursor)", () => {
+  it("renders a null-pct named window as an indeterminate dash with its amount and reset kept (grafted #51 regression)", async () => {
+    const offWindows = [
+      { id: "included-total", label: "included total (Auto / Cursor models)", usedPercentage: 17.3, resetsAt: now + 864_000, usedAmount: null, limitAmount: null, unit: null },
+      { id: "usage-based", label: "on-demand (usage-based)", usedPercentage: null, resetsAt: now + 864_000, usedAmount: 0, limitAmount: 100, unit: "usd" },
+    ];
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        provider: "cursor", model: "cursor.com", capturedAt: now, stale: false,
+        fiveHour: { usedPercentage: null, resetsAt: null }, sevenDay: { usedPercentage: null, resetsAt: null },
+        windows: offWindows,
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+    await waitFor(() => expect(screen.getByText("O-D")).toBeTruthy());
+    const line = screen.getByText("O-D").closest(".fleet-capline");
+    expect(line?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    expect(line?.querySelector(".fleet-seg")).toBeNull();
+    expect(line?.querySelector(".fleet-capline-reset")?.textContent).toContain("$0.00 / $100.00");
+    expect(line?.querySelector(".fleet-capline-reset")?.textContent).toContain("↻");
+  });
+
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([cursor]);
+      return Promise.resolve([]);
+    });
+  });
+
+  it("promotes real windows to primary CapLines instead of empty 5h/7d bars, with no duplicate text list", async () => {
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("INCL")).toBeTruthy());
+    expect(screen.getByText("API")).toBeTruthy();
+    expect(screen.getByText("O-D")).toBeTruthy();
+    expect(screen.queryByText("5h")).toBeNull();
+    expect(screen.queryByText("7d")).toBeNull();
+
+    // three promoted CapLines, each with its own SegBar — same anatomy as 5h/7d
+    expect(document.querySelectorAll(".fleet-capline").length).toBe(3);
+    expect(document.querySelectorAll(".fleet-capline .fleet-seg").length).toBe(3);
+
+    // the old text-only extras list must not also render these windows
+    expect(document.querySelectorAll(".fleet-provcap-window").length).toBe(0);
+    expect(screen.queryByText("included total (Auto / Cursor models)")).toBeNull();
+    expect(screen.queryByText("included API (named 3rd-party models)")).toBeNull();
+
+    // full label + amounts move to the title tooltip
+    expect(screen.getByText("INCL").getAttribute("title")).toBe("included total (Auto / Cursor models)");
+    expect(screen.getByText("API").getAttribute("title")).toBe("included API (named 3rd-party models) — $400.00 of $400.00");
+    expect(screen.getByText("O-D").getAttribute("title")).toBe("on-demand (usage-based) — $0.00 of $100.00");
+  });
+
+  it("falls through to standard 5h/7d rendering when named windows exist but none carry usable data (failed/disabled fetch)", async () => {
+    const allNullWindows = cursorWindows.map((win) => ({ ...win, usedPercentage: null, resetsAt: null }));
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{ ...cursor, windows: allNullWindows }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("5h")).toBeTruthy());
+    expect(screen.getByText("7d")).toBeTruthy();
+    expect(screen.queryByText("INCL")).toBeNull();
+    expect(screen.queryByText("API")).toBeNull();
+    expect(screen.queryByText("O-D")).toBeNull();
+    // only the standard pair renders — no empty promoted bars, no leftover extras wrapper
+    expect(document.querySelectorAll(".fleet-capline").length).toBe(2);
+    expect(document.querySelector(".fleet-provcap-extras")).toBeNull();
+  });
+
+  it("dedupes a short-label collision within the same block by appending a numeric suffix", async () => {
+    const colliding = [
+      { id: "included-total", label: "included total (Auto / Cursor models)", usedPercentage: 10, resetsAt: now + 3600, usedAmount: null, limitAmount: null, unit: null },
+      { id: "included-bonus", label: "Included bonus pool", usedPercentage: 20, resetsAt: now + 3600, usedAmount: null, limitAmount: null, unit: null },
+    ];
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{ ...cursor, windows: colliding }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("INCL")).toBeTruthy());
+    expect(screen.getByText("INCL2")).toBeTruthy();
+  });
+});
+
+const codexAccounts = [
+  {
+    id: "codex-acct-a",
+    label: "a@example.com",
+    plan: null,
+    capturedAt: now,
+    stale: false,
+    loggedIn: true,
+    fiveHour: { usedPercentage: null, resetsAt: null },
+    sevenDay: { usedPercentage: null, resetsAt: null },
+    windows: [{ id: "extra-1", label: "Bonus pool", usedPercentage: 12, resetsAt: now + 3600 }],
+    limitReached: false,
+    note: null,
+  },
+  {
+    id: "codex-acct-b",
+    label: "b@example.com",
+    plan: null,
+    capturedAt: now,
+    stale: false,
+    loggedIn: true,
+    fiveHour: { usedPercentage: null, resetsAt: null },
+    sevenDay: { usedPercentage: null, resetsAt: null },
+    windows: [{ id: "extra-2", label: "Surge credits", usedPercentage: 40, resetsAt: now + 3600 }],
+    limitReached: false,
+    note: null,
+  },
+];
+const codex = {
+  provider: "codex",
+  model: "chatgpt · 2 acct",
+  capturedAt: now,
+  fiveHour: { usedPercentage: null, resetsAt: null },
+  sevenDay: { usedPercentage: 5, resetsAt: now + 86_400 },
+  activeAccount: "codex-acct-a",
+  accounts: codexAccounts,
+};
+
+describe("FleetDrawer generalized account cycler (codex)", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([codex]);
+      return Promise.resolve([]);
+    });
+  });
+
+  it("shows the cycler head for a non-Claude provider, rotates accounts, and updates promoted caplines", async () => {
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-acct-a")).toBeTruthy());
+    expect(screen.getByText("1/2")).toBeTruthy();
+    expect(screen.getByText("BONU")).toBeTruthy();
+    expect(screen.queryByText("SURG")).toBeNull();
+
+    // the rotate button's aria-label key ("fleet.rotateAccounts") is shared by every provider —
+    // AccountCycler calls t() with no provider-specific argument.
+    fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
+
+    expect(screen.getByText("codex-acct-b")).toBeTruthy();
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.getByText("SURG")).toBeTruthy();
+    expect(screen.queryByText("BONU")).toBeNull();
+    expect(screen.queryByText("codex-acct-a")).toBeNull();
+  });
+
+  it("hides the state row and FableWeeklyLine for a non-Claude account with no loggedIn/limitReached signal", async () => {
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-acct-a")).toBeTruthy());
+    expect(document.querySelector(".fleet-provcap-account-state")).toBeNull();
+    expect(document.querySelector(".fleet-provcap-fable-weekly")).toBeNull();
+  });
+
+  it("shows the state row for a non-Claude account that reports loggedIn: false", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...codex,
+        accounts: [{ ...codexAccounts[0], loggedIn: false }, codexAccounts[1]],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-acct-a")).toBeTruthy());
+    expect(document.querySelector(".fleet-provcap-account-state")).toBeTruthy();
+    expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
+  });
+
+  it("keeps an account's 5h/7d CapLines and adds its usable named window beneath them instead of dropping it", async () => {
+    const acctWithBoth = {
+      id: "codex-acct-c",
+      label: "c@example.com",
+      plan: null,
+      capturedAt: now,
+      stale: false,
+      loggedIn: true,
+      fiveHour: { usedPercentage: 33, resetsAt: now + 3600 },
+      sevenDay: { usedPercentage: 12, resetsAt: now + 86_400 },
+      windows: [{ id: "gpt-5.3-spark", label: "GPT-5.3-Spark", usedPercentage: 61, resetsAt: now + 3600 }],
+      limitReached: false,
+      note: null,
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...codex,
+        accounts: [acctWithBoth, codexAccounts[1]],
+        activeAccount: "codex-acct-c",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-acct-c")).toBeTruthy());
+    expect(screen.getByText("5h")).toBeTruthy();
+    expect(screen.getByText("7d")).toBeTruthy();
+    expect(screen.getByTitle("GPT-5.3-Spark")).toBeTruthy();
+    expect(document.querySelectorAll(".fleet-provcap-account-detail .fleet-capline").length).toBe(3);
+  });
+
+  it("defaults to the first account with usable data, skipping a no-data account, when activeAccount doesn't match", async () => {
+    const noData = { ...codexAccounts[0], id: "codex-acct-x", windows: [] };
+    const withData = { ...codexAccounts[1], id: "codex-acct-y" };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...codex,
+        accounts: [noData, withData],
+        activeAccount: null,
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-acct-y")).toBeTruthy());
+    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.queryByText("codex-acct-x")).toBeNull();
+  });
+});
+
+describe("FleetDrawer generalized account cycler (claude regression)", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([claude]);
+      return Promise.resolve([]);
+    });
+  });
+
+  it("still renders the Claude cycler chrome, FableWeeklyLine, and state row through the shared AccountCycler", async () => {
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    expect(screen.getByText("3/3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "fleet.rotateAccounts" })).toBeTruthy();
+    expect(document.querySelector(".fleet-provcap-fable-weekly")).toBeTruthy();
+    expect(document.querySelector(".fleet-provcap-account-state")).toBeTruthy();
+    expect(screen.getAllByText("5h")).toHaveLength(1);
+    expect(screen.getAllByText("7d")).toHaveLength(1);
   });
 });
 
