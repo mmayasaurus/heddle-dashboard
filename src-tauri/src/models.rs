@@ -184,6 +184,18 @@ pub struct Tree {
     pub sessions: Vec<Session>,
 }
 
+/// Dashboard-side mapping of a comms room to a project (HED-168), letting the UI group rooms by
+/// project and mark a per-project default room. Keyed on the stable `project_id` rather than a name-
+/// or topic-derived link, since projects can be renamed (`rename_node`) but rooms cannot. A room with
+/// no association is unassociated — the Fleet bucket, computed in the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomAssociation {
+    pub room_name: String,
+    pub project_id: String,
+    pub is_default: bool,
+}
+
 /// Node kind used by rename, delete, and move to select the target table.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
