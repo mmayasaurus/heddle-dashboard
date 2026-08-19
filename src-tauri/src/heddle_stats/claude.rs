@@ -181,14 +181,19 @@ fn read_json(path: &Path) -> Option<Value> {
 /// `claude-<id>.<suffix>` files in the usage dir that are NOT a tap capture: our attribution state
 /// plus every sidecar the window-keeper writes per account (`scripts/heddle-window-keeper.py`).
 /// Matched by `ends_with`, so a one-off unregistered id literally ending in `.oauth-usage`,
-/// `.keeper`, or `.turns` (e.g. `claude-foo.turns.json`) is excluded too — accepted: real account
-/// ids never end in these tokens, and silently dropping such an id is strictly safer than surfacing a
-/// phantom row for it. This just extends the long-standing `.attrib.json` exclusion to the rest.
-const NON_ACCOUNT_SUFFIXES: [&str; 4] = [
+/// `.keeper`, `.turns`, or `.dispatch` (e.g. `claude-foo.turns.json`) is excluded too — accepted:
+/// real account ids never end in these tokens, and silently dropping such an id is strictly safer
+/// than surfacing a phantom row for it. This just extends the long-standing `.attrib.json` exclusion.
+/// A slice (not a fixed array) so adding a suffix needs no manual length bump.
+const NON_ACCOUNT_SUFFIXES: &[&str] = &[
     ".attrib.json",
     ".oauth-usage.json",
     ".keeper.json",
     ".turns.json",
+    // HED-181: the HED-178 dispatchability sidecar. It carries `checkedAt` not `capturedAt`, so the
+    // recency gate below skips it TODAY — but that is the same schema-accident this list exists to
+    // stop depending on. Exclude it by name so a future `capturedAt` (or a gate change) can't phantom it.
+    ".dispatch.json",
 ];
 
 /// Build the claude entry from `dir` (tap files) and the registry. Pure given the filesystem.
