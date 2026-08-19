@@ -390,11 +390,22 @@ export interface WorktreeEntry {
   isMain: boolean;
   /** Whether this is a bare-repository entry. */
   isBare: boolean;
+  /** Whether git flags this worktree prunable (its directory is missing on disk). */
+  isPrunable: boolean;
 }
 
 /** Lists all worktrees including main; non-repositories error so callers can use an empty list. */
 export function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
   return invoke<WorktreeEntry[]>("list_worktrees", { repoRoot });
+}
+
+/**
+ * Lists absolute worktree paths registered for the repository rooted at `projectRoot`, for
+ * project-membership scoping (see `agentInProjectWorktrees`). Non-repositories error so callers can
+ * use an empty list.
+ */
+export function listProjectWorktrees(projectRoot: string): Promise<string[]> {
+  return invoke<string[]>("list_project_worktrees", { projectRoot });
 }
 
 /** Lists worktrees associated with a session and descendants for deletion confirmation. */

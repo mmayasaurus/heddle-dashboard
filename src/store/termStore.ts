@@ -640,7 +640,7 @@ export interface BrowserTab {
  * replace it and persistence omits it. Document content stays in the mounted `DocView`, not Zustand snapshots.
  */
 
-interface TermStore {
+export interface TermStore {
   // Persistent structure loaded from SQLite.
   projects: Project[];
   groups: Group[];

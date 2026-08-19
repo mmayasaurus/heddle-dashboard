@@ -773,6 +773,10 @@ pub struct WorktreeEntry {
     pub is_main: bool,
     /// Whether this is a bare entry without a working tree, also excluded from selection.
     pub is_bare: bool,
+    /// Whether git flags this worktree prunable — its directory is missing on disk while the
+    /// registration remains, e.g. after a manual `rm` instead of `git worktree remove`. Excluded from
+    /// project-membership listing since it is not a real, active working directory.
+    pub is_prunable: bool,
 }
 
 /// Parse all porcelain worktrees for repo_root, including the first/main entry; return Err when unavailable.
@@ -800,6 +804,7 @@ pub fn worktree_list(repo_root: &str) -> Result<Vec<WorktreeEntry>, String> {
                 head: None,
                 is_main: false,
                 is_bare: false,
+                is_prunable: false,
             });
         } else if let Some(h) = line.strip_prefix("HEAD ") {
             if let Some(e) = cur.as_mut() {
@@ -813,8 +818,13 @@ pub fn worktree_list(repo_root: &str) -> Result<Vec<WorktreeEntry>, String> {
             if let Some(e) = cur.as_mut() {
                 e.is_bare = true;
             }
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            // A trailing reason ("prunable gitdir file points to non-existent location") may follow.
+            if let Some(e) = cur.as_mut() {
+                e.is_prunable = true;
+            }
         }
-        // Other lines such as detached/locked/prunable need no handling; branch remains None.
+        // Other lines such as detached/locked need no handling; branch remains None.
     }
     if let Some(e) = cur.take() {
         entries.push(e);
@@ -824,6 +834,26 @@ pub fn worktree_list(repo_root: &str) -> Result<Vec<WorktreeEntry>, String> {
         first.is_main = true;
     }
     Ok(entries)
+}
+
+/// True for a worktree entry that is a real, active working directory: not bare (no working tree of
+/// its own) and not prunable (git considers its directory missing).
+fn is_active_worktree(entry: &WorktreeEntry) -> bool {
+    !entry.is_bare && !entry.is_prunable
+}
+
+/// Absolute worktree paths registered for the repository rooted at `project_root`, via `git worktree
+/// list --porcelain`. Includes every worktree the repository has registered, even ones checked out as
+/// siblings outside `project_root` itself — git's registration is repository-wide, not root-scoped.
+/// Excludes bare and prunable entries, which are not real, active working directories an agent could
+/// be running in. Read-only; returns Err when `project_root` is not a Git repository or `git` is
+/// unavailable.
+pub fn list_project_worktrees(project_root: &str) -> Result<Vec<String>, String> {
+    Ok(worktree_list(project_root)?
+        .into_iter()
+        .filter(is_active_worktree)
+        .map(|e| e.path)
+        .collect())
 }
 
 /// Idempotently ignore `.vlx-worktrees/` through repository-local `.git/info/exclude`, keeping
@@ -1903,6 +1933,111 @@ mod merge_tests {
         let _ = branch_delete(&repo_str, &wt.branch);
         let _ = std::fs::remove_dir_all(&repo);
         let _ = std::fs::remove_dir_all(&plain);
+    }
+
+    /// `list_project_worktrees` at a project root enumerates every worktree the repository has
+    /// registered, including ones checked out as siblings OUTSIDE that root — the authoritative
+    /// project-membership source for HED-167 (validated against the real Spinventory layout, where
+    /// the root's registration also lists sibling dirs like `Rebuild-Project-Root.agent-b`).
+    #[test]
+    fn list_project_worktrees_includes_siblings_outside_root() {
+        let repo = init_repo();
+        let repo_str = repo.to_string_lossy().to_string();
+
+        // Registered as a sibling temp dir outside repo, not nested under it.
+        let sibling = std::env::temp_dir().join(format!("vlx-sibling-{}", Uuid::new_v4()));
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                sibling.to_str().unwrap(),
+                "-b",
+                "wt-sibling",
+            ],
+        );
+
+        let paths = list_project_worktrees(&repo_str).expect("listing should succeed");
+        let got: Vec<PathBuf> = paths
+            .iter()
+            .map(|p| std::fs::canonicalize(p).unwrap())
+            .collect();
+        let want_repo = std::fs::canonicalize(&repo).unwrap();
+        let want_sibling = std::fs::canonicalize(&sibling).unwrap();
+        assert!(got.contains(&want_repo), "main worktree should be listed");
+        assert!(
+            got.contains(&want_sibling),
+            "sibling worktree registered outside the root should be listed"
+        );
+
+        // A non-repository directory returns Err so callers can fall back to an empty list.
+        let plain = std::env::temp_dir().join(format!("vlx-plain-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&plain).unwrap();
+        assert!(list_project_worktrees(&plain.to_string_lossy()).is_err());
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&sibling);
+        let _ = std::fs::remove_dir_all(&plain);
+    }
+
+    /// A worktree whose directory was deleted without `git worktree remove` (e.g. a stray `rm -rf`)
+    /// becomes prunable — the project-membership listing must exclude it since it is not a real,
+    /// active working directory an agent could be running in (HED-167 review).
+    #[test]
+    fn list_project_worktrees_excludes_prunable_entries() {
+        let repo = init_repo();
+        let repo_str = repo.to_string_lossy().to_string();
+
+        let prunable = std::env::temp_dir().join(format!("vlx-prunable-{}", Uuid::new_v4()));
+        git(
+            &repo,
+            &["worktree", "add", prunable.to_str().unwrap(), "-b", "wt-prunable"],
+        );
+        // Canonicalize before deleting: canonicalize requires the path to still exist on disk.
+        let prunable_canon = std::fs::canonicalize(&prunable).unwrap();
+        std::fs::remove_dir_all(&prunable).unwrap();
+
+        let paths = list_project_worktrees(&repo_str).expect("listing should succeed");
+        let got: Vec<PathBuf> = paths.iter().map(|p| std::fs::canonicalize(p).unwrap()).collect();
+        assert!(
+            !got.contains(&prunable_canon),
+            "a prunable worktree (directory deleted without `worktree remove`) should be excluded"
+        );
+        assert!(
+            got.contains(&std::fs::canonicalize(&repo).unwrap()),
+            "the main worktree should still be listed"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// `is_active_worktree`'s bare/prunable filter, exercised directly over synthetic entries — a
+    /// bare-repository fixture is comparatively expensive to construct, so this covers the filter
+    /// predicate itself rather than porcelain parsing (see `list_project_worktrees_excludes_prunable_entries`
+    /// for that) (HED-167 review).
+    #[test]
+    fn is_active_worktree_excludes_bare_and_prunable_entries() {
+        fn entry(path: &str, is_bare: bool, is_prunable: bool) -> WorktreeEntry {
+            WorktreeEntry {
+                path: path.to_string(),
+                branch: Some("main".to_string()),
+                head: Some("deadbeef".to_string()),
+                is_main: false,
+                is_bare,
+                is_prunable,
+            }
+        }
+        let entries: Vec<WorktreeEntry> = vec![
+            entry("/repo", false, false),
+            entry("/repo-bare", true, false),
+            entry("/repo-prunable", false, true),
+        ];
+        let kept: Vec<String> = entries
+            .into_iter()
+            .filter(is_active_worktree)
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(kept, vec!["/repo".to_string()]);
     }
 
     /// Forward unified merge (old “merge into parent”): worktree branch -> main. Preflight includes

@@ -347,6 +347,11 @@ pub fn dispatch(app: &AppCtx, cmd: &str, args: &Value, source: &str) -> Result<V
             &req_str(args, "name")?,
         )?),
         "list_worktrees" => to_value(git::worktree_list(&req_str(args, "repoRoot")?)?),
+        // Read-only project-membership primitive (HED-167): absolute worktree paths registered for
+        // the repo at projectRoot, including siblings checked out outside that root.
+        "list_project_worktrees" => {
+            to_value(git::list_project_worktrees(&req_str(args, "projectRoot")?)?)
+        }
         "worktrees_in_subtree" => to_value(core::worktrees_in_subtree(
             app,
             &req_str(args, "sessionId")?,
