@@ -470,3 +470,104 @@ describe("FleetDrawer generalized account cycler (claude regression)", () => {
     expect(screen.getAllByText("7d")).toHaveLength(1);
   });
 });
+
+describe("FleetDrawer roster model chips", () => {
+  const baseAgent = {
+    pid: 111,
+    sessionId: "sess-1",
+    cwd: "/Users/x/project",
+    status: "idle",
+    kind: "claude",
+    updatedAtMs: Date.now(),
+    alive: true,
+    workers: [],
+  };
+
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("renders a model chip between the agent name and status word", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "r", model: "claude-opus-4-8" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("r")).toBeTruthy());
+    const row = document.querySelector(".fleet-agent-row");
+    expect(row).toBeTruthy();
+    const classAt = (selector: string) =>
+      Array.from(row!.children).findIndex((el) => el.classList.contains(selector));
+    expect(classAt("fleet-agent-model")).toBeGreaterThan(classAt("fleet-agent-name"));
+    expect(classAt("fleet-agent-status")).toBeGreaterThan(classAt("fleet-agent-model"));
+    expect(document.querySelector(".fleet-agent-model")?.textContent).toBe("opus 4.8");
+  });
+
+  it("renders no chip node when the agent has no model", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "s", model: null }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("s")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")).toBeNull();
+  });
+
+  it("carries the full model id in the row tooltip", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "t", model: "claude-opus-4-8" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("t")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-row")?.getAttribute("title")).toContain("claude-opus-4-8");
+  });
+
+  it("falls back to the last two dash-segments for an unmapped, non-family id", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "u", model: "totally-unknown-future-model-x9" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("u")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")?.textContent).toBe("model-x9");
+  });
+
+  it("never resolves an Object.prototype member for a lookalike model id", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "v", model: "constructor" }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("v")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")?.textContent).toBe("constructor");
+  });
+
+  it("hides the model chip on a dead (struck) agent row", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{ ...baseAgent, name: "w", model: "claude-opus-4-8", alive: false }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("w")).toBeTruthy());
+    expect(document.querySelector(".fleet-agent-model")).toBeNull();
+  });
+});
