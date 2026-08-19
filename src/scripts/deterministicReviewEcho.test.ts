@@ -135,6 +135,11 @@ describe("regression HED-193 — scanner edit echoes reflect fresh commit verdic
       expect(shell).toContain('case "$VERDICT" in');
       expect(shell).toContain("$m.started_at >= $leaf");
       expect(shell).toContain('and .conclusion != "skipped"');
+      // Marker isolation (grok finding 2): the freshness filter must select the
+      // EXACT marker name, never a substring/regex that could also match the OTHER
+      // scanner's verdict (which would let a newer other-scanner success mask this
+      // scanner's failure — for gitleaks, a leaked secret).
+      expect(shell).toContain(`select(.name == "${scanner}-verdict")`);
       expect(shell).toMatch(/could not read check runs[\s\S]*?DRY=0[\s\S]*?continue/);
     });
 
@@ -247,6 +252,22 @@ fi
       expect(run(pages(page(leaf("completed", T(0), "failure"), marker("failure", T(5))))).status).not.toBe(0);
       expect(run(pages(page(leaf("completed", T(0), "success")))).status).not.toBe(0);
       expect(run("{malformed").status).not.toBe(0);
+
+      // Marker isolation (grok finding 2): this scanner's marker is FAILURE, and
+      // the OTHER scanner's marker is a NEWER SUCCESS. The echo must echo its OWN
+      // failure, never the newer other-scanner success (for gitleaks, a leaked
+      // secret). A too-broad marker matcher would exit 0 here and mask it.
+      const otherVerdict = {
+        name: `${scanner === "semgrep" ? "gitleaks" : "semgrep"}-verdict`,
+        started_at: T(35),
+        status: "completed",
+        conclusion: "success",
+      };
+      const isolation = run(
+        pages(page(leaf("completed", T(0), "failure"), marker("failure", T(5)), otherVerdict)),
+      );
+      expect(isolation.status).not.toBe(0);
+      expect(isolation.stdout).toContain("real verdict for 0123456789abcdef was 'failure'");
       // Generous timeout: spawns gh+jq per poll; under full-suite concurrency on
       // a loaded machine subprocess-spawn latency can exceed vitest's 30s default.
       // Hardened alongside the new gate-echo twin, which adds concurrent load (HED-182).
