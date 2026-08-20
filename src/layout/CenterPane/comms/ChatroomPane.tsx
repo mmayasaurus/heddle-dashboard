@@ -170,7 +170,7 @@ interface ChatColumnProps {
 
 /** The right-hand column: chat header (+ operator member controls on a closed room), pinned
  *  needs-human strip, floor banner, poll-error line, transcript, and the composer. */
-function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onNeedsHumanRowClick }: ChatColumnProps) {
+export function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onNeedsHumanRowClick }: ChatColumnProps) {
   const t = useT();
   const { needsHuman, floor, roomsError, transcriptError, rosterError, messages, rooms } = poll;
   const activeRoom = rooms.find((r) => r.target === activeTarget);
