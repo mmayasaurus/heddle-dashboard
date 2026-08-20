@@ -1103,6 +1103,20 @@ pub fn run_serve(args: &[String]) {
 /// Fallible `run_serve` implementation extracted for `?` error propagation.
 fn serve_main(args: &ServeArgs) -> Result<(), String> {
     let identifier = serve_identifier();
+    // Fail fast: refuse production LAN plaintext BEFORE any startup side effects (data dir, DB, shim
+    // install, the background HookServer thread). LanHttp mode is `--lan-http` without `--local-http`
+    // (loopback wins when both are set — see the ServeMode selection below). Production = a release
+    // compile OR a production identifier (the minimal server is always `io.vlinx.vlxterm.server`); dev
+    // builds permit plaintext LAN for mobile-device testing.
+    if args.lan_http
+        && !args.local_http
+        && crate::web::is_production(&identifier, !cfg!(debug_assertions))
+    {
+        return Err(format!(
+            "LAN plaintext (--lan-http, binds 0.0.0.0 in plaintext) is only available in dev builds, not in production (release compile or production identifier; identifier={identifier}). \
+             For production use the default TLS mode, or HTTPS with certificate pinning (see architecture §20)."
+        ));
+    }
     let data_dir = serve_data_dir(args, &identifier)?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("failed to create data dir: {e}"))?;
     let db = Db::open(&db::app_db_path(&data_dir))?;
@@ -1139,17 +1153,6 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     } else {
         crate::web::ServeMode::LanTls
     };
-    // Production rejects LAN plaintext; mobile production must use HTTPS plus certificate pinning.
-    // Loopback plaintext never leaves the host and remains permitted. Production = a release compile
-    // OR a production identifier (the minimal server is always `io.vlinx.vlxterm.server`).
-    if matches!(mode, crate::web::ServeMode::LanHttp)
-        && crate::web::is_production(&identifier, !cfg!(debug_assertions))
-    {
-        return Err(format!(
-            "LAN plaintext (--lan-http, binds 0.0.0.0 in plaintext) is only available in dev builds, not in production (release compile or production identifier; identifier={identifier}). \
-             For production use the default TLS mode, or HTTPS with certificate pinning (see architecture §20)."
-        ));
-    }
     let status = web.start(ctx.clone(), &args.password, Some(args.port), mode)?;
 
     println!("heddle headless server started");
