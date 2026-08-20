@@ -152,7 +152,7 @@ New/updated pieces (replacing old B "scope the overlay" + A "Rooms subsection"):
 4. **Room-management UI** (§6). (medium)
 5. **Unread state** — operator-side per-conversation last-read store; per-room notif level. (small)
 6. **C / HED-169** — default room provisioning (backend). (medium)
-7. **E2** — participants reader so children are pickable/addressable. (small)
+7. **E2** — participants reader so children are pickable/addressable. (small) — **MERGED (HED-197).**
 
 ## 11. Sequencing & Ownership (R + T)
 
