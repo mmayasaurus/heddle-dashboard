@@ -516,9 +516,10 @@ function CapLine({
   note?: string | null;
   className?: string;
   title?: string;
-  /** Promoted/named pools (#51's insight): a null pct means the pool is OFF (e.g. on-demand), not
-   *  that the window is absent — render an indeterminate dash instead of an empty bar, and keep
-   *  the reset clock + any $used/$limit visible rather than "no active window". */
+  /** Named/promoted pools (#51's insight) keep their reset clock + any $used/$limit visible rather
+   *  than the "no active window" line even when idle. (The null-pct → indeterminate dash is now
+   *  universal — HED-209 — applied to rolling 5h/7d too, so no window ever renders as a 0%-filled
+   *  bar just because it has no measurement.) */
   namedWindow?: boolean;
 }) {
   const t = useT();
@@ -527,7 +528,10 @@ function CapLine({
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
       <span className="fleet-capline-lbl" title={title ?? label}>{label}</span>
-      {namedWindow && pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
+      {/* HED-209: a null pct means "no measurement", not zero — render the indeterminate dash for
+          ANY window (rolling 5h/7d included), never a 0%-filled SegBar that reads as a real 0%.
+          Guard is `== null` so a genuine pct === 0 still draws an empty bar + "0%". */}
+      {pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
       <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
       <LiveClock render={(now) => {
         if (namedWindow) {
