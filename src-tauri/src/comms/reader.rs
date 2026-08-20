@@ -629,7 +629,13 @@ struct RawMessage {
     meta: Option<String>,
 }
 
-/// Newest `limit` rows for `target`, returned ascending: select the tail DESC, then reverse.
+/// Newest `limit` rows for `target` PLUS ambient `@all` broadcasts (HED-164), returned ascending:
+/// select the tail DESC, then reverse. A broadcast is `target='@all'` — inbox-delivered to every agent,
+/// not bound to any room's message stream — so it belongs to no room's read; the `OR target = '@all'`
+/// surfaces it in every view, including the operator's OWN broadcast, which otherwise rendered nowhere.
+/// `target=<room>` and `'@all'` are disjoint rows → no dedup; the cursor (`id > ?`), `ORDER BY id`, and
+/// `LIMIT` all apply cleanly across the union. (Room unread is unaffected: `query_rooms.latest_id` is
+/// `MAX(id) WHERE target=r.name`, which already excludes `@all`.)
 fn query_transcript_tail(
     conn: &Connection,
     target: &str,
@@ -638,7 +644,7 @@ fn query_transcript_tail(
     let mut stmt = conn
         .prepare(
             "SELECT id, ts, sender, target, kind, tier, verified, body, reply_to, dispatch_id, meta \
-             FROM messages WHERE target = ?1 ORDER BY id DESC LIMIT ?2",
+             FROM messages WHERE (target = ?1 OR target = '@all') ORDER BY id DESC LIMIT ?2",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -659,8 +665,10 @@ fn query_transcript_page(
 ) -> Result<Vec<RawMessage>, String> {
     let mut stmt = conn
         .prepare(
+            // Cursor page: same ambient `@all` union as the tail (see query_transcript_tail) — a
+            // broadcast newer than since_id appears in the next page for whatever room is open.
             "SELECT id, ts, sender, target, kind, tier, verified, body, reply_to, dispatch_id, meta \
-             FROM messages WHERE target = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3",
+             FROM messages WHERE (target = ?1 OR target = '@all') AND id > ?2 ORDER BY id ASC LIMIT ?3",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt

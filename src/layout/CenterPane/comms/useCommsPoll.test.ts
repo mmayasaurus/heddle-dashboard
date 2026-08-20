@@ -95,6 +95,21 @@ function lastCall<T>(calls: T[]): T | undefined {
 }
 
 describe("useCommsPoll", () => {
+  it("HED-164: refresh immediately fetches the active room through the cursor append path", async () => {
+    vi.useFakeTimers();
+    transcriptStore.set("#fleet", [mkMsg(1, "#fleet")]);
+    const { result } = renderHook(() => useCommsPoll(true, "#fleet"));
+    await flush();
+    expect(result.current.messages.map((m) => m.id)).toEqual([1]);
+
+    transcriptStore.set("#fleet", [mkMsg(1, "#fleet"), mkMsg(2, "#fleet")]);
+    result.current.refresh();
+    await flush();
+
+    expect(result.current.messages.map((m) => m.id)).toEqual([1, 2]);
+    expect(lastCall(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript"))?.[1]).toEqual({ target: "#fleet", sinceId: 1 });
+  });
+
   it("fetches rooms immediately on mount and sets loaded=true", async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useCommsPoll(false, null));

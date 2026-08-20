@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../../ipc/transport";
 import { Composer } from "./Composer";
-import type { CommsNeedsHumanRow } from "./useCommsPoll";
+import { useCommsPoll, type CommsNeedsHumanRow } from "./useCommsPoll";
 import type { OperatorStatus } from "./useOperatorStatus";
 
 vi.mock("../../../ipc/transport", () => ({ invoke: vi.fn(), isTauri: true }));
@@ -191,6 +191,18 @@ describe("Composer — disabled while sending", () => {
 });
 
 describe("Composer — @all toggle", () => {
+  it("shows the effective destination and updates it when the broadcast toggle changes", () => {
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    expect(screen.getByTestId("comms-composer-to").textContent).toBe("→ #fleet");
+    expect(input().getAttribute("aria-label")).toBe("Message #fleet as operator");
+
+    fireEvent.click(within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox"));
+
+    expect(screen.getByTestId("comms-composer-to").textContent).toBe("→ @all");
+    expect(input().getAttribute("aria-label")).toBe("Message @all as operator");
+  });
+
   it("sends to the broadcast ADDRESS when the toggle is on, leaving the body untouched", async () => {
     mockInvoke.mockResolvedValue({ outcome: "sent", code: null, reason: null });
     render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
@@ -203,6 +215,66 @@ describe("Composer — @all toggle", () => {
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_send", { target: "@all", body: "everyone see this", replyTo: null }),
     );
+  });
+});
+
+describe("Composer — confirmed sends notify the transcript reader", () => {
+  function ComposerWithTranscriptRefresh() {
+    const { refresh } = useCommsPoll(true, "#fleet");
+    return <Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} onSent={refresh} />;
+  }
+
+  it("HED-164: a confirmed send eagerly reads the transcript, while refusal and error do not", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "heddle_comms_send") return Promise.resolve({ outcome: "sent", code: null, reason: null });
+      if (cmd === "heddle_comms_transcript") return Promise.resolve({ schemaOk: true, schemaVersion: 1, messages: [], floor: null });
+      if (cmd === "heddle_comms_rooms") return Promise.resolve({ schemaOk: true, schemaVersion: 1, rooms: [], needsHuman: [], recentRefusals: 0 });
+      if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
+      return Promise.reject(new Error("unexpected invoke"));
+    });
+    render(<ComposerWithTranscriptRefresh />);
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_transcript", { target: "#fleet", sinceId: null }));
+    mockInvoke.mockClear();
+
+    fireEvent.change(input(), { target: { value: "confirmed" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_transcript", { target: "#fleet", sinceId: 0 }));
+
+    mockInvoke.mockClear();
+    mockInvoke.mockResolvedValueOnce({ outcome: "refused", code: "floor-held", reason: "floor-held" });
+    fireEvent.change(input(), { target: { value: "refused" } });
+    fireEvent.click(sendBtn());
+    await screen.findByTestId("comms-refusal");
+    expect(mockInvoke.mock.calls.some((call) => call[0] === "heddle_comms_transcript")).toBe(false);
+
+    mockInvoke.mockClear();
+    mockInvoke.mockRejectedValueOnce(new Error("broker unavailable"));
+    fireEvent.change(input(), { target: { value: "error" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(screen.getByTestId("comms-refusal").textContent).toContain("broker unavailable"));
+    expect(mockInvoke.mock.calls.some((call) => call[0] === "heddle_comms_transcript")).toBe(false);
+  });
+
+  it("calls onSent only after a confirmed success, never after a refusal or transport error", async () => {
+    const onSent = vi.fn();
+    mockInvoke.mockResolvedValueOnce({ outcome: "sent", code: null, reason: null });
+    mockInvoke.mockResolvedValueOnce({ outcome: "refused", code: "floor-held", reason: "floor-held" });
+    mockInvoke.mockRejectedValueOnce(new Error("broker unavailable"));
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} onSent={onSent} />);
+
+    fireEvent.change(input(), { target: { value: "confirmed" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(input(), { target: { value: "refused" } });
+    fireEvent.click(sendBtn());
+    await screen.findByTestId("comms-refusal");
+    expect(onSent).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(input(), { target: { value: "error" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(screen.getByTestId("comms-refusal").textContent).toContain("broker unavailable"));
+    expect(onSent).toHaveBeenCalledTimes(1);
   });
 });
 

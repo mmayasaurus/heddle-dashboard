@@ -475,6 +475,14 @@
   border-radius: 4px;
   padding: 1px 6px;
 }
+.comms-broadcast-badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  padding: 0 5px;
+}
 .comms-receipts {
   display: flex;
   flex-wrap: wrap;
@@ -651,6 +659,12 @@
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 2px 8px;
+  flex: none;
+}
+.comms-composer-to {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
   flex: none;
 }
 .comms-composer-input {

@@ -11,7 +11,7 @@
 //! Errors on any surface keep the last good data and surface a dim one-line message; they never
 //! clear already-rendered content (see docs/TESTING-BAR.md — guards and failure paths matter).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "../../../ipc/transport";
 
 // ── Backend payload shapes (heddle-comms.db, HED-74a contract — field names fixed) ──
@@ -175,6 +175,8 @@ export interface UseCommsPollResult {
   rosterError: string | null;
   /** target -> has content newer than this client's last-seen cursor for that room. */
   unreadByTarget: Record<string, boolean>;
+  /** Immediately fetches the active transcript through its existing cursor append path. */
+  refresh: () => void;
 }
 
 /**
@@ -204,6 +206,10 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
   const cursorsRef = useRef<Map<string, number>>(new Map());
   // In-flight guard for the transcript poll: true while a fetch (fresh or cursor) is running.
   const busyRef = useRef(false);
+  const refreshRef = useRef<() => void>(() => {});
+  const refresh = useCallback(() => {
+    refreshRef.current();
+  }, []);
 
   // Rooms poll: every 5s, always, regardless of expanded/collapsed — drives the collapsed badge.
   useEffect(() => {
@@ -288,7 +294,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
       }
     };
     const fetchCursor = async () => {
-      if (!isTauri) return;
+      if (!isTauri || cancelled) return;
       // In-flight guard: a tick that lands while a fetch is still running SKIPS — it never queues.
       if (busyRef.current) return;
       const since = cursorsRef.current.get(target) ?? 0;
@@ -305,6 +311,8 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
       }
     };
 
+    refreshRef.current = () => void fetchCursor();
+
     // Start the poll interval only after the initial fetch settles, so a slow first load can't
     // race a since=0 cursor tick into appending a duplicate page.
     void fetchFresh().finally(() => {
@@ -314,6 +322,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
 
     return () => {
       cancelled = true;
+      refreshRef.current = () => {};
       if (intervalId !== undefined) window.clearInterval(intervalId);
     };
   }, [expanded, activeTarget]);
@@ -380,5 +389,6 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
     roster,
     rosterError,
     unreadByTarget,
+    refresh,
   };
 }
