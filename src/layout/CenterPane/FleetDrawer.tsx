@@ -516,19 +516,24 @@ function CapLine({
   note?: string | null;
   className?: string;
   title?: string;
-  /** Promoted/named pools (#51's insight): a null pct means the pool is OFF (e.g. on-demand), not
-   *  that the window is absent — render an indeterminate dash instead of an empty bar, and keep
-   *  the reset clock + any $used/$limit visible rather than "no active window". */
+  /** Named/promoted pools (#51's insight) keep their reset clock + any $used/$limit visible rather
+   *  than the "no active window" line even when idle. (The null-pct → indeterminate dash is now
+   *  universal — HED-209 — applied to rolling 5h/7d too, so no window ever renders as a 0%-filled
+   *  bar just because it has no measurement.) */
   namedWindow?: boolean;
 }) {
   const t = useT();
   const pct = win.usedPercentage;
+  const pctLabel = pct == null ? "" : `${Math.round(pct)}%`;
   const amount = namedWindow ? fmtWindowUsedLimit(win) : null;
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
       <span className="fleet-capline-lbl" title={title ?? label}>{label}</span>
-      {namedWindow && pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
-      <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
+      {/* HED-209: a null pct means "no measurement", not zero — render the indeterminate dash for
+          ANY window (rolling 5h/7d included), never a 0%-filled SegBar that reads as a real 0%.
+          Guard is `== null` so a genuine pct === 0 still draws an empty bar + "0%". */}
+      {pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
+      <span className="fleet-capline-pct" title={pctLabel}>{pctLabel}</span>
       <LiveClock render={(now) => {
         if (namedWindow) {
           const reset = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : "";
@@ -536,11 +541,21 @@ function CapLine({
           const full = [reset, amount, note].filter(Boolean).join(" · ");
           return <span className="fleet-dim fleet-capline-reset" title={full}>{text}</span>;
         }
-        return (
-          <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
-            {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
-          </span>
-        );
+        // Reset clock semantics for the rolling (non-named) branch:
+        //  - MEASURED window (pct != null): keep the reset clock for any resetsAt, as before — an
+        //    elapsed timestamp renders "↻ resetting" (the window is rolling over).
+        //  - NO-MEASUREMENT window (pct == null): it's "active" ONLY with a FUTURE resetsAt (the
+        //    keeper-estimate state — Copilot review). An EXPIRED or absent resetsAt is stale data,
+        //    not an active window, so show "no active window" rather than a misleading "↻ resetting"
+        //    (qodo review — fmtReset returns the resetting label for an elapsed timestamp).
+        const nowSec = Math.floor(now / 1000);
+        const resetClock = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : null;
+        const futureReset = win.resetsAt != null && win.resetsAt > nowSec ? resetClock : null;
+        const resetText = pct != null ? (resetClock ?? "") : (futureReset ?? t("fleet.noActiveWindow"));
+        // Keep the diagnostic note in the tooltip whenever the window has no measurement (cubic
+        // review); a real pct keeps no note, as before.
+        const resetTitle = pct == null ? [resetText, note].filter(Boolean).join(" · ") : resetText;
+        return <span className="fleet-dim fleet-capline-reset" title={resetTitle}>{resetText}</span>;
       }} />
     </div>
   );
