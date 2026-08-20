@@ -310,10 +310,31 @@ export function FleetDrawer() {
               // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
               let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+              let accountLabel: string | null = null;
+              let freshOverride = false;
+              const accounts = p.accounts ?? [];
+              if (p.provider === "claude" && accounts.length > 0) {
+                const freshAccounts = accounts
+                  .filter((account) => account.stale !== true)
+                  .map((account) => {
+                    const aWin = account.fiveHour?.usedPercentage != null ? account.fiveHour : account.sevenDay;
+                    return aWin?.usedPercentage != null
+                      ? { account, aWin: aWin as LimitWindow & { usedPercentage: number }, wlabel: account.fiveHour?.usedPercentage != null ? "5h" : "7d" }
+                      : null;
+                  })
+                  .filter((account): account is { account: ProviderAccount; aWin: LimitWindow & { usedPercentage: number }; wlabel: string } => account != null);
+                if (freshAccounts.length > 0) {
+                  const maxFresh = freshAccounts.reduce((a, b) => b.aWin.usedPercentage > a.aWin.usedPercentage ? b : a);
+                  win = maxFresh.aWin;
+                  label = maxFresh.wlabel;
+                  accountLabel = maxFresh.account.id;
+                  freshOverride = true;
+                }
+              }
               // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
               // non-empty proof is local to this block — corgea, PR #47.
               const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
-              if (isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
+              if (!freshOverride && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
                 const tightest = usable.reduce((a, b) =>
                   (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
                 win = tightest;
@@ -327,10 +348,11 @@ export function FleetDrawer() {
               return (
                 <LiveClock key={p.provider} render={(nowMs) => (
                   <span
-                    className={"fleet-chip-sum" + (isProviderStale(p, nowMs) ? " stale" : "")}
-                    title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
+                    className={"fleet-chip-sum" + (freshOverride ? "" : isProviderStale(p, nowMs) ? " stale" : "")}
+                    title={`${p.provider}${accountLabel ? " · " + accountLabel : ""} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
                   >
                     <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                    {accountLabel && <span className="fleet-chip-acct fleet-dim">{accountLabel}</span>}
                     <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
                     {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
                   </span>

@@ -317,6 +317,7 @@ svg { display: block; }
 .fleet-chip-sum { display: inline-flex; align-items: center; white-space: nowrap; }
 .fleet-chip-sum.stale { opacity: 0.55; }
 .fleet-tag { font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); margin-right: 4px; }
+.fleet-chip-acct { margin-right: 4px; }
 .fleet-dim { color: var(--text-dim); }
 .fleet-run { color: var(--accent); font-weight: 600; }
 .fleet-sp { flex: 1; }
