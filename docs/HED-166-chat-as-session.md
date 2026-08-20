@@ -37,8 +37,9 @@ until it lands, a clean DB shows no rooms. The new pane also **coexists with the
 
 Maya's decision (2026-08-19): the chatroom stops being a full-window pop-up overlay and becomes a first-class
 `SessionKind`. Each room or DM is a **session** that appears in the left-panel `ProjectTree` for its project;
-selecting it renders in the `CenterPane` like any terminal session, with the active / unread / needs-human
-indicators terminals already have. Plus full Discord-style room management (create / name rooms, add / remove
+selecting it renders in the `CenterPane` like any terminal session, with the active / unread indicators terminals
+already have, plus the comms `needs-human` signal (a separate addition rendered by `NeedsHumanStrip`, not an
+existing terminal indicator). Plus full Discord-style room management (create / name rooms, add / remove
 agents), and subagents addressable in-chat.
 
 This **extends** HED-166 and does not collide with it. It **supersedes HED-154** (chatroom-as-pull-up-drawer — a
@@ -77,7 +78,7 @@ works. Chat-as-`SessionKind` is architecturally cheap. `parentSessionId` already
 | Chat renderer in center pane | EXTEND | `ChatroomPane` content minus the `ExpandedOverlay` wrapper; a pane swap doesn't overlay native views, so this likely retires the HED-111 `useSuspendNativeViews` machinery for chat. |
 | Left-panel conversation list | EXTEND | `ProjectTree` already lists sessions per project with status indicators; rooms/DMs become session nodes, via T's `heddle.db` room→project mapping. |
 | Tab/activity indicators | EXISTS | `SessionStatusBadge` / `SessionTabStatus` / `StatusIndicator`. |
-| Room management (create/name/add/remove/list) | EXISTS (broker) + NEW (UI) | Broker has `create_room` / `join_room` / `leave_room` / `list_rooms` (membership is join/leave, not add/remove member); only the UI is new. |
+| Room management (create/name/add/remove/list) | EXISTS (broker) + partly-new UI | Broker has `create_room` / `join_room` / `leave_room` / `list_rooms` (membership is join/leave, not add/remove member). `RoomCreateModal`/`MemberPicker`/`RoomMemberControls`/`RoomsRail` already exist in the fleet overlay (reused per §6); the first-class session surface + project association are what's new. |
 | Per-agent DMs | NEW (view-model) | Derived from sender/target pairs in `comms.db`; no hidden per-agent rooms. |
 | Unread counts | NEW | Operator-side per-conversation last-read store; nothing required broker-side. |
 | Permission-request indicator | EXTEND | Broker `needs-human` signal (`NeedsHumanStrip`) surfaced as a row badge. |
@@ -108,8 +109,10 @@ synthesized per distinct sender/target pair from `comms.db`, shown under the cou
 Selecting a chat node sets it active → renders in CenterPane, using the same active-session path terminals use.
 
 **CenterPane — a chat session renders like any session.** A `kind:'chat'` session renders `Transcript` + `Composer`
-(with `RefusalBanner`/`FloorBanner`) + `NeedsHumanStrip` as the pane body — the `ChatroomPane` content minus the
-`ExpandedOverlay` wrapper. As a pane (not an overlay over native views), this **retires chat's `useSuspendNativeViews`**.
+(with `FloorBanner`) + `NeedsHumanStrip` as the pane body — the `ChatroomPane` content minus the
+`ExpandedOverlay` wrapper. (Today `ChatColumn` renders `FloorBanner` + `NeedsHumanStrip`; refusal state lives in the
+overlay's `CollapsedStrip`, not `ChatColumn`.) As a pane (not an overlay over native views), this is **intended to
+retire chat's `useSuspendNativeViews`** — not yet done (see §0).
 The comms poll moves to a store owner keyed on the active chat session (the reshaped remnant of the old "comms store
 slice" — driven by session selection, not a separate overlay target). `@all` stays a composer address toggle;
 `@mention` is authored in the body and elevated to a directed push by the broker.
@@ -118,7 +121,8 @@ slice" — driven by session selection, not a separate overlay target). `@all` s
 `MemberPicker`, extended to list subagent children via the deferred participants reader) → broker `create_room`
 (CLOSED by default) → `associate_room_to_project` so it lands under the right project. Add/remove members surface
 `RoomMemberControls` in a room session's header. Rename is a UI-display concern (rooms can't rename broker-side —
-flag any gap to V). All of these write through the operator-send path (gated on HED-183, now merged).
+flag any gap to V). The broker room/message mutations here write through the operator-send path (gated on HED-183,
+now merged); the room↔project association is a local `heddle.db` write (HED-168 commands), not the operator path.
 
 ## 7. Subagent Addressing — capability + lifecycle (R + T)
 
@@ -138,7 +142,9 @@ rooms with no row. **C / HED-169** auto-provisions the default CLOSED room on pr
 ## 9. What else we're missing (R)
 
 Room member list (who's in a channel); per-room notification level (mute / normal / all — lighter-weight since rooms
-are pull); persistent scrollback (already in `comms.db`); the mention-carries-context requirement (§5).
+are pull); **how non-active rooms keep unread counts fresh** — the §6 comms poll is keyed to the active chat session,
+so background rooms need a lightweight background poll or a broker unread signal (open question for piece 5, not
+resolved here); persistent scrollback (already in `comms.db`); the mention-carries-context requirement (§5).
 
 ## 10. Build Breakdown (T) — supersedes the old B/A shape
 
