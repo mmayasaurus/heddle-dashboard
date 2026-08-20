@@ -61,7 +61,7 @@ describe("regression HED-182 — gate edit echo reflects the commit verdict", ()
     const gate = jobBlock("gate");
     const shell = verdictShell("gate");
 
-    expect(gate).toContain("    needs: [web, rust, rust-test]");
+    expect(gate).toContain("    needs: [web, rust, rust-test, lint]");
     expect(gate).toContain("    if: always()");
     expect(gate).toContain("      checks: write");
     expect(gate).toContain("    timeout-minutes: 55");
@@ -83,15 +83,20 @@ describe("regression HED-182 — gate edit echo reflects the commit verdict", ()
 
   it("uses the commit-leaf regex in both directions", () => {
     const shell = verdictShell("gate");
-    const inFlight = /^(build|web|rust)/;
+    const inFlight = /^(build|web|rust|lint)/;
 
-    expect(shell).toContain('test("^(build|web|rust)")');
+    expect(shell).toContain('test("^(build|web|rust|lint)")');
     expect(inFlight.test("web (pnpm build + vitest)")).toBe(true);
     expect(inFlight.test("rust (cargo check)")).toBe(true);
+    expect(inFlight.test("rust (cargo test)")).toBe(true);
+    // HED-207: lint is now a required aggregator leaf, so the echo must watch it.
+    expect(inFlight.test("lint (eslint)")).toBe(true);
     for (const name of [
       "gate",
       "gate-verdict",
-      "lint (eslint) — NON-required, red until HED-14",
+      // The `^lint` alternative is anchored: `actionlint` (a separate check-run)
+      // must NOT match, or the echo would wait on / weigh an unrelated job.
+      "actionlint",
     ]) {
       expect(inFlight.test(name)).toBe(false);
     }
@@ -245,15 +250,84 @@ fi
     expect(run(pages(page(leaf("completed", T(0), "success")))).status).not.toBe(0);
     expect(run("{malformed").status).not.toBe(0);
 
-    // lint is outside the commit-leaf regex and must NOT hold the echo: a completed
-    // leaf + fresh marker greens even while a non-required lint job is in flight.
-    expect(
-      run(pages(page(
+    // HED-207 (lint folded into the aggregator) — the LOAD-BEARING INFLIGHT lock:
+    // lint is now a held leaf. web is complete but lint is still in_progress and there
+    // is NO fresh marker for 10 polls, then the marker arrives. The echo must WAIT
+    // through the 10 polls (not fail closed) because INFLIGHT counts lint, then accept.
+    // Without `|lint` in INFLIGHT those 10 no-marker polls read INFLIGHT=0 + CONC=none
+    // → DRY hits the fail-closed threshold (i>9 && DRY>=6) at poll 10 → RED before the
+    // marker is ever seen. So this reds WITHOUT the INFLIGHT `|lint` change (mutation-
+    // verified) and greens WITH it. It exercises INFLIGHT only — the freshness $leaf
+    // lock is the separate `lintFreshness` case below.
+    const lintHolds = run("", [
+      ...Array.from({ length: 10 }, () => pages(page(
         leaf("completed", T(0), "success"),
-        marker("success", T(5)),
-        named("lint (eslint) — NON-required, red until HED-14", "in_progress", T(2)),
-      ))).status,
-    ).toBe(0);
+        named("lint (eslint)", "in_progress", T(2)),
+      ))),
+      pages(page(
+        leaf("completed", T(0), "success"),
+        named("lint (eslint)", "completed", T(2)),
+        marker("success", T(10)),
+      )),
+      ...Array.from({ length: 60 }, () => "__FAIL__"),
+    ]);
+    expect(lintHolds.status).toBe(0);
+
+    // HED-207 (grok finding 1) — the LOAD-BEARING FRESHNESS $leaf lock, independent of
+    // INFLIGHT: a same-SHA lint-only re-run (GitHub "Re-run failed jobs" reuses web/rust
+    // and runs a NEW lint that FAILS) leaves the OLD success gate-verdict marker as the
+    // latest marker. lint completed at T(20) is NEWER than that marker (T(5)), so the
+    // marker must read STALE → fail closed. WITHOUT `|lint` in the freshness $leaf
+    // selector, $leaf=web T(0), the old T(5) success marker reads fresh, INFLIGHT=0 →
+    // false-GREEN masking the lint failure. WITH it, $leaf=lint T(20) → CONC=none → red.
+    // (lintHolds above cannot catch this — it has no marker, so CONC is "none"
+    // regardless of the $leaf selector.)
+    const lintFreshness = run(pages(page(
+      leaf("completed", T(0), "success"),
+      { name: "lint (eslint)", started_at: T(20), status: "completed", conclusion: "failure" },
+      marker("success", T(5)),
+    )));
+    expect(lintFreshness.status).not.toBe(0);
+    expect(lintFreshness.stdout).not.toContain("gate green");
+
+    // Commit path (HED-207): the verdict is `all(needs; .result == "success")` —
+    // generic over `needs` — so a failing lint leaf reds the required gate, and all
+    // success (incl. lint) greens. IS_EDIT=false takes the commit branch, reading
+    // RESULTS instead of polling check-runs.
+    const runCommit = (results: Record<string, { result: string }>) =>
+      spawnSync("/bin/sh", ["-c", verdictShell("gate")], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CHECKS_JSON: "[]",
+          CHECKS_SEQUENCE_FILE: "",
+          GH_TOKEN: "test-token",
+          GITHUB_STEP_SUMMARY: summary,
+          IS_EDIT: "false",
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          REPO: "owner/repo",
+          SHA: "0123456789abcdef",
+          RESULTS: JSON.stringify(results),
+        },
+      });
+    const ok = { result: "success" };
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "failure" } }).status).not.toBe(0);
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: ok }).status).toBe(0);
+    // Commit-path fail-closed (grok claim 4): a lint that is skipped or cancelled on
+    // the commit path is not "success" → MARK=failure → red.
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "skipped" } }).status).not.toBe(0);
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "cancelled" } }).status).not.toBe(0);
+
+    // Anchor isolation (grok claim 6), behavioral: `actionlint` (a separate hygiene
+    // check-run) does NOT start with build/web/rust/lint, so it must NOT hold the echo
+    // — a completed leaf + fresh marker greens even while actionlint is in flight. If
+    // `^lint` ever widened to match `actionlint`, INFLIGHT would count it and this loop
+    // would wait forever → red; the green assert locks the anchor.
+    expect(run(pages(page(
+      leaf("completed", T(0), "success"),
+      marker("success", T(5)),
+      named("actionlint", "in_progress", T(2)),
+    ))).status).toBe(0);
     // Generous timeout: each case spawns gh+jq per poll and the D2/no-marker cases
     // do a long fail-closed accumulation; under full-suite concurrency on a loaded
     // machine subprocess-spawn latency can exceed vitest's 30s default (HED-182).
