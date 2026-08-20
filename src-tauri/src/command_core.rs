@@ -846,11 +846,13 @@ pub fn web_server_start(
     };
     // Production forbids plaintext LAN binding. It exists only for development mobile-device tests; production
     // uses HTTPS with certificate pinning. The GUI hides this mode, and this guard blocks programmatic calls.
+    // A release compile is production regardless of identifier — the packaged desktop app keeps the default
+    // `com.heddle.app` identifier, so the release-compile signal (not the suffix check) is what guards it.
     if matches!(mode, crate::web::ServeMode::LanHttp)
-        && crate::web::is_production_identifier(&app_identifier(ctx))
+        && crate::web::is_production(&app_identifier(ctx), !cfg!(debug_assertions))
     {
         return Err(
-            "LAN plaintext mode is only available in dev builds, not in release builds (use HTTPS with certificate fingerprint pinning on production devices; see architecture §20)."
+            "LAN plaintext mode is only available in dev builds, not in production (this is a release compile, or the app identifier is a production identity — use HTTPS with certificate fingerprint pinning on production devices; see architecture §20)."
                 .to_string(),
         );
     }

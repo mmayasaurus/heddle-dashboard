@@ -67,18 +67,32 @@ as scaffolding underneath a behavioral test; SUPERFICIAL never lands as the *onl
 **recommended rewrites, not yet landed** (tracked in HED-50); C **landed with dashboard #7** (HED-38/42),
 so its files exist only once that PR is on `main`.
 
-### A. Production plaintext-LAN refusal (`src-tauri/src/web/mod.rs`, `src-tauri/src/lib.rs`) — recommended
+### A. Production plaintext-LAN refusal (`src-tauri/src/web/mod.rs`, `src-tauri/src/lib.rs`) — predicate fix landed (HED-39)
 *Before (SUPERFICIAL):*
 ```rust
 assert!(is_production_identifier("io.vlinx.vlxterm.release"));
 assert!(!is_production_identifier("io.vlinx.vlxterm"));
 ```
-Proves a suffix check. Says nothing about whether a release build can still bind `0.0.0.0` in plaintext.
+Proves a suffix check. Says nothing about whether a release build can still bind `0.0.0.0` in plaintext —
+and it *couldn't*, because that suffix predicate is never true for heddle's packaged identifier
+`com.heddle.app`, so the guard it "tested" was inert in every real build (HED-39). This is the canonical
+false-confidence shape: a green test over the wrong seam.
 
-*After (BEHAVIORAL, HED-50 item 2):* start the headless server path with a production identifier and
-`ServeMode::LanHttp`; assert it returns the "only available in dev builds" error **and** nothing is
-listening on the LAN port; then the same call with a dev identifier binds. (Today `is_production_identifier`
-can never be true for `com.heddle.app` — HED-39 — so this test also documents the gap.)
+*Predicate fix (LANDED, HED-39):* the guard now keys on `is_production(identifier, is_release_build)`,
+production when EITHER the binary is a release compile (`is_release_build`, wired at each call site as
+`!cfg!(debug_assertions)` — i.e. a `pnpm tauri build` / `cargo build --release` artifact) OR the identifier
+is a `.release`/`.server` identity (which still independently guards the always-`io.vlinx.vlxterm.server`
+minimal server, even in a debug compile). The build signal is *injected as a bool* so the decision is fully
+unit-testable under a debug-compiled `cargo test`: the regression `is_production("com.heddle.app", true)`
+proves a packaged desktop build refuses plaintext LAN, and its mutation check (drop `is_release_build ||`)
+reds it. Dev builds (`pnpm dev:desktop`, a debug compile) still permit `--lan-http` for mobile-device
+testing over the LAN.
+
+*After (BEHAVIORAL, still recommended — HED-50 item 2):* the predicate test above closes the *decision*
+gap; the fuller test would additionally prove the *bind*. Start the headless server path under a release
+build (or production identifier) with `ServeMode::LanHttp`; assert it returns the "only available in dev
+builds" error **and** that nothing is listening on the LAN port; then the same call under a debug build
+with a dev identifier binds. That end-to-end version remains HED-50 item 2.
 
 ### B. Keep-alive eviction actually tears the PTY down (`src/layout/CenterPane/keepAlive.test.tsx`) — recommended
 *Before (PARTIAL):* over the live-tab limit, assert the oldest idle tab **unmounts** and a notice is recorded;
