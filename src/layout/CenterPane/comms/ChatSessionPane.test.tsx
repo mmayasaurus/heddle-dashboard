@@ -83,8 +83,9 @@ describe("regression PR#71 — chat session pane renders its target's ChatColumn
     });
     rerender(<ChatSessionPane chatTarget="#other-room" />);
 
-    expect(chatColumnProps.at(-1)?.activeTarget).toBe("#other-room");
-    expect(chatColumnProps.at(-1)?.highlightId).toBeNull();
-    expect(chatColumnProps.at(-1)?.replyTo).toBeNull();
+    const last = chatColumnProps[chatColumnProps.length - 1];
+    expect(last?.activeTarget).toBe("#other-room");
+    expect(last?.highlightId).toBeNull();
+    expect(last?.replyTo).toBeNull();
   });
 });
