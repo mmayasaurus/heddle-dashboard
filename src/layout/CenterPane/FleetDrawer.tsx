@@ -618,7 +618,7 @@ function shortWindowLabel(win: LimitWindow): string {
       const modelName = label.replace(/\s+\d+[hd]\s*$/i, "");
       const segments = modelName.split("-").filter(Boolean);
       if (segments.length > 1) {
-        const lastSegment = segments.at(-1)!;
+        const lastSegment = segments[segments.length - 1];
         return (lastSegment.replace(/[aeiou]/gi, "") || lastSegment).slice(0, 4).toUpperCase();
       }
       const firstWord = label.split(/\s+/)[0] ?? "";
