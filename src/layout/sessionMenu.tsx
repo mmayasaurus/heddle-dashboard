@@ -20,6 +20,7 @@ import {
   worktreesInSubtree,
 } from "../ipc/commands";
 import { copyText, openDir } from "../ipc/info";
+import { isTauri } from "../ipc/transport";
 import { onGitbashDownloadDone } from "../ipc/events";
 import { env } from "../platform";
 import { DOC_SAVE_EVENT } from "../hooks/useKeyboardShortcuts";
@@ -790,7 +791,11 @@ export function useSessionMenu(): SessionMenu {
     // actions do not apply.
     if (sessionRec?.kind === "browser" || sessionRec?.kind === "chat") {
       const items: MenuItem[] = [];
-      items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
+      // Chat opens only on desktop (Tauri) — its openSession no-ops elsewhere, so omit a dead Open
+      // off-desktop. Browser keeps Open (its openSession handles the non-desktop guard itself).
+      if (sessionRec.kind === "browser" || isTauri) {
+        items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
+      }
       if (renameItem) items.push(renameItem, sep);
       if (refreshStatusItem && sessionRec.kind !== "chat") items.push(refreshStatusItem);
       items.push(buildMarkItem("session", node.id), sep, buildMoveTo(), sep, remove);
