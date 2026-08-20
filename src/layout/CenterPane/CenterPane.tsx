@@ -172,7 +172,9 @@ export function CenterPane() {
     const t = paneTrees[tabId];
     if (t) for (const sid of collectSessionIds(t)) allIds.add(sid);
   }
-  const activeSession = activeSessionId ? sessionsById.get(activeSessionId) ?? ephemeralSessions[activeSessionId] : null;
+  const activeSession = activeSessionId
+    ? sessionsById.get(activeSessionId) ?? (Object.prototype.hasOwnProperty.call(ephemeralSessions, activeSessionId) ? ephemeralSessions[activeSessionId] : undefined)
+    : null;
 
   return (
     <div className="col col-mid">

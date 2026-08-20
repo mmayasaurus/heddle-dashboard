@@ -157,7 +157,9 @@ export function useKeyboardShortcuts() {
         const { activeTabId, docTabs, activeSessionId, sessions, ephemeralSessions, openSearch } = useTermStore.getState();
         // DocView owns document-tab search, so do not open terminal search here.
         if (activeTabId && docTabs[activeTabId]) return;
-        const activeSession = activeSessionId ? sessions.find((s) => s.id === activeSessionId) ?? ephemeralSessions[activeSessionId] : null;
+        const activeSession = activeSessionId
+          ? sessions.find((s) => s.id === activeSessionId) ?? (Object.prototype.hasOwnProperty.call(ephemeralSessions, activeSessionId) ? ephemeralSessions[activeSessionId] : undefined)
+          : null;
         if (activeSessionId && activeSession?.kind !== "chat") {
           e.preventDefault();
           openSearch();

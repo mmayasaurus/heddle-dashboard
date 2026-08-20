@@ -32,7 +32,7 @@ afterEach(() => {
   Object.assign(poll, { loaded: true, schemaOk: true, schemaVersion: 1 });
 });
 
-describe("regression PR#166 — chat session pane renders its target's ChatColumn", () => {
+describe("regression PR#71 — chat session pane renders its target's ChatColumn", () => {
   it("passes the fixed chat target into ChatColumn", () => {
     render(<ChatSessionPane chatTarget="#fleet" />);
 
@@ -73,5 +73,18 @@ describe("regression PR#166 — chat session pane renders its target's ChatColum
     expect(chatColumnProps[1].activeTarget).toBe("@operator");
     expect(chatColumnProps[1].highlightId).toBe(19);
     expect(chatColumnProps[1].replyTo?.id).toBe(19);
+  });
+
+  it("resynchronizes the active target when the chat target prop changes", () => {
+    const { rerender } = render(<ChatSessionPane chatTarget="#fleet" />);
+
+    act(() => {
+      chatColumnProps[0].onNeedsHumanRowClick({ id: 19, target: "@operator" });
+    });
+    rerender(<ChatSessionPane chatTarget="#other-room" />);
+
+    expect(chatColumnProps.at(-1)?.activeTarget).toBe("#other-room");
+    expect(chatColumnProps.at(-1)?.highlightId).toBeNull();
+    expect(chatColumnProps.at(-1)?.replyTo).toBeNull();
   });
 });
