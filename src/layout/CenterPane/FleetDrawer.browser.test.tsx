@@ -671,24 +671,6 @@ describe("FleetDrawer provider-window regressions", () => {
     expect(screen.queryByText("CLAU")).toBeNull();
   });
 
-  it("uses the final model segment for a hyphenated named window", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "heddle_provider_limits") return Promise.resolve([{
-        provider: "codex",
-        model: "chatgpt",
-        capturedAt: now,
-        fiveHour: { usedPercentage: 11, resetsAt: now + 3600 },
-        sevenDay: { usedPercentage: 22, resetsAt: now + 86_400 },
-        windows: [{ id: "codex_bengalfox-5h", label: "GPT-5.3-Codex-Spark 5h", usedPercentage: 3, resetsAt: now + 3600 }],
-      }]);
-      return Promise.resolve([]);
-    });
-    render(<FleetDrawer />);
-
-    await waitFor(() => expect(screen.getByText("SPRK")).toBeTruthy());
-    expect(screen.queryByText("GPT-")).toBeNull();
-  });
-
   it("applies each provider's live staleAfterSecs threshold", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "heddle_provider_limits") return Promise.resolve([

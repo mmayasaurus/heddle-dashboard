@@ -204,10 +204,14 @@ function capturedMinutesAgo(capturedAt: number | null, now: number): number | nu
 }
 
 function isProviderStale(p: ProviderLimit, now: number): boolean {
-  const thresholdMin = (p.staleAfterSecs ?? 1_800) / 60;
-  const ageMin = capturedMinutesAgo(p.capturedAt, now);
-  if (ageMin != null) return ageMin > thresholdMin;
-  return p.stale === true;
+  // Compare in SECONDS (no whole-minute flooring, which delayed the transition by up to ~59s —
+  // codeant/copilot/qodo/cubic review), honoring each provider's staleAfterSecs. With no capture
+  // time, trust the backend flag. The backend's `stale` is itself purely age-based (capturedAt vs
+  // staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live recompute is the SAME
+  // semantics, just fresher between polls.
+  if (p.capturedAt == null) return p.stale === true;
+  const ageSec = (now - p.capturedAt * 1_000) / 1_000;
+  return ageSec > (p.staleAfterSecs ?? 1_800);
 }
 
 export function FleetDrawer() {
@@ -317,16 +321,20 @@ export function FleetDrawer() {
               }
               const pct = win?.usedPercentage ?? null;
               const color = providerColor(p.provider);
+              // LiveClock-wrap so the stale class transitions live between polls (qodo/cubic review)
+              // without subscribing the whole drawer to the 1s clock — the isolated re-render only
+              // touches this chip. win/label/pct/color are computed above (stable per poll).
               return (
-                <span
-                  key={p.provider}
-                  className={"fleet-chip-sum" + (isProviderStale(p, Date.now()) ? " stale" : "")}
-                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
-                >
-                  <span className="fleet-tag" style={{ color }}>{p.provider}</span>
-                  <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
-                </span>
+                <LiveClock key={p.provider} render={(nowMs) => (
+                  <span
+                    className={"fleet-chip-sum" + (isProviderStale(p, nowMs) ? " stale" : "")}
+                    title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
+                  >
+                    <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                    <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
+                    {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                  </span>
+                )} />
               );
             })}
           </span>
@@ -604,7 +612,7 @@ function accountHasUsableData(account: ProviderAccount): boolean {
  * Short column label (fits the 40px label column) for a window promoted to a primary CapLine.
  * The three Cursor pools are hand-mapped since their real labels don't reduce mechanically
  * (the API pool's label leads with "included", not "API"); anything else falls back to its
- * label's first word, truncated to 4 chars; hyphenated model names use their final segment.
+ * label's first word, truncated to 4 chars.
  */
 function shortWindowLabel(win: LimitWindow): string {
   switch (win.id) {
@@ -614,14 +622,7 @@ function shortWindowLabel(win: LimitWindow): string {
     case "3p-weekly": return "3P 7d";
     case "3p-5h": return "3P 5h";
     default: {
-      const label = (win.label ?? win.id ?? "").trim();
-      const modelName = label.replace(/\s+\d+[hd]\s*$/i, "");
-      const segments = modelName.split("-").filter(Boolean);
-      if (segments.length > 1) {
-        const lastSegment = segments[segments.length - 1];
-        return (lastSegment.replace(/[aeiou]/gi, "") || lastSegment).slice(0, 4).toUpperCase();
-      }
-      const firstWord = label.split(/\s+/)[0] ?? "";
+      const firstWord = (win.label ?? win.id ?? "").trim().split(/\s+/)[0] ?? "";
       return firstWord.slice(0, 4).toUpperCase();
     }
   }
@@ -817,7 +818,12 @@ function ProviderCapBlock({
 }) {
   const t = useT();
   const color = providerColor(p.provider);
-  const isStale = isProviderStale(p, Date.now());
+  // Subscribe to the shared 1s clock so the block's stale styling transitions live between the 30s
+  // polls (qodo/cubic review). Scoped to this provider block, not all of FleetDrawer; the block
+  // already re-renders its captured-row + reset countdowns every 1s via LiveClock, so re-rendering
+  // its static parts too is marginal (a handful of small blocks).
+  const now = useSharedNow();
+  const isStale = isProviderStale(p, now);
   const [refreshing, setRefreshing] = useState(false);
   const accounts = p.accounts ?? [];
   // Claude keeps its single-account detail view at accounts.length === 1; every other provider only
