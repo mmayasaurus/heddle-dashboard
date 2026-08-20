@@ -35,7 +35,7 @@ Object.defineProperty(globalThis, "localStorage", {
 if (typeof Range !== "undefined") {
   if (typeof Range.prototype.getClientRects !== "function") {
     Range.prototype.getClientRects = function () {
-      return { length: 0, item: () => null, [Symbol.iterator]: function* () {} } as unknown as DOMRectList;
+      return Object.assign([], { item: () => null }) as unknown as DOMRectList;
     };
   }
   if (typeof Range.prototype.getBoundingClientRect !== "function") {
