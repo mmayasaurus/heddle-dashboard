@@ -541,14 +541,19 @@ function CapLine({
           const full = [reset, amount, note].filter(Boolean).join(" · ");
           return <span className="fleet-dim fleet-capline-reset" title={full}>{text}</span>;
         }
-        // HED-209 follow-up (Copilot review): a window with a live resetsAt IS active even when we
-        // have no measurement yet (the keeper-estimate state), so show its reset clock rather than a
-        // contradictory "no active window". Fall back to "no active window" only when BOTH pct and
-        // resetsAt are absent.
+        // Reset clock semantics for the rolling (non-named) branch:
+        //  - MEASURED window (pct != null): keep the reset clock for any resetsAt, as before — an
+        //    elapsed timestamp renders "↻ resetting" (the window is rolling over).
+        //  - NO-MEASUREMENT window (pct == null): it's "active" ONLY with a FUTURE resetsAt (the
+        //    keeper-estimate state — Copilot review). An EXPIRED or absent resetsAt is stale data,
+        //    not an active window, so show "no active window" rather than a misleading "↻ resetting"
+        //    (qodo review — fmtReset returns the resetting label for an elapsed timestamp).
+        const nowSec = Math.floor(now / 1000);
         const resetClock = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : null;
-        const resetText = resetClock ?? (pct == null ? t("fleet.noActiveWindow") : "");
-        // Keep the diagnostic note in the tooltip whenever the window has no measurement — in both
-        // the live-reset-clock and "no active window" sub-cases (cubic review); a real pct keeps no note.
+        const futureReset = win.resetsAt != null && win.resetsAt > nowSec ? resetClock : null;
+        const resetText = pct != null ? (resetClock ?? "") : (futureReset ?? t("fleet.noActiveWindow"));
+        // Keep the diagnostic note in the tooltip whenever the window has no measurement (cubic
+        // review); a real pct keeps no note, as before.
         const resetTitle = pct == null ? [resetText, note].filter(Boolean).join(" · ") : resetText;
         return <span className="fleet-dim fleet-capline-reset" title={resetTitle}>{resetText}</span>;
       }} />

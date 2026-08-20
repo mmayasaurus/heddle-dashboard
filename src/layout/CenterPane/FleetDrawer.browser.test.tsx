@@ -324,6 +324,28 @@ describe("FleetDrawer real-windows promotion (cursor)", () => {
     expect(reset?.textContent).not.toContain("fleet.noActiveWindow");
   });
 
+  it("shows 'no active window' (not ↻ resetting) for a null-pct window whose resetsAt has EXPIRED — HED-209/qodo", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...cursor,
+        fiveHour: { usedPercentage: null, resetsAt: now - 3600 },
+        sevenDay: { usedPercentage: null, resetsAt: now - 86_400 },
+        windows: [],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("5h")).toBeTruthy());
+    const fiveHourLine = screen.getByText("5h").closest(".fleet-capline");
+    // null pct still renders the dash, never a SegBar
+    expect(fiveHourLine?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    // an EXPIRED resetsAt on a no-measurement window is stale, not active → "no active window", no ↻
+    const reset = fiveHourLine?.querySelector(".fleet-capline-reset");
+    expect(reset?.textContent).toBe("fleet.noActiveWindow");
+    expect(reset?.textContent).not.toContain("↻");
+  });
+
   it("renders a real 0% as a SegBar and '0%' text, never the dash — 0% is a measurement (HED-209 guard)", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "heddle_provider_limits") return Promise.resolve([{
