@@ -223,21 +223,30 @@ function isProviderStale(p: ProviderLimit, now: number): boolean {
 }
 
 /** For the collapsed chip: CLAUDE's most-constrained account with FRESH data (HED-213), so the chip
- *  reflects a live account instead of a possibly-idle active/top-level one. Returns null for
- *  non-claude, no accounts, or when no account has a usable window. Representative window = 5h if
- *  present else 7d — in practice claude's tap captures 5h+7d together, so fresh (measured) accounts
- *  all compare on 5h; the 7d fallback only covers the (rare) 7d-only account. */
+ *  reflects a live account instead of a possibly-idle active/top-level one. Freshness is by LIVE age
+ *  (isStaleByAge with the passed `now`), so an account aging past staleAfterSecs isn't picked even
+ *  before the backend flag catches up (cubic P2). Compares on a CONSISTENT window — the 5h rolling
+ *  wall when any fresh account exposes it, else 7d — never mixing 5h and 7d in the max (qodo/cubic
+ *  P1). Null for non-claude / no accounts / no fresh usable window. */
 function pickClaudeChipAccount(
   p: ProviderLimit,
+  now: number,
 ): { win: LimitWindow; label: string; account: ProviderAccount } | null {
   if (p.provider !== "claude" || !p.accounts?.length) return null;
+  const fresh = p.accounts.filter((a) => !isStaleByAge(a.capturedAt, p.staleAfterSecs, a.stale, now));
+  const with5h = fresh.filter((a) => a.fiveHour?.usedPercentage != null);
+  const use5h = with5h.length > 0;
+  const pool = use5h ? with5h : fresh;
+  const label = use5h ? "5h" : "7d";
   let best: { win: LimitWindow; label: string; account: ProviderAccount } | null = null;
-  for (const account of p.accounts) {
-    if (account.stale === true) continue;
-    const win = account.fiveHour?.usedPercentage != null ? account.fiveHour : account.sevenDay;
-    if (win?.usedPercentage == null) continue;
-    if (best == null || win.usedPercentage > (best.win.usedPercentage ?? -1)) {
-      best = { win, label: account.fiveHour?.usedPercentage != null ? "5h" : "7d", account };
+  let bestPct = -1;
+  for (const account of pool) {
+    const win = use5h ? account.fiveHour : account.sevenDay;
+    const pct = win?.usedPercentage;
+    if (win == null || pct == null) continue;
+    if (best == null || pct > bestPct) {
+      best = { win, label, account };
+      bestPct = pct;
     }
   }
   return best;
@@ -341,7 +350,7 @@ export function FleetDrawer() {
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
               // HED-213: for claude, the chip reflects the most-constrained FRESH account (not the
               // possibly-idle active/top-level one) — see pickClaudeChipAccount.
-              const claudePick = pickClaudeChipAccount(p);
+              const claudePick = pickClaudeChipAccount(p, Date.now());
               let accountLabel: string | null = null;
               let selectedAccount: ProviderAccount | null = null;
               if (claudePick) {
