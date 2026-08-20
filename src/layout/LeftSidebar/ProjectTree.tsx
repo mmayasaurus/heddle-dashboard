@@ -185,7 +185,8 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
   const unread = useTermStore((st) => s.id in st.notifications);
   const selected = useTermStore((st) => st.selection.some((x) => x.id === s.id));
   const isBrowser = s.kind === "browser";
-  const isAgent = s.kind !== "terminal" && !isBrowser;
+  const isChat = s.kind === "chat";
+  const isAgent = s.kind !== "terminal" && !isBrowser && !isChat;
   const ref: TreeNodeRef = {
     kind: "session",
     id: s.id,

@@ -32,6 +32,7 @@ const ko: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "터미널", // Terminal
   "kind.browser": "브라우저", // Browser
+  "kind.chat": "채팅", // Chat
   "status.idle": "대기", // Idle
   "status.running": "실행 중", // Running
   "status.exited": "종료됨", // Exited

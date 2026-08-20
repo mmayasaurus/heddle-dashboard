@@ -32,6 +32,7 @@ const ja: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "ターミナル", // Terminal
   "kind.browser": "ブラウザ", // Browser
+  "kind.chat": "チャット", // Chat
   "status.idle": "待機", // Idle
   "status.running": "実行中", // Running
   "status.exited": "終了", // Exited

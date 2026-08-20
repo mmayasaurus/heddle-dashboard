@@ -42,6 +42,7 @@ const ru: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "Терминал", // Terminal
   "kind.browser": "Браузер", // Browser
+  "kind.chat": "Чат", // Chat
   "status.idle": "Простаивает", // Idle
   "status.running": "Выполняется", // Running
   "status.exited": "Завершено", // Exited

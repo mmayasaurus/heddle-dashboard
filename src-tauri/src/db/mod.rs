@@ -252,6 +252,11 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE sessions ADD COLUMN browser_url TEXT", [])
             .map_err(|e| format!("Failed to migrate sessions.browser_url: {e}"))?;
     }
+    // Add chat_target for chat nodes' room or direct-message address; other session types keep it null.
+    if !column_exists(conn, "sessions", "chat_target") {
+        conn.execute("ALTER TABLE sessions ADD COLUMN chat_target TEXT", [])
+            .map_err(|e| format!("Failed to migrate sessions.chat_target: {e}"))?;
+    }
     // Add nullable agent_args for user-defined launch arguments appended unchanged to agent commands.
     if !column_exists(conn, "sessions", "agent_args") {
         conn.execute("ALTER TABLE sessions ADD COLUMN agent_args TEXT", [])

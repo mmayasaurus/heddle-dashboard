@@ -321,6 +321,25 @@ describe("browser tree nodes (kind=browser, persistent pages in the sidebar tree
   });
 });
 
+describe("chat tree nodes (kind=chat, runtime-free conversations)", () => {
+  it("openSession does not create a terminal pane or PTY-backed tab for a chat node", () => {
+    seed();
+    useTermStore.setState((s) => ({
+      sessions: [
+        ...s.sessions,
+        { ...mkSession("C"), kind: "chat", chatTarget: "#fleet" },
+      ],
+    }));
+
+    useTermStore.getState().openSession("C");
+
+    const s = useTermStore.getState();
+    expect(s.openTabs).not.toContain("C");
+    expect(s.paneTrees["C"]).toBeUndefined();
+    expect(s.activeSessionId).toBeNull();
+  });
+});
+
 describe("closeTab on a browser tab: clearing metadata and falling back to another active tab", () => {
   it("closing clears the browserTabs metadata", () => {
     seed();

@@ -395,7 +395,8 @@ export function SessionInfo({
 
   if (!session) return null;
 
-  const isAgent = session.kind !== "terminal";
+  const isAgent =
+    session.kind !== "terminal" && session.kind !== "browser" && session.kind !== "chat";
   const status = effectiveStatus(runtime);
   const cwd = session.cwd || project?.rootPath || null;
   const dim = "—";

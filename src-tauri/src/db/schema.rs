@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived_at INTEGER,
   fork_pending INTEGER NOT NULL DEFAULT 0,
   browser_url TEXT,
+  chat_target TEXT,
   mark        TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL

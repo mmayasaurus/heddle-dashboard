@@ -32,6 +32,7 @@ const fr: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "Terminal", // Terminal
   "kind.browser": "Navigateur", // Browser
+  "kind.chat": "Chat", // Chat
   "status.idle": "Inactif", // Idle
   "status.running": "En cours", // Running
   "status.exited": "Terminé", // Exited

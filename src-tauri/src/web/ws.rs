@@ -457,6 +457,12 @@ fn web_pty_spawn(
     let kind: SessionKind =
         serde_json::from_value(args.get("kind").cloned().unwrap_or(Value::Null))
             .map_err(|e| format!("Invalid kind: {e}"))?;
+    if matches!(kind, SessionKind::Browser | SessionKind::Chat) {
+        return Err(format!(
+            "{} sessions are runtime-free and have no PTY",
+            kind.as_str()
+        ));
+    }
     let shell = args
         .get("shell")
         .and_then(Value::as_str)

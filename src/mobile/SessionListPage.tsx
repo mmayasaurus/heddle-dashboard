@@ -27,6 +27,7 @@ import { applyViewOverride } from "./detect";
 
 /** Trailing type label: shell name for terminal sessions, kind for agent sessions. */
 function kindLabel(s: Session): string {
+  if (s.kind === "chat") return t("kind.chat");
   if (s.kind !== "terminal") return s.kind;
   const shell = s.shell?.split("/").pop();
   return shell || t("kind.terminal");

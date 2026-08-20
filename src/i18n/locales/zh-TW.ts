@@ -32,6 +32,7 @@ const zhTW: typeof en = {
   // ── Session types and status ──
   "kind.terminal": "終端機", // Terminal
   "kind.browser": "瀏覽器", // Browser
+  "kind.chat": "聊天", // Chat
   "status.idle": "閒置", // Idle
   "status.running": "執行中", // Running
   "status.exited": "已結束", // Exited

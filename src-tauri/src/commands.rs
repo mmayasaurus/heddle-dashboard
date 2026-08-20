@@ -105,6 +105,16 @@ pub fn pty_spawn(
     theme: Option<String>,
     on_output: Channel<InvokeResponseBody>,
 ) -> Result<SpawnResult, String> {
+    // Runtime-free kinds (browser, chat) have no PTY. Reject them here, before any shell is opened:
+    // `PtyManager::spawn` otherwise allocates a PTY and launches the default shell and only later skips
+    // status monitoring, so a stray spawn would leave an orphan shell. Both are desktop-only kinds, so
+    // this command is their only spawn path; the frontend's openSession also guards them. (HED-195)
+    if matches!(kind, SessionKind::Browser | SessionKind::Chat) {
+        return Err(format!(
+            "{} sessions are runtime-free and have no PTY",
+            kind.as_str()
+        ));
+    }
     // Read the resume ID and pending-fork flag under a short lock, then verify the transcript exists.
     let (in_db, mut resume_id, fork, agent_args, perm, created_at) = {
         let conn = db.conn.lock().unwrap();

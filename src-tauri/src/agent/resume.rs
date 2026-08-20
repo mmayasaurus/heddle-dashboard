@@ -539,8 +539,8 @@ pub fn confirmed_missing(kind: SessionKind, id: &str) -> bool {
             !pi_session_exists(&sessions, id)
         }
         SessionKind::Terminal => false,
-        // Browser nodes have no agent conversation or resume semantics.
-        SessionKind::Browser => false,
+        // Browser and chat nodes have no agent conversation or resume semantics.
+        SessionKind::Browser | SessionKind::Chat => false,
     }
 }
 

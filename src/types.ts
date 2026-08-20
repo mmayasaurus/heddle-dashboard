@@ -17,7 +17,7 @@ export type AgentKind = "claude" | "codex" | "opencode" | "copilot" | "cursor" |
  *   PreToolUse hook injected through Crush's shadow configuration. Crush exposes only PreToolUse and therefore
  *   reports working only; idle state comes from screen detection.
  */
-export type SessionKind = "terminal" | "claude" | "codex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "crush" | "kimi" | "kiro" | "grok" | "zoo" | "browser";
+export type SessionKind = "terminal" | "claude" | "codex" | "opencode" | "copilot" | "cursor" | "antigravity" | "cline" | "pi" | "crush" | "kimi" | "kiro" | "grok" | "zoo" | "browser" | "chat";
 
 /** Agent kinds with a two-state permission-mode toggle. Selecting Skip passes that agent's flag for bypassing
  *  every permission confirmation at launch. opencode controls permissions through configuration and has no
@@ -106,6 +106,8 @@ export interface Session {
   archivedAt?: number | null;
   /** Last URL visited by a browser node (kind=browser); empty for other kinds (architecture document §17). */
   browserUrl?: string | null;
+  /** Comms room or direct-message address for a chat node (kind=chat); empty for other kinds. */
+  chatTarget?: string | null;
   /** Optional user-chosen emoji marker such as `🔥`, rendered before the node name in the sidebar and usable as a
    *  sidebar filter. The stored value is the emoji itself, so markers unknown to this build still round-trip.
    *  Empty or absent means unmarked. */
