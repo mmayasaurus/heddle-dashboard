@@ -643,3 +643,82 @@ describe("FleetDrawer roster model chips", () => {
     expect(document.querySelector(".fleet-agent-model")).toBeNull();
   });
 });
+
+describe("FleetDrawer provider-window regressions", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("renders Gemini third-party windows with distinct 3P labels instead of Claude labels", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        provider: "gemini",
+        model: "gemini",
+        capturedAt: now,
+        fiveHour: { usedPercentage: 11, resetsAt: now + 3600 },
+        sevenDay: { usedPercentage: 22, resetsAt: now + 86_400 },
+        windows: [
+          { id: "3p-weekly", label: "Claude and GPT models 7d", usedPercentage: 3, resetsAt: now + 86_400 },
+          { id: "3p-5h", label: "Claude and GPT models 5h", usedPercentage: 4, resetsAt: now + 3600 },
+        ],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("3P 7d")).toBeTruthy());
+    expect(screen.getByText("3P 5h")).toBeTruthy();
+    expect(screen.queryByText("CLAU")).toBeNull();
+  });
+
+  it("uses the final model segment for a hyphenated named window", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        provider: "codex",
+        model: "chatgpt",
+        capturedAt: now,
+        fiveHour: { usedPercentage: 11, resetsAt: now + 3600 },
+        sevenDay: { usedPercentage: 22, resetsAt: now + 86_400 },
+        windows: [{ id: "codex_bengalfox-5h", label: "GPT-5.3-Codex-Spark 5h", usedPercentage: 3, resetsAt: now + 3600 }],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("SPRK")).toBeTruthy());
+    expect(screen.queryByText("GPT-")).toBeNull();
+  });
+
+  it("applies each provider's live staleAfterSecs threshold", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([
+        {
+          provider: "aged-provider",
+          model: "aged",
+          capturedAt: now - 360,
+          stale: false,
+          staleAfterSecs: 300,
+          fiveHour: { usedPercentage: 11, resetsAt: now + 3600 },
+          sevenDay: { usedPercentage: 22, resetsAt: now + 86_400 },
+        },
+        {
+          provider: "fresh-provider",
+          model: "fresh",
+          capturedAt: now - 60,
+          stale: true,
+          staleAfterSecs: 300,
+          fiveHour: { usedPercentage: 11, resetsAt: now + 3600 },
+          sevenDay: { usedPercentage: 22, resetsAt: now + 86_400 },
+        },
+      ]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelector('.fleet-provcap-provider[title="aged-provider"]')).toBeTruthy());
+    const aged = document.querySelector('.fleet-provcap-provider[title="aged-provider"]')?.closest(".fleet-provcap");
+    const fresh = document.querySelector('.fleet-provcap-provider[title="fresh-provider"]')?.closest(".fleet-provcap");
+    expect(aged?.classList.contains("stale")).toBe(true);
+    expect(fresh?.classList.contains("stale")).toBe(false);
+  });
+});

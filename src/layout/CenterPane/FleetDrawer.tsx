@@ -204,7 +204,10 @@ function capturedMinutesAgo(capturedAt: number | null, now: number): number | nu
 }
 
 function isProviderStale(p: ProviderLimit, now: number): boolean {
-  return typeof p.stale === "boolean" ? p.stale : (capturedMinutesAgo(p.capturedAt, now) ?? 0) > 30;
+  const thresholdMin = (p.staleAfterSecs ?? 1_800) / 60;
+  const ageMin = capturedMinutesAgo(p.capturedAt, now);
+  if (ageMin != null) return ageMin > thresholdMin;
+  return p.stale === true;
 }
 
 export function FleetDrawer() {
@@ -601,15 +604,24 @@ function accountHasUsableData(account: ProviderAccount): boolean {
  * Short column label (fits the 40px label column) for a window promoted to a primary CapLine.
  * The three Cursor pools are hand-mapped since their real labels don't reduce mechanically
  * (the API pool's label leads with "included", not "API"); anything else falls back to its
- * label's first word, truncated to 4 chars.
+ * label's first word, truncated to 4 chars; hyphenated model names use their final segment.
  */
 function shortWindowLabel(win: LimitWindow): string {
   switch (win.id) {
     case "included-total": return "INCL";
     case "included-api": return "API";
     case "usage-based": return "O-D";
+    case "3p-weekly": return "3P 7d";
+    case "3p-5h": return "3P 5h";
     default: {
-      const firstWord = (win.label ?? win.id ?? "").trim().split(/\s+/)[0] ?? "";
+      const label = (win.label ?? win.id ?? "").trim();
+      const modelName = label.replace(/\s+\d+[hd]\s*$/i, "");
+      const segments = modelName.split("-").filter(Boolean);
+      if (segments.length > 1) {
+        const lastSegment = segments.at(-1)!;
+        return (lastSegment.replace(/[aeiou]/gi, "") || lastSegment).slice(0, 4).toUpperCase();
+      }
+      const firstWord = label.split(/\s+/)[0] ?? "";
       return firstWord.slice(0, 4).toUpperCase();
     }
   }
