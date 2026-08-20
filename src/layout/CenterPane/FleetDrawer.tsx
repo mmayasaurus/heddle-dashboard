@@ -204,7 +204,14 @@ function capturedMinutesAgo(capturedAt: number | null, now: number): number | nu
 }
 
 function isProviderStale(p: ProviderLimit, now: number): boolean {
-  return typeof p.stale === "boolean" ? p.stale : (capturedMinutesAgo(p.capturedAt, now) ?? 0) > 30;
+  // Compare in SECONDS (no whole-minute flooring, which delayed the transition by up to ~59s —
+  // codeant/copilot/qodo/cubic review), honoring each provider's staleAfterSecs. With no capture
+  // time, trust the backend flag. The backend's `stale` is itself purely age-based (capturedAt vs
+  // staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live recompute is the SAME
+  // semantics, just fresher between polls.
+  if (p.capturedAt == null) return p.stale === true;
+  const ageSec = (now - p.capturedAt * 1_000) / 1_000;
+  return ageSec > (p.staleAfterSecs ?? 1_800);
 }
 
 export function FleetDrawer() {
@@ -314,16 +321,20 @@ export function FleetDrawer() {
               }
               const pct = win?.usedPercentage ?? null;
               const color = providerColor(p.provider);
+              // LiveClock-wrap so the stale class transitions live between polls (qodo/cubic review)
+              // without subscribing the whole drawer to the 1s clock — the isolated re-render only
+              // touches this chip. win/label/pct/color are computed above (stable per poll).
               return (
-                <span
-                  key={p.provider}
-                  className={"fleet-chip-sum" + (isProviderStale(p, Date.now()) ? " stale" : "")}
-                  title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
-                >
-                  <span className="fleet-tag" style={{ color }}>{p.provider}</span>
-                  <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                  {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
-                </span>
+                <LiveClock key={p.provider} render={(nowMs) => (
+                  <span
+                    className={"fleet-chip-sum" + (isProviderStale(p, nowMs) ? " stale" : "")}
+                    title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
+                  >
+                    <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                    <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
+                    {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                  </span>
+                )} />
               );
             })}
           </span>
@@ -608,6 +619,8 @@ function shortWindowLabel(win: LimitWindow): string {
     case "included-total": return "INCL";
     case "included-api": return "API";
     case "usage-based": return "O-D";
+    case "3p-weekly": return "3P 7d";
+    case "3p-5h": return "3P 5h";
     default: {
       const firstWord = (win.label ?? win.id ?? "").trim().split(/\s+/)[0] ?? "";
       return firstWord.slice(0, 4).toUpperCase();
@@ -805,7 +818,12 @@ function ProviderCapBlock({
 }) {
   const t = useT();
   const color = providerColor(p.provider);
-  const isStale = isProviderStale(p, Date.now());
+  // Subscribe to the shared 1s clock so the block's stale styling transitions live between the 30s
+  // polls (qodo/cubic review). Scoped to this provider block, not all of FleetDrawer; the block
+  // already re-renders its captured-row + reset countdowns every 1s via LiveClock, so re-rendering
+  // its static parts too is marginal (a handful of small blocks).
+  const now = useSharedNow();
+  const isStale = isProviderStale(p, now);
   const [refreshing, setRefreshing] = useState(false);
   const accounts = p.accounts ?? [];
   // Claude keeps its single-account detail view at accounts.length === 1; every other provider only

@@ -25,3 +25,22 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   writable: true,
 });
+
+// jsdom's Range implements neither getClientRects nor getBoundingClientRect. Some render / text-match
+// paths call them and throw "textRange(...).getClientRects is not a function", which intermittently
+// flaked the account-cycler rotate tests in CI (HED-232) — the failure surfaced as "Unable to find
+// element with text: acctN" after a fireEvent.click, since the throw aborted the re-render. These
+// tests assert on the DOM tree, not on layout geometry, so returning empty rects is a safe no-op.
+// Real browsers implement both; this only affects the jsdom test environment.
+if (typeof Range !== "undefined") {
+  if (typeof Range.prototype.getClientRects !== "function") {
+    Range.prototype.getClientRects = function () {
+      return Object.assign([], { item: () => null }) as unknown as DOMRectList;
+    };
+  }
+  if (typeof Range.prototype.getBoundingClientRect !== "function") {
+    Range.prototype.getBoundingClientRect = function () {
+      return { x: 0, y: 0, width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0, toJSON: () => ({}) } as DOMRect;
+    };
+  }
+}
