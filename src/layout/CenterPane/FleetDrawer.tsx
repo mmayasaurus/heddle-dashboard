@@ -547,7 +547,9 @@ function CapLine({
         // resetsAt are absent.
         const resetClock = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : null;
         const resetText = resetClock ?? (pct == null ? t("fleet.noActiveWindow") : "");
-        const resetTitle = resetClock ?? (pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : "");
+        // Keep the diagnostic note in the tooltip whenever the window has no measurement — in both
+        // the live-reset-clock and "no active window" sub-cases (cubic review); a real pct keeps no note.
+        const resetTitle = pct == null ? [resetText, note].filter(Boolean).join(" · ") : resetText;
         return <span className="fleet-dim fleet-capline-reset" title={resetTitle}>{resetText}</span>;
       }} />
     </div>
