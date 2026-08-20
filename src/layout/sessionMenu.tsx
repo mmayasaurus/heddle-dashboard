@@ -786,14 +786,11 @@ export function useSessionMenu(): SessionMenu {
     };
 
     const sessionRec = sessions.find((s) => s.id === node.id);
-    // Runtime-free nodes keep only (browser) Open, optional Rename, Move, and Delete; PTY/agent-specific
-    // actions do not apply. Chat omits Open: openSession is a no-op for chat until the CenterPane chat
-    // renderer (HED-166 #3) is wired, so a dead menu item would just confuse.
+    // Runtime-free nodes keep only Open, optional Rename, Move, and Delete; PTY/agent-specific
+    // actions do not apply.
     if (sessionRec?.kind === "browser" || sessionRec?.kind === "chat") {
       const items: MenuItem[] = [];
-      if (sessionRec.kind === "browser") {
-        items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
-      }
+      items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
       if (renameItem) items.push(renameItem, sep);
       if (refreshStatusItem && sessionRec.kind !== "chat") items.push(refreshStatusItem);
       items.push(buildMarkItem("session", node.id), sep, buildMoveTo(), sep, remove);

@@ -322,7 +322,7 @@ describe("browser tree nodes (kind=browser, persistent pages in the sidebar tree
 });
 
 describe("chat tree nodes (kind=chat, runtime-free conversations)", () => {
-  it("openSession does not create a terminal pane or PTY-backed tab for a chat node", () => {
+  it("openSession creates a runtime-free pane/tab and makes the chat session active", () => {
     seed();
     useTermStore.setState((s) => ({
       sessions: [
@@ -334,9 +334,10 @@ describe("chat tree nodes (kind=chat, runtime-free conversations)", () => {
     useTermStore.getState().openSession("C");
 
     const s = useTermStore.getState();
-    expect(s.openTabs).not.toContain("C");
-    expect(s.paneTrees["C"]).toBeUndefined();
-    expect(s.activeSessionId).toBeNull();
+    expect(s.openTabs).toContain("C");
+    expect(s.paneTrees["C"]).toBeTruthy();
+    expect(s.activeSessionId).toBe("C");
+    expect(s.runtimes["C"]).toBeUndefined();
   });
 });
 

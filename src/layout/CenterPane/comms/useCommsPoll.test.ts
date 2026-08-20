@@ -97,35 +97,36 @@ function lastCall<T>(calls: T[]): T | undefined {
 describe("useCommsPoll", () => {
   it("fetches rooms immediately on mount and sets loaded=true", async () => {
     vi.useFakeTimers();
-    const { result } = renderHook(() => useCommsPoll(false, null));
+    const { result } = renderHook(() => useCommsPoll(true, null));
     await flush();
     expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_rooms");
     expect(result.current.loaded).toBe(true);
     expect(result.current.rooms).toEqual([mkRoom({ target: "#fleet" })]);
   });
 
-  it("test 7: the rooms poll keeps running every 5s while collapsed; the transcript poll only starts once expanded, then runs every 2.5s", async () => {
+  it("regression PR#71 — hidden chat panes do not poll rooms until they become visible", async () => {
     vi.useFakeTimers();
-    const { rerender } = renderHook(({ expanded, target }: { expanded: boolean; target: string | null }) => useCommsPoll(expanded, target), {
+    const { rerender } = renderHook(({ expanded, target }: { expanded: boolean; target: string | null }) => useCommsPoll(expanded, target, false), {
       initialProps: { expanded: false, target: null } as { expanded: boolean; target: string | null },
     });
     await flush();
-    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(1);
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(0);
     expect(mockInvoke.mock.calls.some((c) => c[0] === "heddle_comms_transcript")).toBe(false);
 
     await flush(5000);
-    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(2);
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(0);
     expect(mockInvoke.mock.calls.some((c) => c[0] === "heddle_comms_transcript")).toBe(false);
 
     rerender({ expanded: true, target: "#fleet" });
     await flush();
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(1);
     expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript")).toHaveLength(1);
 
     await flush(2500);
     expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_transcript")).toHaveLength(2);
-    // Rooms keeps polling too, independent of expanded.
+    // Once visible, rooms polls on its normal cadence too.
     await flush(2500); // total 5000ms since expand
-    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(3);
+    expect(mockInvoke.mock.calls.filter((c) => c[0] === "heddle_comms_rooms")).toHaveLength(2);
   });
 
   it("test 6: a room switch fetches with sinceId:null and replaces messages; the next poll on that room appends only newer ids via a cursor sinceId", async () => {
@@ -237,7 +238,7 @@ describe("useCommsPoll", () => {
   it("test 5: needsHuman is replaced (not unioned) on each rooms poll — a row present in poll N is gone once poll N+1's payload omits it", async () => {
     vi.useFakeTimers();
     roomsResponse.needsHuman = [mkNeedsHumanRow(100)];
-    const { result } = renderHook(() => useCommsPoll(false, null));
+    const { result } = renderHook(() => useCommsPoll(true, null));
     await flush();
     expect(result.current.needsHuman.map((r) => r.id)).toEqual([100]);
 
@@ -266,7 +267,7 @@ describe("useCommsPoll", () => {
   it("passes schemaOk/schemaVersion straight through from the rooms payload", async () => {
     vi.useFakeTimers();
     roomsResponse = { schemaOk: false, schemaVersion: 2, rooms: [], needsHuman: [], recentRefusals: 0 };
-    const { result } = renderHook(() => useCommsPoll(false, null));
+    const { result } = renderHook(() => useCommsPoll(true, null));
     await flush();
     expect(result.current.schemaOk).toBe(false);
     expect(result.current.schemaVersion).toBe(2);
@@ -276,7 +277,7 @@ describe("useCommsPoll", () => {
   it("keeps the last good rooms data and surfaces a dim error string when a poll fails", async () => {
     vi.useFakeTimers();
     roomsResponse.rooms = [mkRoom({ target: "#fleet", latestId: 1 })];
-    const { result } = renderHook(() => useCommsPoll(false, null));
+    const { result } = renderHook(() => useCommsPoll(true, null));
     await flush();
     expect(result.current.rooms).toHaveLength(1);
     expect(result.current.roomsError).toBeNull();

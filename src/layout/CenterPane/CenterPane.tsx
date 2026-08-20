@@ -172,12 +172,13 @@ export function CenterPane() {
     const t = paneTrees[tabId];
     if (t) for (const sid of collectSessionIds(t)) allIds.add(sid);
   }
+  const activeSession = activeSessionId ? sessionsById.get(activeSessionId) ?? ephemeralSessions[activeSessionId] : null;
 
   return (
     <div className="col col-mid">
       <TabBar />
       <div className="stage" ref={stageRef} style={{ position: "relative" }}>
-        {searchOpen && activeSessionId && <SearchBar />}
+        {searchOpen && activeSessionId && activeSession?.kind !== "chat" && <SearchBar />}
 
         {openTabs.length === 0 && (
           <div className="empty">

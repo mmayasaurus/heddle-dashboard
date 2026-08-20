@@ -260,8 +260,12 @@
 .comms-chat {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+.comms-session-pane {
+  height: 100%;
 }
 .comms-chat-head {
   display: flex;

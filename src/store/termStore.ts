@@ -1983,6 +1983,9 @@ export const useTermStore = create<TermStore>((set, get) => ({
           focusedPaneId: null,
         };
       }
+      // Chat sessions render a desktop-only React pane. Do not create an otherwise blank
+      // pane tree in web builds, where ChatSessionPane intentionally renders nothing.
+      if (sess?.kind === "chat" && !isTauri) return { notifications };
 
       // Focus an already visible tab instead of duplicating the session.
       const inOpen = locate(state.paneTrees, state.openTabs, id);

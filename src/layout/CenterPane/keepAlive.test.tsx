@@ -182,8 +182,8 @@ afterEach(() => {
 });
 
 describe("keep-alive invariants when switching sessions in the centre pane", () => {
-  describe("regression PR#166 — chat sessions open as CenterPane panes without a PTY", () => {
-    it("adds the chat session to the pane tree and renders ChatSessionPane instead of TerminalView", () => {
+  describe("regression PR#71 — chat sessions do not create blank tabs outside Tauri", () => {
+    it("does not add the chat session to a pane tree or mount a renderer", () => {
       seed(true);
       useTermStore.setState((s) => ({
         sessions: [...s.sessions, { ...mkSession("chat-1"), kind: "chat", chatTarget: "#fleet" }],
@@ -193,11 +193,11 @@ describe("keep-alive invariants when switching sessions in the centre pane", () 
       open("chat-1");
 
       const state = useTermStore.getState();
-      expect(state.openTabs).toContain("chat-1");
-      expect(state.paneTrees["chat-1"]).toBeTruthy();
-      expect(state.activeSessionId).toBe("chat-1");
-      expect(screen.getByTestId("chat-#fleet")).toBeTruthy();
-      expect(chatLifecycle).toEqual(["mount:#fleet"]);
+      expect(state.openTabs).not.toContain("chat-1");
+      expect(state.paneTrees["chat-1"]).toBeUndefined();
+      expect(state.activeSessionId).toBeNull();
+      expect(screen.queryByTestId("chat-#fleet")).toBeNull();
+      expect(chatLifecycle).toEqual([]);
       expect(lifecycle).not.toContain("mount:chat-1");
     });
   });
