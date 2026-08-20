@@ -45,6 +45,8 @@ const Icons: Record<string, IconComponent> = {
   project: I([r("rect", { key: 1, x: 2.5, y: 2.5, width: 11, height: 11, rx: 2 }), r("path", { key: 2, d: "M2.5 6h11" }), r("circle", { key: 3, cx: 4.6, cy: 4.3, r: 0.4, fill: "currentColor", stroke: "none" })]),
   terminal: I([r("rect", { key: 1, x: 2, y: 3, width: 12, height: 10, rx: 1.5 }), r("path", { key: 2, d: "M4.8 6.5L6.8 8l-2 1.5M8.5 9.7h2.7" })]),
   bot: I([r("rect", { key: 1, x: 3, y: 5.5, width: 10, height: 7, rx: 2 }), r("path", { key: 2, d: "M8 3v2.5M5.5 8.6h.01M10.5 8.6h.01" }), r("path", { key: 3, d: "M3 9.2H1.8M14.2 9.2H13" })]),
+  // Chat/comms room or DM node: a speech bubble with a bottom tail and two text lines.
+  chat: I([r("path", { key: 1, d: "M4 3h8a1.5 1.5 0 011.5 1.5v4a1.5 1.5 0 01-1.5 1.5H7.5l-3 2.5v-2.5H4a1.5 1.5 0 01-1.5-1.5v-4A1.5 1.5 0 014 3z" }), r("path", { key: 2, d: "M5.5 6h5M5.5 8h3" })]),
   file: I([r("path", { key: 1, d: "M4 2.5h5L12 5.5V13a.5.5 0 01-.5.5h-7A.5.5 0 014 13z" }), r("path", { key: 2, d: "M8.8 2.6V5.5H11.7" })]),
   filePlus: I([r("path", { key: 1, d: "M4 2.5h5L12 5.5V13a.5.5 0 01-.5.5h-7A.5.5 0 014 13z" }), r("path", { key: 2, d: "M8.8 2.6V5.5H11.7" }), r("path", { key: 3, d: "M8 8v3.4M6.3 9.7h3.4" })]),
   image: I([r("rect", { key: 1, x: 2.5, y: 3, width: 11, height: 10, rx: 1.5 }), r("circle", { key: 2, cx: 5.8, cy: 6.2, r: 1.1 }), r("path", { key: 3, d: "M2.5 11l3.2-3 2.3 2.2 2.7-2.7 2.8 2.8" })]),

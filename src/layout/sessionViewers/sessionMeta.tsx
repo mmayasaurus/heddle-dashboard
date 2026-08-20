@@ -50,6 +50,9 @@ function rawKindIcon(kind: SessionKind, size: number) {
       return <Icons.terminal size={size} />;
     case "browser":
       return <Icons.globe size={size} />;
+    // Chat (comms room / DM) node: a speech bubble. Runtime-free like browser, so no accent color.
+    case "chat":
+      return <Icons.chat size={size} />;
     // Claude uses the generic outlined robot icon.
     case "claude":
       return <Icons.bot size={size} />;
