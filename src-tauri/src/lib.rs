@@ -1140,12 +1140,13 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
         crate::web::ServeMode::LanTls
     };
     // Production rejects LAN plaintext; mobile production must use HTTPS plus certificate pinning.
-    // Loopback plaintext never leaves the host and remains permitted.
+    // Loopback plaintext never leaves the host and remains permitted. Production = a release compile
+    // OR a production identifier (the minimal server is always `io.vlinx.vlxterm.server`).
     if matches!(mode, crate::web::ServeMode::LanHttp)
-        && crate::web::is_production_identifier(&identifier)
+        && crate::web::is_production(&identifier, !cfg!(debug_assertions))
     {
         return Err(format!(
-            "LAN plaintext (--lan-http, binds 0.0.0.0 in plaintext) is only available in dev builds; this is a release build (identifier={identifier}). \
+            "LAN plaintext (--lan-http, binds 0.0.0.0 in plaintext) is only available in dev builds, not in production (release compile or production identifier; identifier={identifier}). \
              For production use the default TLS mode, or HTTPS with certificate pinning (see architecture §20)."
         ));
     }

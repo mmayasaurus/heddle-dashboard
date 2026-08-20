@@ -110,12 +110,34 @@ impl ServeMode {
     }
 }
 
-/// Production identifiers end in `.release` for packaged desktop or `.server` for deployed headless SSH service;
-/// development/test uses the default identifier. Production forbids plaintext `LanHttp` on 0.0.0.0, which exists
-/// only for device testing. Production mobile uses HTTPS with certificate pinning. Loopback `--local-http` remains
-/// valid for SSH server use; the `.server` check only blocks someone manually starting it with `--lan-http`.
+/// Whether an app identifier names a production identity by convention: `.release` for a packaged
+/// desktop build or `.server` for the deployed headless SSH service. This is only ONE of the production
+/// signals — see [`is_production`], which also treats any release compile as production.
+///
+/// Caveat specific to heddle: the packaged desktop build keeps the default identifier (`com.heddle.app`)
+/// rather than the upstream VelaTerm `.release` scheme, so this suffix check does NOT fire for it — the
+/// release-compile signal in [`is_production`] is what guards the packaged app. The suffix check still
+/// independently guards the minimal server, whose identity is always `io.vlinx.vlxterm.server`, even
+/// when built as a debug compile.
 pub fn is_production_identifier(identifier: &str) -> bool {
     identifier.ends_with(".release") || identifier.ends_with(".server")
+}
+
+/// Whether the running build must apply production hardening — notably, refuse plaintext `LanHttp` on
+/// 0.0.0.0. True when EITHER the binary is a release compile (`is_release_build`, wired at each call site
+/// as `!cfg!(debug_assertions)`) OR the identifier is a production identity ([`is_production_identifier`]).
+///
+/// The release-compile signal is primary: it fires for the packaged desktop app and the deployed server
+/// regardless of identifier string, and it fails safe — any release build hardens. The identifier signal
+/// additionally hardens the minimal server and any future `.release`/`.server` identity even under a debug
+/// compile. Plaintext `LanHttp` exists only for development mobile-device testing over LAN; production
+/// devices use HTTPS with certificate pinning (architecture §20). Loopback `--local-http` never leaves the
+/// host and is always permitted.
+///
+/// The build signal is injected rather than read inline so the decision stays fully unit-testable under a
+/// debug-compiled `cargo test`.
+pub fn is_production(identifier: &str, is_release_build: bool) -> bool {
+    is_release_build || is_production_identifier(identifier)
 }
 
 /// Handle for a running service.
@@ -546,7 +568,7 @@ fn is_network_or_broadcast(ip: std::net::Ipv4Addr, netmask: std::net::Ipv4Addr) 
 
 #[cfg(test)]
 mod tests {
-    use super::{is_network_or_broadcast, is_production_identifier, is_virtual_iface};
+    use super::{is_network_or_broadcast, is_production, is_production_identifier, is_virtual_iface};
     use std::net::Ipv4Addr;
 
     #[test]
@@ -565,6 +587,35 @@ mod tests {
     fn server_identifier_is_production() {
         // Headless SSH server identifiers end in .server and also forbid plaintext LAN defensively.
         assert!(is_production_identifier("io.vlinx.vlxterm.server"));
+    }
+
+    #[test]
+    fn release_compile_is_production_regardless_of_identifier() {
+        // HED-39 regression: heddle's packaged desktop build keeps the default `com.heddle.app`
+        // identifier, which is not a `.release`/`.server` identity. The release-compile signal must
+        // still mark it production so the plaintext-LAN guard fires. Mutation check: dropping
+        // `is_release_build ||` from `is_production` reds this.
+        assert!(is_production("com.heddle.app", true));
+    }
+
+    #[test]
+    fn debug_compile_with_default_identifier_is_not_production() {
+        // Development build (debug compile + default identifier) permits plaintext LAN for
+        // mobile-device testing over the LAN.
+        assert!(!is_production("com.heddle.app", false));
+    }
+
+    #[test]
+    fn server_identifier_is_production_even_in_debug_compile() {
+        // The minimal server's identity forbids plaintext LAN defensively via the identifier signal,
+        // independent of the release-compile signal.
+        assert!(is_production("io.vlinx.vlxterm.server", false));
+    }
+
+    #[test]
+    fn release_identifier_is_production_even_in_debug_compile() {
+        // A `.release` identity likewise hardens independent of the compile profile.
+        assert!(is_production("io.vlinx.vlxterm.release", false));
     }
 
     #[test]
