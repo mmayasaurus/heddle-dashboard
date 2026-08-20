@@ -665,7 +665,13 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
-  flex: none;
+  /* May shrink and truncate so a long target never squeezes the textarea (codeant HED-164). */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .comms-composer-input {
   flex: 1;
