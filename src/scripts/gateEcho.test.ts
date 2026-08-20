@@ -61,7 +61,7 @@ describe("regression HED-182 — gate edit echo reflects the commit verdict", ()
     const gate = jobBlock("gate");
     const shell = verdictShell("gate");
 
-    expect(gate).toContain("    needs: [web, rust, rust-test]");
+    expect(gate).toContain("    needs: [web, rust, rust-test, lint]");
     expect(gate).toContain("    if: always()");
     expect(gate).toContain("      checks: write");
     expect(gate).toContain("    timeout-minutes: 55");
@@ -83,15 +83,20 @@ describe("regression HED-182 — gate edit echo reflects the commit verdict", ()
 
   it("uses the commit-leaf regex in both directions", () => {
     const shell = verdictShell("gate");
-    const inFlight = /^(build|web|rust)/;
+    const inFlight = /^(build|web|rust|lint)/;
 
-    expect(shell).toContain('test("^(build|web|rust)")');
+    expect(shell).toContain('test("^(build|web|rust|lint)")');
     expect(inFlight.test("web (pnpm build + vitest)")).toBe(true);
     expect(inFlight.test("rust (cargo check)")).toBe(true);
+    expect(inFlight.test("rust (cargo test)")).toBe(true);
+    // HED-207: lint is now a required aggregator leaf, so the echo must watch it.
+    expect(inFlight.test("lint (eslint)")).toBe(true);
     for (const name of [
       "gate",
       "gate-verdict",
-      "lint (eslint) — NON-required, red until HED-14",
+      // The `^lint` alternative is anchored: `actionlint` (a separate check-run)
+      // must NOT match, or the echo would wait on / weigh an unrelated job.
+      "actionlint",
     ]) {
       expect(inFlight.test(name)).toBe(false);
     }
@@ -245,15 +250,51 @@ fi
     expect(run(pages(page(leaf("completed", T(0), "success")))).status).not.toBe(0);
     expect(run("{malformed").status).not.toBe(0);
 
-    // lint is outside the commit-leaf regex and must NOT hold the echo: a completed
-    // leaf + fresh marker greens even while a non-required lint job is in flight.
-    expect(
-      run(pages(page(
+    // HED-207 (lint folded into the aggregator) — the LOAD-BEARING selector case:
+    // lint is now a held leaf. With web complete but lint still in_progress and no
+    // fresh marker, the echo must WAIT — not fail closed — because INFLIGHT now
+    // counts lint; when lint finishes and the marker posts, accept → green. The 10
+    // in-flight polls WOULD trip the DRY fail-closed (i>9 && DRY>=6) if lint were
+    // invisible to INFLIGHT, so this case reds WITHOUT the `|lint` selector change
+    // and greens WITH it (before HED-207 lint was excluded and this greened at once,
+    // accepting a marker before lint's result was in it).
+    const lintHolds = run("", [
+      ...Array.from({ length: 10 }, () => pages(page(
         leaf("completed", T(0), "success"),
-        marker("success", T(5)),
-        named("lint (eslint) — NON-required, red until HED-14", "in_progress", T(2)),
-      ))).status,
-    ).toBe(0);
+        named("lint (eslint)", "in_progress", T(2)),
+      ))),
+      pages(page(
+        leaf("completed", T(0), "success"),
+        named("lint (eslint)", "completed", T(2)),
+        marker("success", T(10)),
+      )),
+      ...Array.from({ length: 60 }, () => "__FAIL__"),
+    ]);
+    expect(lintHolds.status).toBe(0);
+
+    // Commit path (HED-207): the verdict is `all(needs; .result == "success")` —
+    // generic over `needs` — so a failing lint leaf reds the required gate, and all
+    // success (incl. lint) greens. IS_EDIT=false takes the commit branch, reading
+    // RESULTS instead of polling check-runs.
+    const runCommit = (results: Record<string, { result: string }>) =>
+      spawnSync("/bin/sh", ["-c", verdictShell("gate")], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CHECKS_JSON: "[]",
+          CHECKS_SEQUENCE_FILE: "",
+          GH_TOKEN: "test-token",
+          GITHUB_STEP_SUMMARY: summary,
+          IS_EDIT: "false",
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          REPO: "owner/repo",
+          SHA: "0123456789abcdef",
+          RESULTS: JSON.stringify(results),
+        },
+      });
+    const ok = { result: "success" };
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "failure" } }).status).not.toBe(0);
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: ok }).status).toBe(0);
     // Generous timeout: each case spawns gh+jq per poll and the D2/no-marker cases
     // do a long fail-closed accumulation; under full-suite concurrency on a loaded
     // machine subprocess-spawn latency can exceed vitest's 30s default (HED-182).

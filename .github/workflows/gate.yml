@@ -2,14 +2,16 @@
 #
 # What it proves: the frontend compiles (`tsc` + `vite build`), 170 vitest tests
 # pass (`pnpm test`), `cargo check` succeeds for both feature sets (default
-# `gui` and `--no-default-features` minimal vela-server), and `cargo test`
-# passes on Linux (353 tests; 8 ignored by design — they need real ~/.claude /
-# SSH state). That real work lives in the `web` / `rust` / `rust-test` jobs; the
-# `gate` job aggregates their results.
+# `gui` and `--no-default-features` minimal vela-server), `cargo test` passes on
+# Linux (353 tests; 8 ignored by design — they need real ~/.claude / SSH state),
+# and `pnpm lint` (eslint) is clean. That real work lives in the `web` / `rust` /
+# `rust-test` / `lint` jobs; the `gate` job aggregates their results — every job
+# in `needs` must be success.
 #
-# What it does NOT prove: eslint is non-required and red until HED-14 (`lint`
-# job — deliberately outside the aggregator). No packaged `tauri build`,
-# nothing runs the app, no clippy/fmt.
+# What it does NOT prove: no packaged `tauri build`, nothing runs the app, no
+# clippy/fmt. (eslint was non-required and red until HED-14 fixed the last main
+# error; HED-207 then folded the `lint` leaf INTO the aggregator, so a lint error
+# now reds the required gate — it is no longer outside the gate.)
 #
 # Runs on GitHub-hosted runners — the repo is public, so minutes are free. The
 # job NAME `gate` is the required-status-check context string for the "Protect
@@ -186,7 +188,7 @@ jobs:
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
   lint:
-    name: lint (eslint) — NON-required, red until HED-14
+    name: lint (eslint)
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref.from != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -211,10 +213,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # `pnpm lint` fails on main today with 2 errors in src/remote/ConnectionBanner.tsx
-      # inherited byte-identical from upstream VelaTerm (HED-14); this job is
-      # deliberately NOT in the aggregator's needs — flip it in when HED-14 lands.
-      # Its red is honest, not hidden.
+      # `pnpm lint` (eslint). HED-14 fixed the last main error (an upstream-VelaTerm
+      # dynamic @tauri-apps import in ConnectionBanner.tsx), so HED-207 folded this
+      # job INTO the aggregator's `needs` — a lint error now reds the required gate.
       - name: Lint (eslint)
         run: pnpm lint
 
@@ -231,13 +232,15 @@ jobs:
     # `gate` verdict here rather than a `skipped` required check (which GitHub
     # would treat as passing).
     name: gate
-    needs: [web, rust, rust-test]
+    needs: [web, rust, rust-test, lint]
     if: always()
     runs-on: ubuntu-24.04
     # INVARIANT (HED-182), two rules that size this echo:
-    #   (1) the loop's sleep-sum > longest leaf timeout (`rust` = 45) + a publish
-    #       grace, so the echo can't run out of polls while a leaf legitimately
-    #       runs;  seq 1 105 at the backoff cadence ≈ 48m50s > 45.
+    #   (1) the loop's sleep-sum > longest leaf timeout (`rust` = 45; `web` = 20 and
+    #       `lint` = 10 are shorter, so rust stays the belt-sizing leaf after HED-207
+    #       folded lint into `needs`) + a publish grace, so the echo can't run out of
+    #       polls while a leaf legitimately runs;  seq 1 105 at the backoff cadence
+    #       ≈ 48m50s > 45.
     #   (2) timeout-minutes > the loop's sleep-sum + an API/startup allowance, so a
     #       stuck echo exits CLEANLY via the loop's own fail-closed rather than as
     #       a `timed_out` red in a NEWER suite;  55 > 48m50s + ~3-4min of 105
@@ -317,12 +320,12 @@ jobs:
               # jq (POSIX `test` has no portable string `>`, so it stays in jq).
               CONC=$(printf '%s\n' "$CR" | jq -r '
                 [.[].check_runs[]] as $all
-                | ([$all[] | select((.name | test("^(build|web|rust)")) and .conclusion != "skipped") | .started_at] | max) as $leaf
+                | ([$all[] | select((.name | test("^(build|web|rust|lint)")) and .conclusion != "skipped") | .started_at] | max) as $leaf
                 | ([$all[] | select(.name == "gate-verdict")] | sort_by(.started_at) | last) as $m
                 | if $m == null or $leaf == null then "none"
                   elif $m.started_at >= $leaf then ($m.conclusion // "none")
                   else "none" end')
-              INFLIGHT=$(printf '%s\n' "$CR" | jq -r '[.[].check_runs[]] | [ .[] | select((.name|test("^(build|web|rust)")) and .status!="completed") ] | length')
+              INFLIGHT=$(printf '%s\n' "$CR" | jq -r '[.[].check_runs[]] | [ .[] | select((.name|test("^(build|web|rust|lint)")) and .status!="completed") ] | length')
               # F2 — four states over the FRESH marker: accept only when a fresh
               # marker exists and no leaf is in flight; any in-flight leaf resets
               # the dry proof (with or without a marker); only fresh-none +
