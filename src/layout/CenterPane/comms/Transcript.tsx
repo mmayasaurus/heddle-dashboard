@@ -85,6 +85,11 @@ function MessageRow({ m, highlighted }: { m: CommsMessage; highlighted: boolean 
               {t("fleet.comms.directiveChip", m.target)}
             </span>
           )}
+          {m.target === "@all" && (
+            <span className="comms-broadcast-badge" data-testid={`comms-broadcast-badge-${m.id}`}>
+              → @all
+            </span>
+          )}
           <span className="comms-msg-ts">{formatTs(m.ts)}</span>
         </div>
         <div className="comms-bubble" data-testid={`comms-body-${m.id}`}>

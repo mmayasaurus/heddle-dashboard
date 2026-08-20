@@ -95,16 +95,21 @@ interface ComposerRowProps {
   setAtAll: (v: boolean) => void;
   disabled: boolean;
   canSend: boolean;
-  target: string | null;
+  effectiveTarget: string | null;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
 }
 
-function ComposerRow({ text, setText, atAll, setAtAll, disabled, canSend, target, onKeyDown, onSend }: ComposerRowProps) {
+function ComposerRow({ text, setText, atAll, setAtAll, disabled, canSend, effectiveTarget, onKeyDown, onSend }: ComposerRowProps) {
   const t = useT();
   return (
     <div className="comms-composer-row">
       <span className="comms-composer-as">{t("fleet.comms.asOperator")}</span>
+      {effectiveTarget && (
+        <span className="comms-composer-to" data-testid="comms-composer-to" aria-label={t("fleet.comms.sendingTo", effectiveTarget)}>
+          → {effectiveTarget}
+        </span>
+      )}
       <textarea
         className="comms-composer-input"
         data-testid="comms-composer-input"
@@ -114,7 +119,7 @@ function ComposerRow({ text, setText, atAll, setAtAll, disabled, canSend, target
           setText(e.target.value);
         }}
         onKeyDown={onKeyDown}
-        aria-label={target ? t("fleet.comms.composerPlaceholder", target) : t("fleet.comms.asOperator")}
+        aria-label={effectiveTarget ? t("fleet.comms.composerPlaceholder", effectiveTarget) : t("fleet.comms.asOperator")}
         rows={1}
       />
       <label className="comms-toggle" data-testid="comms-atall-toggle">
@@ -141,9 +146,10 @@ export interface ComposerProps {
   floorHolder: string | null;
   replyTo: CommsNeedsHumanRow | null;
   onClearReplyTo: () => void;
+  onSent?: () => void;
 }
 
-export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo }: ComposerProps) {
+export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo, onSent }: ComposerProps) {
   const t = useT();
   const [text, setText] = useState("");
   const [atAll, setAtAll] = useState(false);
@@ -154,6 +160,7 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo 
   const { sending, refusal, setRefusal, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
     setText("");
     onClearReplyTo();
+    onSent?.();
   });
 
   // Composer state is per-TARGET, not global: a half-typed body, the @all toggle, and a stale
@@ -196,7 +203,7 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo 
         setAtAll={setAtAll}
         disabled={disabled}
         canSend={canSend}
-        target={target}
+        effectiveTarget={effectiveTarget}
         onKeyDown={onKeyDown}
         onSend={doSend}
       />

@@ -172,7 +172,7 @@ interface ChatColumnProps {
  *  needs-human strip, floor banner, poll-error line, transcript, and the composer. */
 function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onNeedsHumanRowClick }: ChatColumnProps) {
   const t = useT();
-  const { needsHuman, floor, roomsError, transcriptError, rosterError, messages, rooms } = poll;
+  const { needsHuman, floor, roomsError, transcriptError, rosterError, messages, rooms, refresh } = poll;
   const activeRoom = rooms.find((r) => r.target === activeTarget);
   const hint = operatorHint(t, opStatus.reason);
   return (
@@ -193,7 +193,7 @@ function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClea
         </div>
       )}
       <Transcript messages={messages} highlightId={highlightId} />
-      <Composer target={activeTarget} status={opStatus} floorHolder={floor?.holder ?? null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />
+      <Composer target={activeTarget} status={opStatus} floorHolder={floor?.holder ?? null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} onSent={refresh} />
     </div>
   );
 }

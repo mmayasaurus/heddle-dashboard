@@ -248,7 +248,7 @@ fn the_additive_v2_schema_is_read_normally_not_refused() {
     assert_eq!(ts.schema_version, 2);
     assert_eq!(
         ts.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
-        vec![2, 6],
+        vec![1, 2, 6],
         "transcript still reads on v2"
     );
 }
@@ -352,7 +352,11 @@ fn transcript_paging_respects_since_id_ordering_and_limit() {
 
     let all = transcript_at(&path, "K.1", None, None).unwrap();
     let ids: Vec<i64> = all.messages.iter().map(|m| m.id).collect();
-    assert_eq!(ids, vec![2, 6], "both K.1-targeted rows, ascending");
+    assert_eq!(
+        ids,
+        vec![1, 2, 6],
+        "the ambient broadcast and both K.1-targeted rows are ascending"
+    );
 
     let since = transcript_at(&path, "K.1", Some(2), None).unwrap();
     assert_eq!(
@@ -363,7 +367,48 @@ fn transcript_paging_respects_since_id_ordering_and_limit() {
 
     let limited = transcript_at(&path, "K.1", Some(0), Some(1)).unwrap();
     assert_eq!(limited.messages.len(), 1);
-    assert_eq!(limited.messages[0].id, 2, "limit=1 keeps only the lowest remaining id");
+    assert_eq!(limited.messages[0].id, 1, "limit=1 keeps only the lowest remaining id");
+}
+
+#[test]
+fn broadcasts_are_ambient_across_rooms_and_cursor_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    seeded_db(&path);
+
+    let k1 = transcript_at(&path, "K.1", None, None).unwrap();
+    assert_eq!(
+        k1.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![1, 2, 6],
+        "K.1 includes the ambient broadcast interleaved with its own messages"
+    );
+    assert_eq!(k1.messages[0].target, "@all");
+    assert_eq!(k1.messages[0].body, "Broadcast: system updating");
+
+    let k = transcript_at(&path, "K", None, None).unwrap();
+    assert_eq!(
+        k.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![1, 3],
+        "the same ambient broadcast is visible in a different room"
+    );
+
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "INSERT INTO messages (ts, sender, target, kind, tier, verified, body)
+         VALUES ('2026-08-16T12:08:00.000Z', 'operator', '@all', 'chat', 'operator', 1,
+                 'Broadcast: tests complete');",
+    )
+    .unwrap();
+    drop(conn);
+
+    let after_k1_row = transcript_at(&path, "K.1", Some(6), None).unwrap();
+    assert_eq!(
+        after_k1_row.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![7],
+        "a cursor just below a newer broadcast surfaces it in the K.1 page"
+    );
+    assert_eq!(after_k1_row.messages[0].target, "@all");
+    assert_eq!(after_k1_row.messages[0].body, "Broadcast: tests complete");
 }
 
 // ─────────────────────────────────────── test 5 ───────────────────────────────────────
