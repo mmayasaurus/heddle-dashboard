@@ -17,6 +17,21 @@ use crate::db::repo;
 use crate::host::{AppCtx, TREE_CHANGED};
 use crate::models::{Group, NodeKind, Project, RoomAssociation, Session, SessionKind, Tree};
 
+/// Dashboard-facing unread state for one room or direct-message peer.
+///
+/// GUI-only: the unread commands read the desktop-only `comms` module (in lib.rs `comms` is
+/// `#[cfg(feature = "gui")]`), so the whole unread feature is excluded from the minimal
+/// `--no-default-features` server build — matching the desktop-only chat surface.
+#[cfg(feature = "gui")]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationUnread {
+    conversation_address: String,
+    unread_count: i64,
+    last_read_id: i64,
+    notif_level: String,
+}
+
 // Private helpers.
 
 /// Reads a session's `(kind, captured agent-native session ID)`, returning a specific error if either is absent.
@@ -503,6 +518,72 @@ pub fn unassociate_room(ctx: &AppCtx, room_name: &str) -> Result<(), String> {
 pub fn list_room_associations(ctx: &AppCtx) -> Result<Vec<RoomAssociation>, String> {
     let conn = ctx.db().conn.lock().unwrap();
     repo::list_room_associations(&conn)
+}
+
+/// Lists every known room/DM conversation with operator-owned unread state. New conversations are
+/// seeded to their current read-only comms cursor so pre-dashboard backlog is not presented unread.
+/// GUI-only (reads the desktop-only `comms` module; see ConversationUnread).
+#[cfg(feature = "gui")]
+pub fn heddle_unread_state(ctx: &AppCtx) -> Result<Vec<ConversationUnread>, String> {
+    let existing = {
+        let conn = ctx.db().conn.lock().unwrap();
+        repo::get_read_states(&conn)?
+    };
+    let read_cursors: std::collections::HashMap<_, _> = existing
+        .iter()
+        .map(|state| (state.conversation_address.clone(), state.last_read_id))
+        .collect();
+    let facts = crate::comms::reader::unread_conversations(&read_cursors)?;
+
+    let unseen: std::collections::HashSet<String> = facts
+        .iter()
+        .filter(|fact| !read_cursors.contains_key(&fact.address))
+        .map(|fact| fact.address.clone())
+        .collect();
+    let states = {
+        let mut conn = ctx.db().conn.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for fact in &facts {
+            if unseen.contains(&fact.address) {
+                repo::seed_read_state(&tx, &fact.address, fact.latest_id)?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        repo::get_read_states(&conn)?
+    };
+    let by_address: std::collections::HashMap<_, _> = states
+        .into_iter()
+        .map(|state| (state.conversation_address.clone(), state))
+        .collect();
+
+    Ok(facts
+        .into_iter()
+        .map(|fact| {
+            let state = &by_address[&fact.address];
+            ConversationUnread {
+                conversation_address: fact.address.clone(),
+                unread_count: if unseen.contains(&fact.address) { 0 } else { fact.unread_count },
+                last_read_id: state.last_read_id,
+                notif_level: state.notif_level.clone(),
+            }
+        })
+        .collect())
+}
+
+/// Advances a room or DM cursor in heddle.db; stale UI calls cannot move it backwards.
+/// GUI-only: part of the desktop-only chat unread feature (see heddle_unread_state).
+#[cfg(feature = "gui")]
+pub fn heddle_mark_read(ctx: &AppCtx, address: &str, last_id: i64) -> Result<(), String> {
+    let conn = ctx.db().conn.lock().unwrap();
+    repo::mark_read(&conn, address, last_id)
+}
+
+/// Sets a room or DM notification level in heddle.db.
+/// GUI-only: part of the desktop-only chat unread feature (see heddle_unread_state).
+#[cfg(feature = "gui")]
+pub fn heddle_set_notif_level(ctx: &AppCtx, address: &str, level: &str) -> Result<(), String> {
+    let conn = ctx.db().conn.lock().unwrap();
+    repo::set_notif_level(&conn, address, level)
 }
 
 // SSH host history and remembered passwords. These commands are **desktop-only** because Connect Remote is hidden

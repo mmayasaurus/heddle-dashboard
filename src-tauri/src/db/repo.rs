@@ -536,6 +536,84 @@ pub fn set_app_settings(
     Ok(())
 }
 
+// ─────────────────────────── Conversation unread state (HED-198) ───────────────────────────
+
+/// Dashboard-owned per-conversation cursor and notification preference. This never represents
+/// broker state; it is stored only in heddle.db.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadState {
+    pub conversation_address: String,
+    pub last_read_id: i64,
+    pub notif_level: String,
+}
+
+/// Read every persisted cursor/preference pair.
+pub fn get_read_states(conn: &Connection) -> Result<Vec<ReadState>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT conversation_address, last_read_id, notif_level
+             FROM conversation_read_state ORDER BY conversation_address",
+        )
+        .map_err(|e| format!("Failed to prepare conversation read-state query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ReadState {
+                conversation_address: row.get(0)?,
+                last_read_id: row.get(1)?,
+                notif_level: row.get(2)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query conversation read state: {e}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read conversation read-state row: {e}"))
+}
+
+/// Update one conversation's notification level without changing its read cursor.
+pub fn set_notif_level(conn: &Connection, address: &str, level: &str) -> Result<(), String> {
+    if !matches!(level, "mute" | "normal" | "all") {
+        return Err(format!("Invalid conversation notification level: {level}"));
+    }
+    conn.execute(
+        "INSERT INTO conversation_read_state(conversation_address, notif_level, updated_at)
+         VALUES(?1, ?2, ?3)
+         ON CONFLICT(conversation_address) DO UPDATE SET
+           notif_level = excluded.notif_level,
+           updated_at = excluded.updated_at",
+        params![address, level, now_secs()],
+    )
+    .map_err(|e| format!("Failed to upsert conversation notification level: {e}"))?;
+    Ok(())
+}
+
+/// Advance a conversation cursor. Older client events cannot move it backwards.
+pub fn mark_read(conn: &Connection, address: &str, last_id: i64) -> Result<(), String> {
+    if last_id < 0 {
+        return Err(format!("Invalid read cursor (negative): {last_id}"));
+    }
+    conn.execute(
+        "INSERT INTO conversation_read_state(conversation_address, last_read_id, updated_at)
+         VALUES(?1, ?2, ?3)
+         ON CONFLICT(conversation_address) DO UPDATE SET
+           last_read_id = MAX(conversation_read_state.last_read_id, excluded.last_read_id),
+           updated_at = excluded.updated_at",
+        params![address, last_id, now_secs()],
+    )
+    .map_err(|e| format!("Failed to advance conversation read cursor: {e}"))?;
+    Ok(())
+}
+
+/// Insert a first-sight cursor without changing an already-persisted cursor or preference.
+pub fn seed_read_state(conn: &Connection, address: &str, last_read_id: i64) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO conversation_read_state(conversation_address, last_read_id, updated_at)
+         VALUES(?1, ?2, ?3)
+         ON CONFLICT(conversation_address) DO NOTHING",
+        params![address, last_read_id, now_secs()],
+    )
+    .map_err(|e| format!("Failed to seed conversation read state: {e}"))?;
+    Ok(())
+}
+
 // ─────────────────────────── SSH connection history ───────────────────────────
 
 /// List SSH hosts most-recent-first with target, label, timestamp, and prior shared-db choice.
@@ -2856,5 +2934,39 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root_tombstoned);
         let _ = std::fs::remove_dir_all(root_live);
+    }
+
+    #[test]
+    fn regression_hed_198_read_state_upserts_preserve_read_position_and_validate_levels() {
+        let conn = mem_conn();
+
+        mark_read(&conn, "#general", 8).unwrap();
+        let initial = get_read_states(&conn).unwrap();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].conversation_address, "#general");
+        assert_eq!(initial[0].last_read_id, 8);
+        assert_eq!(initial[0].notif_level, "normal");
+
+        set_notif_level(&conn, "#general", "mute").unwrap();
+        mark_read(&conn, "#general", 3).unwrap();
+        let updated = get_read_states(&conn).unwrap();
+        assert_eq!(updated[0].last_read_id, 8, "stale reads must not move backwards");
+        assert_eq!(updated[0].notif_level, "mute");
+
+        assert!(set_notif_level(&conn, "#general", "loud").is_err());
+        assert_eq!(get_read_states(&conn).unwrap()[0].notif_level, "mute");
+    }
+
+    #[test]
+    fn regression_pr_66_mark_read_rejects_negative_cursor_without_changing_existing_cursor() {
+        let conn = mem_conn();
+        mark_read(&conn, "#general", 8).unwrap();
+
+        assert!(mark_read(&conn, "#general", -1).is_err());
+        assert_eq!(
+            get_read_states(&conn).unwrap()[0].last_read_id,
+            8,
+            "negative read cursors must not alter an existing cursor"
+        );
     }
 }

@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS project_rooms (
   created_at  INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_rooms_default ON project_rooms(project_id) WHERE is_default = 1;
+
+-- Operator-side per-conversation read cursor and notification preference. Like project_rooms, this
+-- belongs in heddle.db rather than comms.db: it is dashboard/operator state with no broker-side
+-- meaning, while comms.db must remain project- and operator-agnostic.
+CREATE TABLE IF NOT EXISTS conversation_read_state (
+  conversation_address TEXT PRIMARY KEY,
+  last_read_id         INTEGER NOT NULL DEFAULT 0,
+  notif_level          TEXT NOT NULL DEFAULT 'normal',
+  updated_at           INTEGER NOT NULL,
+  CHECK (notif_level IN ('mute','normal','all'))
+);
 "#;
 
 /// Creation statement for the `session_fts` virtual full-text index using a trigram tokenizer for substring/CJK

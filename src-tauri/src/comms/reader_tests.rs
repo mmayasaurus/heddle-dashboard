@@ -6,6 +6,7 @@
 //! day they run rather than only near the fixture doc's authoring date.
 
 use super::*;
+use crate::db::{repo, schema};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -556,6 +557,107 @@ fn initial_load_returns_newest_tail_and_limit_is_capped_at_500() {
     let forward = transcript_at(&path, "#bulk", Some(505), Some(2)).unwrap();
     let fids: Vec<i64> = forward.messages.iter().map(|m| m.id).collect();
     assert_eq!(fids, vec![506, 507]);
+}
+
+#[test]
+fn regression_hed_198_unread_enumeration_classifies_rooms_from_rooms_table_and_excludes_operator_posts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA_SQL).unwrap();
+    conn.execute_batch(
+        "INSERT INTO participants (address, kind, first_seen, last_seen) VALUES \
+         ('operator', 'operator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'), \
+         ('P', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'); \
+         INSERT INTO rooms (name, created_by, created_at, open) VALUES ('not-a-prefix-room', 'operator', '2026-01-01T00:00:00.000Z', 1); \
+         INSERT INTO messages (ts, sender, target, kind, tier, verified, body) VALUES \
+         ('2026-01-01T00:00:00.000Z', 'P', 'not-a-prefix-room', 'chat', 'agent-message', 0, 'room inbound'), \
+         ('2026-01-01T00:00:00.000Z', 'operator', 'not-a-prefix-room', 'chat', 'operator', 1, 'room outbound'), \
+         ('2026-01-01T00:00:00.000Z', 'P', 'operator', 'chat', 'agent-message', 0, 'dm inbound'), \
+         ('2026-01-01T00:00:00.000Z', 'operator', 'P', 'chat', 'operator', 1, 'dm outbound'), \
+         ('2026-01-01T00:00:00.000Z', 'operator', '@all', 'chat', 'operator', 1, 'broadcast');",
+    )
+    .unwrap();
+    drop(conn);
+
+    let states = HashMap::from([
+        ("not-a-prefix-room".to_string(), 0),
+        ("P".to_string(), 0),
+        ("empty".to_string(), 0),
+    ]);
+    let rows = unread_conversations_at(&path, &states).unwrap();
+    let by_address: HashMap<_, _> = rows
+        .into_iter()
+        .map(|row| (row.address.clone(), row))
+        .collect();
+
+    assert_eq!(by_address["not-a-prefix-room"].unread_count, 1);
+    assert_eq!(by_address["not-a-prefix-room"].latest_id, 2);
+    assert_eq!(by_address["P"].unread_count, 1);
+    assert_eq!(by_address["P"].latest_id, 3);
+    assert_eq!(by_address["empty"].unread_count, 0);
+    assert_eq!(by_address["empty"].latest_id, 0);
+    assert!(!by_address.contains_key("@all"));
+}
+
+#[test]
+fn regression_hed_198_unread_missing_or_unsupported_db_returns_zero_for_existing_states() {
+    let states = HashMap::from([("P".to_string(), 4)]);
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("no-such-comms.db");
+    let rows = unread_conversations_at(&missing, &states).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].address, "P");
+    assert_eq!(rows[0].unread_count, 0);
+    assert_eq!(rows[0].latest_id, 0);
+}
+
+#[test]
+fn regression_hed_198_seed_to_latest_is_written_once_and_future_inbound_message_is_unread() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(SCHEMA_SQL).unwrap();
+    conn.execute_batch(
+        "INSERT INTO participants (address, kind, first_seen, last_seen) VALUES \
+         ('operator', 'operator', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'), \
+         ('P', 'agent', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'); \
+         INSERT INTO messages (ts, sender, target, kind, tier, verified, body) VALUES \
+         ('2026-01-01T00:00:00.000Z', 'P', 'operator', 'chat', 'agent-message', 0, 'first');",
+    )
+    .unwrap();
+    drop(conn);
+
+    let state_conn = Connection::open_in_memory().unwrap();
+    state_conn.execute_batch(schema::SCHEMA).unwrap();
+    let initial_facts = unread_conversations_at(&path, &HashMap::new()).unwrap();
+    let first = initial_facts.iter().find(|row| row.address == "P").unwrap();
+    repo::seed_read_state(&state_conn, "P", first.latest_id).unwrap();
+    assert_eq!(repo::get_read_states(&state_conn).unwrap()[0].last_read_id, first.latest_id);
+
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "INSERT INTO messages (ts, sender, target, kind, tier, verified, body) VALUES \
+         ('2026-01-01T00:01:00.000Z', 'P', 'operator', 'chat', 'agent-message', 0, 'second');",
+    )
+    .unwrap();
+    drop(conn);
+    let cursors = HashMap::from([("P".to_string(), first.latest_id)]);
+    let after = unread_conversations_at(&path, &cursors).unwrap();
+    assert_eq!(after.iter().find(|row| row.address == "P").unwrap().unread_count, 1);
+    repo::seed_read_state(&state_conn, "P", 2).unwrap();
+    assert_eq!(repo::get_read_states(&state_conn).unwrap()[0].last_read_id, first.latest_id);
+
+    repo::seed_read_state(&state_conn, "empty", 0).unwrap();
+    assert_eq!(
+        repo::get_read_states(&state_conn)
+            .unwrap()
+            .into_iter()
+            .find(|state| state.conversation_address == "empty")
+            .unwrap()
+            .last_read_id,
+        0
+    );
 }
 
 #[test]
