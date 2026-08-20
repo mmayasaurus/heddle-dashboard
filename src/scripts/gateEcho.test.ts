@@ -250,14 +250,15 @@ fi
     expect(run(pages(page(leaf("completed", T(0), "success")))).status).not.toBe(0);
     expect(run("{malformed").status).not.toBe(0);
 
-    // HED-207 (lint folded into the aggregator) — the LOAD-BEARING selector case:
-    // lint is now a held leaf. With web complete but lint still in_progress and no
-    // fresh marker, the echo must WAIT — not fail closed — because INFLIGHT now
-    // counts lint; when lint finishes and the marker posts, accept → green. The 10
-    // in-flight polls WOULD trip the DRY fail-closed (i>9 && DRY>=6) if lint were
-    // invisible to INFLIGHT, so this case reds WITHOUT the `|lint` selector change
-    // and greens WITH it (before HED-207 lint was excluded and this greened at once,
-    // accepting a marker before lint's result was in it).
+    // HED-207 (lint folded into the aggregator) — the LOAD-BEARING INFLIGHT lock:
+    // lint is now a held leaf. web is complete but lint is still in_progress and there
+    // is NO fresh marker for 10 polls, then the marker arrives. The echo must WAIT
+    // through the 10 polls (not fail closed) because INFLIGHT counts lint, then accept.
+    // Without `|lint` in INFLIGHT those 10 no-marker polls read INFLIGHT=0 + CONC=none
+    // → DRY hits the fail-closed threshold (i>9 && DRY>=6) at poll 10 → RED before the
+    // marker is ever seen. So this reds WITHOUT the INFLIGHT `|lint` change (mutation-
+    // verified) and greens WITH it. It exercises INFLIGHT only — the freshness $leaf
+    // lock is the separate `lintFreshness` case below.
     const lintHolds = run("", [
       ...Array.from({ length: 10 }, () => pages(page(
         leaf("completed", T(0), "success"),
@@ -271,6 +272,23 @@ fi
       ...Array.from({ length: 60 }, () => "__FAIL__"),
     ]);
     expect(lintHolds.status).toBe(0);
+
+    // HED-207 (grok finding 1) — the LOAD-BEARING FRESHNESS $leaf lock, independent of
+    // INFLIGHT: a same-SHA lint-only re-run (GitHub "Re-run failed jobs" reuses web/rust
+    // and runs a NEW lint that FAILS) leaves the OLD success gate-verdict marker as the
+    // latest marker. lint completed at T(20) is NEWER than that marker (T(5)), so the
+    // marker must read STALE → fail closed. WITHOUT `|lint` in the freshness $leaf
+    // selector, $leaf=web T(0), the old T(5) success marker reads fresh, INFLIGHT=0 →
+    // false-GREEN masking the lint failure. WITH it, $leaf=lint T(20) → CONC=none → red.
+    // (lintHolds above cannot catch this — it has no marker, so CONC is "none"
+    // regardless of the $leaf selector.)
+    const lintFreshness = run(pages(page(
+      leaf("completed", T(0), "success"),
+      { name: "lint (eslint)", started_at: T(20), status: "completed", conclusion: "failure" },
+      marker("success", T(5)),
+    )));
+    expect(lintFreshness.status).not.toBe(0);
+    expect(lintFreshness.stdout).not.toContain("gate green");
 
     // Commit path (HED-207): the verdict is `all(needs; .result == "success")` —
     // generic over `needs` — so a failing lint leaf reds the required gate, and all
@@ -295,6 +313,21 @@ fi
     const ok = { result: "success" };
     expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "failure" } }).status).not.toBe(0);
     expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: ok }).status).toBe(0);
+    // Commit-path fail-closed (grok claim 4): a lint that is skipped or cancelled on
+    // the commit path is not "success" → MARK=failure → red.
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "skipped" } }).status).not.toBe(0);
+    expect(runCommit({ web: ok, rust: ok, "rust-test": ok, lint: { result: "cancelled" } }).status).not.toBe(0);
+
+    // Anchor isolation (grok claim 6), behavioral: `actionlint` (a separate hygiene
+    // check-run) does NOT start with build/web/rust/lint, so it must NOT hold the echo
+    // — a completed leaf + fresh marker greens even while actionlint is in flight. If
+    // `^lint` ever widened to match `actionlint`, INFLIGHT would count it and this loop
+    // would wait forever → red; the green assert locks the anchor.
+    expect(run(pages(page(
+      leaf("completed", T(0), "success"),
+      marker("success", T(5)),
+      named("actionlint", "in_progress", T(2)),
+    ))).status).toBe(0);
     // Generous timeout: each case spawns gh+jq per poll and the D2/no-marker cases
     // do a long fail-closed accumulation; under full-suite concurrency on a loaded
     // machine subprocess-spawn latency can exceed vitest's 30s default (HED-182).

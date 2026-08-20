@@ -100,7 +100,7 @@ run, commit or edit, must publish a `gate` conclusion equal to the real verdict 
 `gate.yml` does that with a **verdict echo**:
 
 - **Commit / retarget / push** runs do the real work — the leaf jobs (`build` in core; `web` + `rust` +
-  `rust-test` in the dashboard), each guarded to commit-events with an `if:`. The `gate` job takes their
+  `rust-test` + `lint` in the dashboard), each guarded to commit-events with an `if:`. The `gate` job takes their
   aggregate conclusion, records it as a **non-required `gate-verdict` marker check-run on the head SHA**,
   and exits with it. `gate` is the real verdict.
 - **Title/body-edit** runs skip the leaf jobs (no cold rebuild) and the `gate` job **echoes**: it reads

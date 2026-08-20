@@ -37,7 +37,7 @@
 #     with no code cause (measured live on dashboard#41, run 32068437179).
 # The echo satisfies all three at once. Every run — commit or edit — publishes
 # the STATIC context `gate`. A commit / retarget / push run does the real work
-# (web/rust/rust-test), and the `gate` aggregator records its verdict as a
+# (web/rust/rust-test/lint), and the `gate` aggregator records its verdict as a
 # non-required `gate-verdict` marker check-run on the head SHA. An edit run does
 # NOT recompute (the expensive rust jobs are skipped): it reads that SHA's latest
 # `gate-verdict` and republishes exactly that conclusion. So an edit can only
