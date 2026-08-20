@@ -960,6 +960,7 @@ const en = {
   // Fleet chatroom — operator composer + room management (HED-74c).
   "fleet.comms.asOperator": "as Maya · operator",
   "fleet.comms.atAll": "@all",
+  "fleet.comms.sendingTo": (target: string) => `Sending to ${target}`,
   "fleet.comms.composerPlaceholder": (target: string) => `Message ${target} as operator`,
   "fleet.comms.send": "Send",
   "fleet.comms.replyingTo": (sender: string) => `Replying to ${sender}`,

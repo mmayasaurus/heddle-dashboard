@@ -479,6 +479,14 @@
   border-radius: 4px;
   padding: 1px 6px;
 }
+.comms-broadcast-badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  padding: 0 5px;
+}
 .comms-receipts {
   display: flex;
   flex-wrap: wrap;
@@ -656,6 +664,18 @@
   border-radius: 8px;
   padding: 2px 8px;
   flex: none;
+}
+.comms-composer-to {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  /* May shrink and truncate so a long target never squeezes the textarea (codeant HED-164). */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .comms-composer-input {
   flex: 1;

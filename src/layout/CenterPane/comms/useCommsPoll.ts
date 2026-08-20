@@ -11,7 +11,7 @@
 //! Errors on any surface keep the last good data and surface a dim one-line message; they never
 //! clear already-rendered content (see docs/TESTING-BAR.md — guards and failure paths matter).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "../../../ipc/transport";
 
 // ── Backend payload shapes (heddle-comms.db, HED-74a contract — field names fixed) ──
@@ -175,6 +175,8 @@ export interface UseCommsPollResult {
   rosterError: string | null;
   /** target -> has content newer than this client's last-seen cursor for that room. */
   unreadByTarget: Record<string, boolean>;
+  /** Immediately fetches the active transcript through its existing cursor append path. */
+  refresh: () => void;
 }
 
 /**
@@ -208,8 +210,12 @@ export function useCommsPoll(
   // Per-room read cursor: last max message id seen from the backend (not the same as lastSeen,
   // which is the last id the OPERATOR has viewed). Keyed by target, survives room switches.
   const cursorsRef = useRef<Map<string, number>>(new Map());
-  // In-flight guard for the transcript poll: true while a fetch (fresh or cursor) is running.
-  const busyRef = useRef(false);
+  const refreshRef = useRef<() => void>(() => {
+    /* no-op until the transcript effect installs the real refresh */
+  });
+  const refresh = useCallback(() => {
+    refreshRef.current();
+  }, []);
 
   // The visible collapsed global strip retains its rooms poll for its needs-human badge. Hidden
   // keep-alive session panes pass false and therefore make no background request.
@@ -250,6 +256,13 @@ export function useCommsPoll(
     const target = activeTarget;
     let cancelled = false;
     let intervalId: number | undefined;
+    // In-flight guard, PER effect run (not a shared ref): a cancelled fetch's finally must never
+    // clear a NEWER effect's guard on a room switch (codeant HED-164 review). `refreshPending`
+    // remembers a refresh() requested while a fetch was in flight, so an eager sent-echo refresh is
+    // never silently dropped to the next 2.5s tick when it races the poll — it re-fetches the instant
+    // the in-flight fetch settles.
+    let busy = false;
+    let refreshPending = false;
     // A room switch (or first expand) must not go on showing the previous room's floor while the
     // fresh fetch is still in flight — clear it synchronously, before any async work starts.
     setFloor(null);
@@ -283,7 +296,7 @@ export function useCommsPoll(
 
     const fetchFresh = async () => {
       if (!isTauri) return;
-      busyRef.current = true;
+      busy = true;
       try {
         const t = await invoke<TranscriptPayload>("heddle_comms_transcript", { target, sinceId: null });
         if (cancelled) return;
@@ -292,15 +305,20 @@ export function useCommsPoll(
       } catch (e) {
         if (!cancelled) setTranscriptError(String(e));
       } finally {
-        busyRef.current = false;
+        busy = false;
+        if (refreshPending && !cancelled) {
+          refreshPending = false;
+          void fetchCursor();
+        }
       }
     };
     const fetchCursor = async () => {
-      if (!isTauri) return;
-      // In-flight guard: a tick that lands while a fetch is still running SKIPS — it never queues.
-      if (busyRef.current) return;
+      if (!isTauri || cancelled) return;
+      // In-flight guard: a tick (or refresh) that lands while a fetch is running does not run
+      // concurrently; a refresh() sets refreshPending so its fetch is re-issued, never lost.
+      if (busy) return;
       const since = cursorsRef.current.get(target) ?? 0;
-      busyRef.current = true;
+      busy = true;
       try {
         const t = await invoke<TranscriptPayload>("heddle_comms_transcript", { target, sinceId: since });
         if (cancelled) return;
@@ -309,7 +327,22 @@ export function useCommsPoll(
       } catch (e) {
         if (!cancelled) setTranscriptError(String(e));
       } finally {
-        busyRef.current = false;
+        busy = false;
+        if (refreshPending && !cancelled) {
+          refreshPending = false;
+          void fetchCursor();
+        }
+      }
+    };
+
+    // Eager sent-echo refresh (HED-164): fetch now if idle; if a fetch is in flight, remember it and
+    // re-fetch the instant that fetch settles — so a send racing the poll is never silently dropped.
+    // Renders only what the broker logged (no optimistic insert).
+    refreshRef.current = () => {
+      if (busy) {
+        refreshPending = true;
+      } else {
+        void fetchCursor();
       }
     };
 
@@ -322,6 +355,9 @@ export function useCommsPoll(
 
     return () => {
       cancelled = true;
+      refreshRef.current = () => {
+        /* no-op: the effect for this room is torn down */
+      };
       if (intervalId !== undefined) window.clearInterval(intervalId);
     };
   }, [expanded, activeTarget]);
@@ -388,5 +424,6 @@ export function useCommsPoll(
     roster,
     rosterError,
     unreadByTarget,
+    refresh,
   };
 }

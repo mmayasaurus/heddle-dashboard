@@ -911,6 +911,7 @@ const zhCN: typeof en = {
   // Fleet chatroom — operator composer + room management (HED-74c).
   "fleet.comms.asOperator": "as Maya · operator", // TODO translate
   "fleet.comms.atAll": "@all", // TODO translate
+  "fleet.comms.sendingTo": (target) => `Sending to ${target}`, // TODO translate
   "fleet.comms.composerPlaceholder": (target) => `Message ${target} as operator`, // TODO translate
   "fleet.comms.send": "Send", // TODO translate
   "fleet.comms.replyingTo": (sender) => `Replying to ${sender}`, // TODO translate

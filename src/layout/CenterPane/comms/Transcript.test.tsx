@@ -32,6 +32,13 @@ function mkMsg(overrides: Partial<CommsMessage> & { id: number }): CommsMessage 
 const fullDeliveries: CommsDeliveries = { sent: 5, held: 1, released: 1, refused: 2, failed: 3, logged: 4 };
 
 describe("Transcript trust rendering", () => {
+  it("HED-164: marks broadcasts with a destination badge but leaves room rows unmarked", () => {
+    render(<Transcript messages={[mkMsg({ id: 1, target: "@all" }), mkMsg({ id: 2, target: "#fleet" })]} />);
+
+    expect(screen.getByTestId("comms-broadcast-badge-1").textContent).toBe("→ @all");
+    expect(screen.queryByTestId("comms-broadcast-badge-2")).toBeNull();
+  });
+
   it("test 1: a verified operator row renders the seal; the identical row with verified=false falls to peer style with no seal", () => {
     const verified = mkMsg({ id: 1, sender: "operator", tier: "operator", verified: true, body: "ship it" });
     const { rerender } = render(<Transcript messages={[verified]} />);
