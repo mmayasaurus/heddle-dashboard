@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Record mount and unmount events per session; this is hoisted above the mock factory.
-const { lifecycle } = vi.hoisted(() => ({ lifecycle: [] as string[] }));
+const { lifecycle, chatLifecycle } = vi.hoisted(() => ({ lifecycle: [] as string[], chatLifecycle: [] as string[] }));
 
 vi.mock("./TerminalView", () => ({
   TerminalView: ({ session }: { session: { id: string } }) => {
@@ -22,6 +22,17 @@ vi.mock("./TerminalView", () => ({
       };
     }, []);
     return React.createElement("div", { "data-testid": `tv-${session.id}` });
+  },
+}));
+vi.mock("./comms/ChatSessionPane", () => ({
+  ChatSessionPane: ({ chatTarget }: { chatTarget: string }) => {
+    React.useEffect(() => {
+      chatLifecycle.push(`mount:${chatTarget}`);
+      return () => {
+        chatLifecycle.push(`unmount:${chatTarget}`);
+      };
+    }, [chatTarget]);
+    return React.createElement("div", { "data-testid": `chat-${chatTarget}` });
   },
 }));
 vi.mock("./SearchBar", () => ({ SearchBar: () => null }));
@@ -166,10 +177,31 @@ const countUnmounts = (id: string) => lifecycle.filter((e) => e === `unmount:${i
 afterEach(() => {
   cleanup();
   lifecycle.length = 0;
+  chatLifecycle.length = 0;
   localStorage.clear();
 });
 
 describe("keep-alive invariants when switching sessions in the centre pane", () => {
+  describe("regression PR#71 — chat sessions do not create blank tabs outside Tauri", () => {
+    it("does not add the chat session to a pane tree or mount a renderer", () => {
+      seed(true);
+      useTermStore.setState((s) => ({
+        sessions: [...s.sessions, { ...mkSession("chat-1"), kind: "chat", chatTarget: "#fleet" }],
+      }));
+      beforeEachRender();
+
+      open("chat-1");
+
+      const state = useTermStore.getState();
+      expect(state.openTabs).not.toContain("chat-1");
+      expect(state.paneTrees["chat-1"]).toBeUndefined();
+      expect(state.activeSessionId).toBeNull();
+      expect(screen.queryByTestId("chat-#fleet")).toBeNull();
+      expect(chatLifecycle).toEqual([]);
+      expect(lifecycle).not.toContain("mount:chat-1");
+    });
+  });
+
   it("single-tab mode: A to B and back to A never unmounts A, which mounts exactly once", () => {
     seed(true);
     beforeEachRender();

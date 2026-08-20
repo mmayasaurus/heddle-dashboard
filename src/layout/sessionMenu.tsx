@@ -20,6 +20,7 @@ import {
   worktreesInSubtree,
 } from "../ipc/commands";
 import { copyText, openDir } from "../ipc/info";
+import { isTauri } from "../ipc/transport";
 import { onGitbashDownloadDone } from "../ipc/events";
 import { env } from "../platform";
 import { DOC_SAVE_EVENT } from "../hooks/useKeyboardShortcuts";
@@ -786,12 +787,13 @@ export function useSessionMenu(): SessionMenu {
     };
 
     const sessionRec = sessions.find((s) => s.id === node.id);
-    // Runtime-free nodes keep only (browser) Open, optional Rename, Move, and Delete; PTY/agent-specific
-    // actions do not apply. Chat omits Open: openSession is a no-op for chat until the CenterPane chat
-    // renderer (HED-166 #3) is wired, so a dead menu item would just confuse.
+    // Runtime-free nodes keep only Open, optional Rename, Move, and Delete; PTY/agent-specific
+    // actions do not apply.
     if (sessionRec?.kind === "browser" || sessionRec?.kind === "chat") {
       const items: MenuItem[] = [];
-      if (sessionRec.kind === "browser") {
+      // Chat opens only on desktop (Tauri) — its openSession no-ops elsewhere, so omit a dead Open
+      // off-desktop. Browser keeps Open (its openSession handles the non-desktop guard itself).
+      if (sessionRec.kind === "browser" || isTauri) {
         items.push({ label: t("common.open"), onClick: () => openSession(node.id) }, sep);
       }
       if (renameItem) items.push(renameItem, sep);

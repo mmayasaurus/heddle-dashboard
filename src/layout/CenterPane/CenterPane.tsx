@@ -21,6 +21,7 @@ import { LiveTabsOverLimitDialog } from "./LiveTabsOverLimitDialog";
 import { SearchBar } from "./SearchBar";
 import { TabBar } from "./TabBar";
 import { TerminalView } from "./TerminalView";
+import { ChatSessionPane } from "./comms/ChatSessionPane";
 
 // Dynamically import the entire document editor. Crepe/CodeMirror plus ProseMirror exceeds 1 MB
 // before compression, so Vite splits it into a chunk that does not affect terminal startup.
@@ -171,12 +172,15 @@ export function CenterPane() {
     const t = paneTrees[tabId];
     if (t) for (const sid of collectSessionIds(t)) allIds.add(sid);
   }
+  const activeSession = activeSessionId
+    ? sessionsById.get(activeSessionId) ?? (Object.prototype.hasOwnProperty.call(ephemeralSessions, activeSessionId) ? ephemeralSessions[activeSessionId] : undefined)
+    : null;
 
   return (
     <div className="col col-mid">
       <TabBar />
       <div className="stage" ref={stageRef} style={{ position: "relative" }}>
-        {searchOpen && activeSessionId && <SearchBar />}
+        {searchOpen && activeSessionId && activeSession?.kind !== "chat" && <SearchBar />}
 
         {openTabs.length === 0 && (
           <div className="empty">
@@ -206,6 +210,16 @@ export function CenterPane() {
           const epoch = epochs[id] ?? 0;
           const info = visibleBySession.get(id);
           const visible = !!info;
+          if (session.kind === "chat") {
+            return (
+              <ChatSessionPane
+                key={`${id}:${epoch}`}
+                chatTarget={session.chatTarget ?? ""}
+                hidden={!visible}
+                area={info ? rectToStyle(info.rect) : FULL}
+              />
+            );
+          }
           return (
             <TerminalView
               key={`${id}:${epoch}`}

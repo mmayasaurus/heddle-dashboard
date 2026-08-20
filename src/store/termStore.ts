@@ -1983,10 +1983,9 @@ export const useTermStore = create<TermStore>((set, get) => ({
           focusedPaneId: null,
         };
       }
-
-      // Chat nodes are runtime-free like browser nodes: their later CenterPane renderer owns selection,
-      // so this terminal-session path must not create a pane or mount usePtySession.
-      if (sess?.kind === "chat") return { notifications };
+      // Chat sessions render a desktop-only React pane. Do not create an otherwise blank
+      // pane tree in web builds, where ChatSessionPane intentionally renders nothing.
+      if (sess?.kind === "chat" && !isTauri) return { notifications };
 
       // Focus an already visible tab instead of duplicating the session.
       const inOpen = locate(state.paneTrees, state.openTabs, id);

@@ -950,6 +950,7 @@ const en = {
   "fleet.comms.worker": "worker",
   "fleet.comms.schemaUnsupported": (n: number) => `comms schema v${n} isn't supported by this build`,
   "fleet.comms.emptyState": "No chatroom activity yet — it appears once the fleet starts talking.",
+  "fleet.comms.targetUnavailable": "Chat target unavailable.",
   "fleet.comms.needsHumanMore": (n: number) => `+${n} more`,
   "fleet.comms.floorHolds": (holder: string) => `${holder} holds the floor`,
   "fleet.comms.needsHuman": "Needs human",

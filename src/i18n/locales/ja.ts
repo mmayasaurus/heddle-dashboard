@@ -913,6 +913,7 @@ const ja: typeof en = {
   "fleet.comms.worker": "worker", // TODO translate
   "fleet.comms.schemaUnsupported": (n) => `comms schema v${n} isn't supported by this build`, // TODO translate
   "fleet.comms.emptyState": "No chatroom activity yet — it appears once the fleet starts talking.", // TODO translate
+  "fleet.comms.targetUnavailable": "チャットの宛先を利用できません。",
   "fleet.comms.needsHumanMore": (n) => `+${n} more`, // TODO translate
   "fleet.comms.floorHolds": (holder) => `${holder} holds the floor`, // TODO translate
   "fleet.comms.needsHuman": "Needs human", // TODO translate

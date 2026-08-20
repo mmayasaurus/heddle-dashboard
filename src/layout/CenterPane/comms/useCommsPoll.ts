@@ -1,6 +1,6 @@
 //! Polling data layer for the fleet chatroom (read-only). Owns two backend surfaces:
-//!   - heddle_comms_rooms: rooms list + needs-human queue + refusal count. Polled every 5s
-//!     ALWAYS (drives the collapsed-strip badge), independent of expanded/collapsed state.
+//!   - heddle_comms_rooms: rooms list + needs-human queue + refusal count. Polled every 5s,
+//!     including for the visible collapsed global strip; hidden session panes opt out.
 //!   - heddle_comms_transcript: messages for the active room. Polled every 2.5s ONLY while
 //!     expanded. A room switch (or first expand) fetches with sinceId:null and REPLACES that
 //!     room's messages; every subsequent poll on the same room uses the tracked cursor (last
@@ -180,11 +180,17 @@ export interface UseCommsPollResult {
 }
 
 /**
- * Polls the chatroom's read-only surfaces. `expanded` gates the transcript/roster polls;
+ * Polls the chatroom's read-only surfaces. `expanded` gates transcript/roster polls;
+ * `pollRoomsWhenCollapsed` lets hidden keep-alive session panes opt out of rooms polling while
+ * preserving the visible collapsed global strip's badge refresh;
  * `activeTarget` selects which room's transcript is tracked. Pass `null` for activeTarget until
  * a room is known (e.g. before the first rooms response resolves).
  */
-export function useCommsPoll(expanded: boolean, activeTarget: string | null): UseCommsPollResult {
+export function useCommsPoll(
+  expanded: boolean,
+  activeTarget: string | null,
+  pollRoomsWhenCollapsed = true,
+): UseCommsPollResult {
   const [loaded, setLoaded] = useState(false);
   const [schemaOk, setSchemaOk] = useState(true);
   const [schemaVersion, setSchemaVersion] = useState(1);
@@ -211,9 +217,11 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
     refreshRef.current();
   }, []);
 
-  // Rooms poll: every 5s, always, regardless of expanded/collapsed — drives the collapsed badge.
+  // The visible collapsed global strip retains its rooms poll for its needs-human badge. Hidden
+  // keep-alive session panes pass false and therefore make no background request.
   useEffect(() => {
     if (!isTauri) return;
+    if (!expanded && !pollRoomsWhenCollapsed) return;
     let cancelled = false;
     const fetchRooms = async () => {
       if (!isTauri) return;
@@ -238,7 +246,7 @@ export function useCommsPoll(expanded: boolean, activeTarget: string | null): Us
       cancelled = true;
       window.clearInterval(id);
     };
-  }, []);
+  }, [expanded, pollRoomsWhenCollapsed]);
 
   // Transcript poll: only while expanded, for the active room. Re-runs (fresh replace fetch +
   // cursor reset) whenever the room switches or the pane (re-)expands.
