@@ -13,17 +13,23 @@ Progress against the §10 breakdown. Pieces land as separate PRs off the shared 
 
 | §10 Piece | Status | Landed as |
 | --- | --- | --- |
-| 1. Chat `SessionKind` (`types.ts` + db + Rust `SessionKind`) | **MERGED** | PR #1 |
-| 2. ProjectTree chat nodes | **MERGED** | PR #71 (HED-216) |
+| 1. Chat `SessionKind` (`types.ts` + db + Rust `SessionKind`) | **MERGED** | PR #67 (HED-195) |
+| 2. ProjectTree chat nodes (render) | **MERGED** | PR #71 (HED-216) |
 | 3. CenterPane chat render (`ChatSessionPane`) | **MERGED** | PR #71 (HED-216) — shipped with piece 2 |
 | 4. Room-management UI | pending | — |
 | 5. Unread state (operator-side last-read) | pending (UI) | broker `heddleUnreadState` support merged by W |
-| 6. C / HED-169 default-room provisioning (backend) | tracked | HED-169 |
-| 7. E2 participants reader | tracked | HED-197 (W, HED-166 backend) |
+| 6. C / HED-169 default-room provisioning (backend) — **materializes rooms as chat sessions** | pending | HED-169 |
+| 7. E2 participants reader | **MERGED** | HED-197 (W, HED-166 backend) |
 
-Foundations (all merged): HED-163, E1, F/HED-168, HED-183. **The visible slice is live on `main` as of #71:**
-open heddle → rooms appear as chat-kind nodes in the left `ProjectTree` under their project → select one →
-the chatroom renders in the `CenterPane` like any session. Desktop-only (the chat surface is gated on Tauri).
+Foundations (all merged): HED-163, E1, F/HED-168, HED-183. **The render surface is in place on `main` as of #71**
+and unit-tested: a `chat`-kind session renders as a node in the left `ProjectTree` under its project and, when
+selected, opens the chatroom in the `CenterPane` like any session. Desktop-only (gated on Tauri).
+
+**Not yet visible end-to-end.** Nothing populates rooms as chat sessions yet: `chat_target` has no write path in
+the foundation (documented in `src-tauri/src/db/repo.rs`) — the pieces that CREATE chat sessions set it. The
+provisioning that materializes room→chat-session nodes is **HED-169 (default-room provisioning), still pending**;
+until it lands, a clean DB shows no rooms. The new pane also **coexists with the legacy `ChatroomPane` overlay**
+(still mounted in `CenterPane.tsx`), so retiring chat's `useSuspendNativeViews` is not done yet.
 
 ---
 
@@ -71,7 +77,7 @@ works. Chat-as-`SessionKind` is architecturally cheap. `parentSessionId` already
 | Chat renderer in center pane | EXTEND | `ChatroomPane` content minus the `ExpandedOverlay` wrapper; a pane swap doesn't overlay native views, so this likely retires the HED-111 `useSuspendNativeViews` machinery for chat. |
 | Left-panel conversation list | EXTEND | `ProjectTree` already lists sessions per project with status indicators; rooms/DMs become session nodes, via T's `heddle.db` room→project mapping. |
 | Tab/activity indicators | EXISTS | `SessionStatusBadge` / `SessionTabStatus` / `StatusIndicator`. |
-| Room management (create/name/add/remove/list) | EXISTS (broker) + NEW (UI) | Broker has `create_room` / `add_member` / `remove_member` / `list_rooms`; only the UI is new. |
+| Room management (create/name/add/remove/list) | EXISTS (broker) + NEW (UI) | Broker has `create_room` / `join_room` / `leave_room` / `list_rooms` (membership is join/leave, not add/remove member); only the UI is new. |
 | Per-agent DMs | NEW (view-model) | Derived from sender/target pairs in `comms.db`; no hidden per-agent rooms. |
 | Unread counts | NEW | Operator-side per-conversation last-read store; nothing required broker-side. |
 | Permission-request indicator | EXTEND | Broker `needs-human` signal (`NeedsHumanStrip`) surfaced as a row badge. |
@@ -140,9 +146,9 @@ Foundations DONE: **HED-163** (broker resolution) · **E1** (project→agent mem
 association) · **HED-183** (operator-send) — all merged.
 
 New/updated pieces (replacing old B "scope the overlay" + A "Rooms subsection"):
-1. **Chat `SessionKind`** — add `kind:'chat'` to `Session` (types.ts + db + Rust `SessionKind`), no PTY, mirroring `browser`. (small) — **MERGED (#1).**
-2. **ProjectTree chat nodes** — project rooms (§8) + derived DMs as session nodes with status; global Fleet section. (medium) — **MERGED (#71).**
-3. **CenterPane chat render** — `ChatroomPane` minus `ExpandedOverlay`, driven by the active chat session; retire chat's suspend machinery. (medium) — **MERGED (#71).**
+1. **Chat `SessionKind`** — add `kind:'chat'` to `Session` (types.ts + db + Rust `SessionKind`), no PTY, mirroring `browser`. (small) — **MERGED (#67, HED-195).**
+2. **ProjectTree chat nodes (render)** — renders room/DM chat sessions as tree nodes with status; global Fleet section. (medium) — **MERGED (#71).** Renders chat sessions that *exist*; the provisioning that CREATES them from rooms is piece 6 (HED-169), still pending.
+3. **CenterPane chat render** — `ChatroomPane` content minus `ExpandedOverlay`, driven by the active chat session. (medium) — **MERGED (#71).** Retiring chat's `useSuspendNativeViews` is NOT yet done — the legacy `ChatroomPane` overlay still mounts alongside the new pane.
 4. **Room-management UI** (§6). (medium)
 5. **Unread state** — operator-side per-conversation last-read store; per-room notif level. (small)
 6. **C / HED-169** — default room provisioning (backend). (medium)
