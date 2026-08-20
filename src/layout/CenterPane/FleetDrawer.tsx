@@ -203,15 +203,44 @@ function capturedMinutesAgo(capturedAt: number | null, now: number): number | nu
   return capturedAt == null ? null : Math.max(0, Math.floor((now - capturedAt * 1_000) / 60_000));
 }
 
+// Age-based staleness in SECONDS (no whole-minute flooring), shared by the provider chip and the
+// HED-213 selected-account override: a capture time older than the freshness budget (staleAfterSecs)
+// is stale; with no capture time, trust the backend flag. The backend `stale` is itself purely
+// age-based (capturedAt vs staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live
+// recompute is the SAME semantics, just fresher between the 30s polls.
+function isStaleByAge(
+  capturedAt: number | null | undefined,
+  staleAfterSecs: number | undefined,
+  fallbackStale: boolean | null | undefined,
+  now: number,
+): boolean {
+  if (capturedAt == null) return fallbackStale === true;
+  return (now - capturedAt * 1_000) / 1_000 > (staleAfterSecs ?? 1_800);
+}
+
 function isProviderStale(p: ProviderLimit, now: number): boolean {
-  // Compare in SECONDS (no whole-minute flooring, which delayed the transition by up to ~59s —
-  // codeant/copilot/qodo/cubic review), honoring each provider's staleAfterSecs. With no capture
-  // time, trust the backend flag. The backend's `stale` is itself purely age-based (capturedAt vs
-  // staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live recompute is the SAME
-  // semantics, just fresher between polls.
-  if (p.capturedAt == null) return p.stale === true;
-  const ageSec = (now - p.capturedAt * 1_000) / 1_000;
-  return ageSec > (p.staleAfterSecs ?? 1_800);
+  return isStaleByAge(p.capturedAt, p.staleAfterSecs, p.stale, now);
+}
+
+/** For the collapsed chip: CLAUDE's most-constrained account with FRESH data (HED-213), so the chip
+ *  reflects a live account instead of a possibly-idle active/top-level one. Returns null for
+ *  non-claude, no accounts, or when no account has a usable window. Representative window = 5h if
+ *  present else 7d — in practice claude's tap captures 5h+7d together, so fresh (measured) accounts
+ *  all compare on 5h; the 7d fallback only covers the (rare) 7d-only account. */
+function pickClaudeChipAccount(
+  p: ProviderLimit,
+): { win: LimitWindow; label: string; account: ProviderAccount } | null {
+  if (p.provider !== "claude" || !p.accounts?.length) return null;
+  let best: { win: LimitWindow; label: string; account: ProviderAccount } | null = null;
+  for (const account of p.accounts) {
+    if (account.stale === true) continue;
+    const win = account.fiveHour?.usedPercentage != null ? account.fiveHour : account.sevenDay;
+    if (win?.usedPercentage == null) continue;
+    if (best == null || win.usedPercentage > (best.win.usedPercentage ?? -1)) {
+      best = { win, label: account.fiveHour?.usedPercentage != null ? "5h" : "7d", account };
+    }
+  }
+  return best;
 }
 
 export function FleetDrawer() {
@@ -310,31 +339,21 @@ export function FleetDrawer() {
               // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
               let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
               let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+              // HED-213: for claude, the chip reflects the most-constrained FRESH account (not the
+              // possibly-idle active/top-level one) — see pickClaudeChipAccount.
+              const claudePick = pickClaudeChipAccount(p);
               let accountLabel: string | null = null;
-              let freshOverride = false;
-              const accounts = p.accounts ?? [];
-              if (p.provider === "claude" && accounts.length > 0) {
-                const freshAccounts = accounts
-                  .filter((account) => account.stale !== true)
-                  .map((account) => {
-                    const aWin = account.fiveHour?.usedPercentage != null ? account.fiveHour : account.sevenDay;
-                    return aWin?.usedPercentage != null
-                      ? { account, aWin: aWin as LimitWindow & { usedPercentage: number }, wlabel: account.fiveHour?.usedPercentage != null ? "5h" : "7d" }
-                      : null;
-                  })
-                  .filter((account): account is { account: ProviderAccount; aWin: LimitWindow & { usedPercentage: number }; wlabel: string } => account != null);
-                if (freshAccounts.length > 0) {
-                  const maxFresh = freshAccounts.reduce((a, b) => b.aWin.usedPercentage > a.aWin.usedPercentage ? b : a);
-                  win = maxFresh.aWin;
-                  label = maxFresh.wlabel;
-                  accountLabel = maxFresh.account.id;
-                  freshOverride = true;
-                }
+              let selectedAccount: ProviderAccount | null = null;
+              if (claudePick) {
+                win = claudePick.win;
+                label = claudePick.label;
+                accountLabel = claudePick.account.id;
+                selectedAccount = claudePick.account;
               }
               // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
               // non-empty proof is local to this block — corgea, PR #47.
               const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
-              if (!freshOverride && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
+              if (!selectedAccount && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
                 const tightest = usable.reduce((a, b) =>
                   (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
                 win = tightest;
@@ -346,17 +365,25 @@ export function FleetDrawer() {
               // without subscribing the whole drawer to the 1s clock — the isolated re-render only
               // touches this chip. win/label/pct/color are computed above (stable per poll).
               return (
-                <LiveClock key={p.provider} render={(nowMs) => (
-                  <span
-                    className={"fleet-chip-sum" + (freshOverride ? "" : isProviderStale(p, nowMs) ? " stale" : "")}
-                    title={`${p.provider}${accountLabel ? " · " + accountLabel : ""} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
-                  >
-                    <span className="fleet-tag" style={{ color }}>{p.provider}</span>
-                    {accountLabel && <span className="fleet-chip-acct fleet-dim">{accountLabel}</span>}
-                    <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                    {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
-                  </span>
-                )} />
+                <LiveClock key={p.provider} render={(nowMs) => {
+                  // Staleness recomputes live: a selected fresh account uses ITS capture age, so an
+                  // account that ages past its window between polls goes stale rather than staying
+                  // frozen-fresh (gitar/codeant/chatgpt-codex/cubic review); otherwise the provider's.
+                  const chipStale = selectedAccount
+                    ? isStaleByAge(selectedAccount.capturedAt, p.staleAfterSecs, selectedAccount.stale, nowMs)
+                    : isProviderStale(p, nowMs);
+                  return (
+                    <span
+                      className={"fleet-chip-sum" + (chipStale ? " stale" : "")}
+                      title={`${p.provider}${accountLabel ? " · " + accountLabel : ""} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
+                    >
+                      <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                      {accountLabel && <span className="fleet-chip-acct fleet-dim">{accountLabel}</span>}
+                      <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
+                      {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                    </span>
+                  );
+                }} />
               );
             })}
           </span>
