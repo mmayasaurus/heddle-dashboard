@@ -324,6 +324,26 @@ describe("FleetDrawer real-windows promotion (cursor)", () => {
     expect(reset?.textContent).not.toContain("fleet.noActiveWindow");
   });
 
+  it("renders a real 0% as a SegBar and '0%' text, never the dash — 0% is a measurement (HED-209 guard)", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...cursor,
+        fiveHour: { usedPercentage: 0, resetsAt: now + 3600 },
+        sevenDay: { usedPercentage: null, resetsAt: null },
+        windows: [],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("5h")).toBeTruthy());
+    const fiveHourLine = screen.getByText("5h").closest(".fleet-capline");
+    // genuine 0% → a real (empty) SegBar + "0%" text, NOT the indeterminate dash
+    expect(fiveHourLine?.querySelector(".fleet-seg")).toBeTruthy();
+    expect(fiveHourLine?.querySelector(".fleet-capline-indeterminate")).toBeNull();
+    expect(fiveHourLine?.querySelector(".fleet-capline-pct")?.textContent).toBe("0%");
+  });
+
   it("dedupes a short-label collision within the same block by appending a numeric suffix", async () => {
     const colliding = [
       { id: "included-total", label: "included total (Auto / Cursor models)", usedPercentage: 10, resetsAt: now + 3600, usedAmount: null, limitAmount: null, unit: null },
