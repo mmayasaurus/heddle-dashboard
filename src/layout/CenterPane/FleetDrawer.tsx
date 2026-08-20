@@ -341,43 +341,40 @@ export function FleetDrawer() {
         {limits.length > 0 ? (
           <span className="fleet-sum">
             {limits.map((p) => {
-              // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
-              // the bar answers "how close is each provider to a wall" at a glance. Providers with
-              // no 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows,
-              // picking the highest-percentage one — closest wall, same question answered (Maya,
-              // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
-              let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
-              let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
-              // HED-213: for claude, the chip reflects the most-constrained FRESH account (not the
-              // possibly-idle active/top-level one) — see pickClaudeChipAccount.
-              const claudePick = pickClaudeChipAccount(p, Date.now());
-              let accountLabel: string | null = null;
-              let selectedAccount: ProviderAccount | null = null;
-              if (claudePick) {
-                win = claudePick.win;
-                label = claudePick.label;
-                accountLabel = claudePick.account.id;
-                selectedAccount = claudePick.account;
-              }
-              // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
-              // non-empty proof is local to this block — corgea, PR #47.
-              const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
-              if (!selectedAccount && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
-                const tightest = usable.reduce((a, b) =>
-                  (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
-                win = tightest;
-                label = shortWindowLabel(tightest);
-              }
-              const pct = win?.usedPercentage ?? null;
               const color = providerColor(p.provider);
-              // LiveClock-wrap so the stale class transitions live between polls (qodo/cubic review)
-              // without subscribing the whole drawer to the 1s clock — the isolated re-render only
-              // touches this chip. win/label/pct/color are computed above (stable per poll).
+              // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
+              // the bar answers "how close is each provider to a wall" at a glance. Providers with no
+              // 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows, picking
+              // the highest-percentage one (Maya, 2026-08-17: the chip must show cursor's real number,
+              // not "—"). The WHOLE computation runs inside LiveClock so the claude account pick AND
+              // staleness both recompute live each second — an aging selected account yields to a
+              // fresher one within the second, not at the next 30s poll (cubic) — and no Date.now()
+              // runs during render.
               return (
                 <LiveClock key={p.provider} render={(nowMs) => {
-                  // Staleness recomputes live: a selected fresh account uses ITS capture age, so an
-                  // account that ages past its window between polls goes stale rather than staying
-                  // frozen-fresh (gitar/codeant/chatgpt-codex/cubic review); otherwise the provider's.
+                  let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
+                  let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+                  // HED-213: for claude, the chip reflects the most-constrained FRESH account (not the
+                  // possibly-idle active/top-level one) — see pickClaudeChipAccount.
+                  const claudePick = pickClaudeChipAccount(p, nowMs);
+                  let accountLabel: string | null = null;
+                  let selectedAccount: ProviderAccount | null = null;
+                  if (claudePick) {
+                    win = claudePick.win;
+                    label = claudePick.label;
+                    accountLabel = claudePick.account.id;
+                    selectedAccount = claudePick.account;
+                  }
+                  // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
+                  // non-empty proof is local to this block — corgea, PR #47.
+                  const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
+                  if (!selectedAccount && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
+                    const tightest = usable.reduce((a, b) =>
+                      (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
+                    win = tightest;
+                    label = shortWindowLabel(tightest);
+                  }
+                  const pct = win?.usedPercentage ?? null;
                   const chipStale = selectedAccount
                     ? isStaleByAge(selectedAccount.capturedAt, p.staleAfterSecs, selectedAccount.stale, nowMs)
                     : isProviderStale(p, nowMs);
