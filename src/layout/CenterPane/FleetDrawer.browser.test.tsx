@@ -42,8 +42,13 @@ const claude = {
   ],
 };
 
+function accountDetailElement(accountId: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>(".fleet-provcap-account-label"))
+    .find((element) => element.textContent === accountId) ?? null;
+}
+
 function accountRowCount(accountId: string) {
-  const accountDetail = screen.getByText(accountId).closest(".fleet-provcap-account-detail");
+  const accountDetail = accountDetailElement(accountId)?.closest(".fleet-provcap-account-detail");
   expect(accountDetail).toBeTruthy();
   return Array.from(accountDetail!.children).filter((child) =>
     child.classList.contains("fleet-provcap-account-row"),
@@ -63,7 +68,7 @@ describe("FleetDrawer Claude account cycler", () => {
   it("shows one account at a time and rotates through logged-out and keeper-estimate states", async () => {
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     const rowCount = accountRowCount("acct3");
     expect(rowCount).toBe(6);
     expect(screen.queryByText("acct1")).toBeNull();
@@ -73,7 +78,7 @@ describe("FleetDrawer Claude account cycler", () => {
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
     expect(screen.getByText("acct1")).toBeTruthy();
     expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
-    expect(screen.queryByText("acct3")).toBeNull();
+    expect(accountDetailElement("acct3")).toBeNull();
     expect(accountRowCount("acct1")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
@@ -82,7 +87,7 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(accountRowCount("acct2")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    expect(screen.getByText("acct3")).toBeTruthy();
+    expect(accountDetailElement("acct3")).toBeTruthy();
     expect(accountRowCount("acct3")).toBe(rowCount);
   });
 
@@ -98,7 +103,7 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "fleet.rotateAccounts" })).toBeNull();
     expect(screen.queryByText("1/1")).toBeNull();
     expect(screen.getAllByText("5h")).toHaveLength(1);
@@ -122,7 +127,7 @@ describe("FleetDrawer Claude account cycler", () => {
   it("reserves an empty Fable weekly row when its estimate is unavailable", async () => {
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     const row = document.querySelector(".fleet-provcap-fable-weekly");
     expect(row).toBeTruthy();
     expect(row!.classList.contains("fleet-provcap-spacer")).toBe(true);
@@ -199,7 +204,7 @@ describe("FleetDrawer Claude account cycler", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     expect(screen.getByText(/fleet\.capturedMinutesAgo:\d+/)).toBeTruthy();
   });
 });
@@ -533,13 +538,71 @@ describe("FleetDrawer generalized account cycler (claude regression)", () => {
   it("still renders the Claude cycler chrome, FableWeeklyLine, and state row through the shared AccountCycler", async () => {
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(screen.getByText("acct3")).toBeTruthy());
+    await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     expect(screen.getByText("3/3")).toBeTruthy();
     expect(screen.getByRole("button", { name: "fleet.rotateAccounts" })).toBeTruthy();
     expect(document.querySelector(".fleet-provcap-fable-weekly")).toBeTruthy();
     expect(document.querySelector(".fleet-provcap-account-state")).toBeTruthy();
     expect(screen.getAllByText("5h")).toHaveLength(1);
     expect(screen.getAllByText("7d")).toHaveLength(1);
+  });
+});
+
+describe("regression PR#213 — collapsed Claude chip uses the max fresh account window", () => {
+  const staleCapturedAt = now - 26 * 60 * 60;
+
+  const renderClosedChip = async (limit: object) => {
+    localStorage.setItem("heddle-fleet-open", "0");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([limit]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+    await waitFor(() => expect(document.querySelector(".fleet-chip-sum")).toBeTruthy());
+    return document.querySelector(".fleet-chip-sum")!;
+  };
+
+  it("selects the highest representative fresh-account window and clears stale styling", async () => {
+    const chip = await renderClosedChip({
+      ...claude,
+      capturedAt: staleCapturedAt,
+      stale: true,
+      fiveHour: { usedPercentage: 96, resetsAt: now + 3600 },
+      accounts: [
+        { ...claude.accounts[0], stale: true },
+        { ...claude.accounts[2], fiveHour: { usedPercentage: 19, resetsAt: now + 3600 }, stale: false },
+        { ...claude.accounts[2], id: "acct4", fiveHour: { usedPercentage: 13, resetsAt: now + 3600 }, stale: false },
+      ],
+    });
+
+    expect(chip.textContent).toContain("acct3");
+    expect(chip.textContent).toContain("19%");
+    expect(chip.classList.contains("stale")).toBe(false);
+  });
+
+  it("falls back to the stale top-level value when no Claude account has fresh data", async () => {
+    const chip = await renderClosedChip({
+      ...claude,
+      capturedAt: staleCapturedAt,
+      stale: true,
+      fiveHour: { usedPercentage: 96, resetsAt: now + 3600 },
+      accounts: claude.accounts.map((account) => ({ ...account, stale: true })),
+    });
+
+    expect(chip.textContent).toContain("96%");
+    expect(chip.textContent).not.toContain("acct3");
+    expect(chip.classList.contains("stale")).toBe(true);
+  });
+
+  it("leaves non-Claude account providers on their top-level value without an account label", async () => {
+    const chip = await renderClosedChip({
+      ...codex,
+      fiveHour: { usedPercentage: 42, resetsAt: now + 3600 },
+    });
+
+    expect(chip.textContent).toContain("42%");
+    expect(chip.textContent).not.toContain("codex-acct-a");
+    expect(chip.textContent).not.toContain("codex-acct-b");
   });
 });
 

@@ -203,15 +203,53 @@ function capturedMinutesAgo(capturedAt: number | null, now: number): number | nu
   return capturedAt == null ? null : Math.max(0, Math.floor((now - capturedAt * 1_000) / 60_000));
 }
 
+// Age-based staleness in SECONDS (no whole-minute flooring), shared by the provider chip and the
+// HED-213 selected-account override: a capture time older than the freshness budget (staleAfterSecs)
+// is stale; with no capture time, trust the backend flag. The backend `stale` is itself purely
+// age-based (capturedAt vs staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live
+// recompute is the SAME semantics, just fresher between the 30s polls.
+function isStaleByAge(
+  capturedAt: number | null | undefined,
+  staleAfterSecs: number | undefined,
+  fallbackStale: boolean | null | undefined,
+  now: number,
+): boolean {
+  if (capturedAt == null) return fallbackStale === true;
+  return (now - capturedAt * 1_000) / 1_000 > (staleAfterSecs ?? 1_800);
+}
+
 function isProviderStale(p: ProviderLimit, now: number): boolean {
-  // Compare in SECONDS (no whole-minute flooring, which delayed the transition by up to ~59s —
-  // codeant/copilot/qodo/cubic review), honoring each provider's staleAfterSecs. With no capture
-  // time, trust the backend flag. The backend's `stale` is itself purely age-based (capturedAt vs
-  // staleAfterSecs, judged at poll time — docs/USAGE_TAP.md), so this live recompute is the SAME
-  // semantics, just fresher between polls.
-  if (p.capturedAt == null) return p.stale === true;
-  const ageSec = (now - p.capturedAt * 1_000) / 1_000;
-  return ageSec > (p.staleAfterSecs ?? 1_800);
+  return isStaleByAge(p.capturedAt, p.staleAfterSecs, p.stale, now);
+}
+
+/** For the collapsed chip: CLAUDE's most-constrained account with FRESH data (HED-213), so the chip
+ *  reflects a live account instead of a possibly-idle active/top-level one. Freshness is by LIVE age
+ *  (isStaleByAge with the passed `now`), so an account aging past staleAfterSecs isn't picked even
+ *  before the backend flag catches up (cubic P2). Compares on a CONSISTENT window — the 5h rolling
+ *  wall when any fresh account exposes it, else 7d — never mixing 5h and 7d in the max (qodo/cubic
+ *  P1). Null for non-claude / no accounts / no fresh usable window. */
+function pickClaudeChipAccount(
+  p: ProviderLimit,
+  now: number,
+): { win: LimitWindow; label: string; account: ProviderAccount } | null {
+  if (p.provider !== "claude" || !p.accounts?.length) return null;
+  const fresh = p.accounts.filter((a) => !isStaleByAge(a.capturedAt, p.staleAfterSecs, a.stale, now));
+  const with5h = fresh.filter((a) => a.fiveHour?.usedPercentage != null);
+  const use5h = with5h.length > 0;
+  const pool = use5h ? with5h : fresh;
+  const label = use5h ? "5h" : "7d";
+  let best: { win: LimitWindow; label: string; account: ProviderAccount } | null = null;
+  let bestPct = -1;
+  for (const account of pool) {
+    const win = use5h ? account.fiveHour : account.sevenDay;
+    const pct = win?.usedPercentage;
+    if (win == null || pct == null) continue;
+    if (best == null || pct > bestPct) {
+      best = { win, label, account };
+      bestPct = pct;
+    }
+  }
+  return best;
 }
 
 export function FleetDrawer() {
@@ -303,38 +341,55 @@ export function FleetDrawer() {
         {limits.length > 0 ? (
           <span className="fleet-sum">
             {limits.map((p) => {
-              // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
-              // the bar answers "how close is each provider to a wall" at a glance. Providers with
-              // no 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows,
-              // picking the highest-percentage one — closest wall, same question answered (Maya,
-              // 2026-08-17: the closed-drawer chip must show cursor's real number, not "—").
-              let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
-              let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
-              // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
-              // non-empty proof is local to this block — corgea, PR #47.
-              const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
-              if (isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
-                const tightest = usable.reduce((a, b) =>
-                  (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
-                win = tightest;
-                label = shortWindowLabel(tightest);
-              }
-              const pct = win?.usedPercentage ?? null;
               const color = providerColor(p.provider);
-              // LiveClock-wrap so the stale class transitions live between polls (qodo/cubic review)
-              // without subscribing the whole drawer to the 1s clock — the isolated re-render only
-              // touches this chip. win/label/pct/color are computed above (stable per poll).
+              // One chip per provider: the tightest live window (5h if present, else 7d/monthly) so
+              // the bar answers "how close is each provider to a wall" at a glance. Providers with no
+              // 5h/7d at all (cursor: only 30-day pools) fall through to their PROMOTED windows, picking
+              // the highest-percentage one (Maya, 2026-08-17: the chip must show cursor's real number,
+              // not "—"). The WHOLE computation runs inside LiveClock so the claude account pick AND
+              // staleness both recompute live each second — an aging selected account yields to a
+              // fresher one within the second, not at the next 30s poll (cubic) — and no Date.now()
+              // runs during render.
               return (
-                <LiveClock key={p.provider} render={(nowMs) => (
-                  <span
-                    className={"fleet-chip-sum" + (isProviderStale(p, nowMs) ? " stale" : "")}
-                    title={`${p.provider} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
-                  >
-                    <span className="fleet-tag" style={{ color }}>{p.provider}</span>
-                    <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
-                    {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
-                  </span>
-                )} />
+                <LiveClock key={p.provider} render={(nowMs) => {
+                  let win: LimitWindow | undefined = p.fiveHour?.usedPercentage != null ? p.fiveHour : p.sevenDay;
+                  let label = p.fiveHour?.usedPercentage != null ? "5h" : "7d";
+                  // HED-213: for claude, the chip reflects the most-constrained FRESH account (not the
+                  // possibly-idle active/top-level one) — see pickClaudeChipAccount.
+                  const claudePick = pickClaudeChipAccount(p, nowMs);
+                  let accountLabel: string | null = null;
+                  let selectedAccount: ProviderAccount | null = null;
+                  if (claudePick) {
+                    win = claudePick.win;
+                    label = claudePick.label;
+                    accountLabel = claudePick.account.id;
+                    selectedAccount = claudePick.account;
+                  }
+                  // Branch on the usable list ITSELF (not shouldPromoteWindows) so the reduce's
+                  // non-empty proof is local to this block — corgea, PR #47.
+                  const usable = filterExtraWindows(p.windows ?? []).filter(isUsableWindow);
+                  if (!selectedAccount && isNullWindow(p.fiveHour) && isNullWindow(p.sevenDay) && usable.length > 0) {
+                    const tightest = usable.reduce((a, b) =>
+                      (b.usedPercentage ?? -1) > (a.usedPercentage ?? -1) ? b : a);
+                    win = tightest;
+                    label = shortWindowLabel(tightest);
+                  }
+                  const pct = win?.usedPercentage ?? null;
+                  const chipStale = selectedAccount
+                    ? isStaleByAge(selectedAccount.capturedAt, p.staleAfterSecs, selectedAccount.stale, nowMs)
+                    : isProviderStale(p, nowMs);
+                  return (
+                    <span
+                      className={"fleet-chip-sum" + (chipStale ? " stale" : "")}
+                      title={`${p.provider}${accountLabel ? " · " + accountLabel : ""} · ${label} ${pct == null ? "—" : Math.round(pct) + "%"}${p.note ? " · " + p.note : ""}`}
+                    >
+                      <span className="fleet-tag" style={{ color }}>{p.provider}</span>
+                      {accountLabel && <span className="fleet-chip-acct fleet-dim">{accountLabel}</span>}
+                      <b style={{ color }}>{pct == null ? "—" : `${Math.round(pct)}%`}</b>
+                      {win?.resetsAt ? <span className="fleet-dim">&nbsp;↻<ResetCountdown resetsAt={win.resetsAt} /></span> : null}
+                    </span>
+                  );
+                }} />
               );
             })}
           </span>
