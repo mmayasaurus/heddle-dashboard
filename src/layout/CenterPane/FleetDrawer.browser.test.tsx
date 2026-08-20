@@ -292,6 +292,36 @@ describe("FleetDrawer real-windows promotion (cursor)", () => {
     // only the standard pair renders — no empty promoted bars, no leftover extras wrapper
     expect(document.querySelectorAll(".fleet-capline").length).toBe(2);
     expect(document.querySelector(".fleet-provcap-extras")).toBeNull();
+
+    // HED-209: a null-pct rolling window renders the indeterminate dash, never a 0%-filled SegBar
+    // (which is visually indistinguishable from a real 0%). Both 5h/7d here are null.
+    document.querySelectorAll(".fleet-capline").forEach((line) => {
+      expect(line.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+      expect(line.querySelector(".fleet-seg")).toBeNull();
+    });
+  });
+
+  it("shows the reset clock (not 'no active window') for a null-pct window that still has a live resetsAt — HED-209 keeper-estimate coherence", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...cursor,
+        fiveHour: { usedPercentage: null, resetsAt: now + 3600 },
+        sevenDay: { usedPercentage: null, resetsAt: now + 86_400 },
+        windows: [],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("5h")).toBeTruthy());
+    const fiveHourLine = screen.getByText("5h").closest(".fleet-capline");
+    // null pct → dash, never a SegBar
+    expect(fiveHourLine?.querySelector(".fleet-capline-indeterminate")?.textContent).toBe("—");
+    expect(fiveHourLine?.querySelector(".fleet-seg")).toBeNull();
+    // ...but the window is live (resetsAt in the future) → show its reset clock, not "no active window"
+    const reset = fiveHourLine?.querySelector(".fleet-capline-reset");
+    expect(reset?.textContent).toContain("↻");
+    expect(reset?.textContent).not.toContain("fleet.noActiveWindow");
   });
 
   it("dedupes a short-label collision within the same block by appending a numeric suffix", async () => {

@@ -524,6 +524,7 @@ function CapLine({
 }) {
   const t = useT();
   const pct = win.usedPercentage;
+  const pctLabel = pct == null ? "" : `${Math.round(pct)}%`;
   const amount = namedWindow ? fmtWindowUsedLimit(win) : null;
   return (
     <div className={"fleet-capline" + (className ? ` ${className}` : "")}>
@@ -532,7 +533,7 @@ function CapLine({
           ANY window (rolling 5h/7d included), never a 0%-filled SegBar that reads as a real 0%.
           Guard is `== null` so a genuine pct === 0 still draws an empty bar + "0%". */}
       {pct == null ? <span className="fleet-capline-indeterminate" title={title ?? label}>—</span> : <SegBar pct={pct} color={color} />}
-      <span className="fleet-capline-pct" title={pct == null ? "" : `${Math.round(pct)}%`}>{pct == null ? "" : `${Math.round(pct)}%`}</span>
+      <span className="fleet-capline-pct" title={pctLabel}>{pctLabel}</span>
       <LiveClock render={(now) => {
         if (namedWindow) {
           const reset = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : "";
@@ -540,11 +541,14 @@ function CapLine({
           const full = [reset, amount, note].filter(Boolean).join(" · ");
           return <span className="fleet-dim fleet-capline-reset" title={full}>{text}</span>;
         }
-        return (
-          <span className="fleet-dim fleet-capline-reset" title={pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}>
-            {pct == null ? t("fleet.noActiveWindow") : win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : ""}
-          </span>
-        );
+        // HED-209 follow-up (Copilot review): a window with a live resetsAt IS active even when we
+        // have no measurement yet (the keeper-estimate state), so show its reset clock rather than a
+        // contradictory "no active window". Fall back to "no active window" only when BOTH pct and
+        // resetsAt are absent.
+        const resetClock = win.resetsAt ? `↻ ${fmtReset(win.resetsAt, now, t("fleet.resetting"))}` : null;
+        const resetText = resetClock ?? (pct == null ? t("fleet.noActiveWindow") : "");
+        const resetTitle = resetClock ?? (pct == null ? [t("fleet.noActiveWindow"), note].filter(Boolean).join(" · ") : "");
+        return <span className="fleet-dim fleet-capline-reset" title={resetTitle}>{resetText}</span>;
       }} />
     </div>
   );
