@@ -36,7 +36,9 @@ export async function associateThisRoom(room: string, projectId: string): Promis
   const canonicalRoom = `#${room.replace(/^#+/, "")}`;
   const normalizedRoom = canonicalRoom.slice(1);
   const associations = await listRoomAssociations();
-  if (associations.some((association) => association.roomName.replace(/^#/, "") === normalizedRoom && association.projectId === projectId)) return;
+  const existing = associations.find((association) => association.roomName.replace(/^#/, "") === normalizedRoom);
+  if (existing?.projectId === projectId) return;
+  if (existing) throw new Error(`Room ${canonicalRoom} already belongs to another project`);
   await associateRoomToProject(canonicalRoom, projectId, false);
 }
 
@@ -1478,7 +1480,7 @@ export function ProjectTree(h: TreeHandlers) {
       )}
     </div>
     {openForProjectId && isTauri && (
-      <RoomCreateModalHost projectId={openForProjectId} onClose={() => setOpenForProjectId(null)} />
+      <RoomCreateModalHost key={openForProjectId} projectId={openForProjectId} onClose={() => setOpenForProjectId(null)} />
     )}
     </>
   );

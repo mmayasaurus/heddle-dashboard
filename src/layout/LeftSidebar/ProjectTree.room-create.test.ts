@@ -27,6 +27,16 @@ describe("regression PR#285 — project room association", () => {
     expect(mockAssociate).not.toHaveBeenCalled();
   });
 
+  it("rejects a room already owned by another project without moving it", async () => {
+    mockList.mockResolvedValue([{ roomName: "#project-room", projectId: "project-2", isDefault: true }]);
+
+    await expect(associateThisRoom("#project-room", "project-1")).rejects.toThrow(
+      "Room #project-room already belongs to another project",
+    );
+
+    expect(mockAssociate).not.toHaveBeenCalled();
+  });
+
   it("associates an unassociated room without making it the default", async () => {
     mockList.mockResolvedValue([]);
 

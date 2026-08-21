@@ -32,7 +32,7 @@ interface SubmitState {
 
 /** Creates the room, then adds every picked member in turn, collecting failures without aborting
  *  the rest of the batch. Closes the modal only when nothing failed. */
-function useCreateRoomSubmit(onClose: () => void, onCreated?: (room: string) => void | Promise<void>) {
+function useCreateRoomSubmit(onClose: () => void, onCreated?: (_room: string) => void | Promise<void>) {
   const [state, setState] = useState<SubmitState>({ submitting: false, error: null, failedMembers: [] });
 
   const addMember = async (room: string, address: string): Promise<boolean> => {
@@ -171,7 +171,7 @@ export interface RoomCreateModalProps {
   roster: FleetAgent[];
   onClose: () => void;
   /** Runs after the broker has created the normalized room and before any member additions. */
-  onCreated?: (room: string) => void | Promise<void>;
+  onCreated?: (_room: string) => void | Promise<void>;
   /** Optional availability gate for a scoped entry point; legacy callers omit it. */
   submitDisabled?: boolean;
   submitHint?: string | null;
