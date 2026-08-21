@@ -232,7 +232,11 @@ pub fn get_session_cwd(state: State<PtyManager>, session_id: String) -> Option<S
 #[tauri::command]
 pub async fn list_shells(app: AppHandle) -> Vec<crate::pty::manager::ShellOption> {
     // The data directory locates bundled Git Bash; failure merely omits that optional entry.
-    let data_dir = app.path().app_data_dir().ok();
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map(crate::host::gui_data_dir_for_build)
+        .ok();
     // WSL detection launches `wsl.exe --list --quiet`, so run it in the blocking pool. Other systems
     // immediately return an empty list.
     tauri::async_runtime::spawn_blocking(move || {
@@ -263,7 +267,11 @@ pub struct GitbashStatus {
 pub fn gitbash_status(app: AppHandle) -> GitbashStatus {
     #[cfg(windows)]
     {
-        let dd = app.path().app_data_dir().ok();
+        let dd = app
+            .path()
+            .app_data_dir()
+            .map(crate::host::gui_data_dir_for_build)
+            .ok();
         let available = dd
             .as_deref()
             .map(|d| crate::agent::gitbash::default_bash(d).is_some())
@@ -295,10 +303,11 @@ pub fn download_full_gitbash(app: AppHandle) -> Result<(), String> {
     #[cfg(windows)]
     {
         use tauri::Emitter;
-        let dd = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("data dir unavailable: {e}"))?;
+        let dd = crate::host::gui_data_dir_for_build(
+            app.path()
+                .app_data_dir()
+                .map_err(|e| format!("data dir unavailable: {e}"))?,
+        );
         // Report completion immediately when already installed, preserving idempotence.
         if crate::agent::gitbash::full_installed(&dd) {
             let _ = app.emit("gitbash://download-done", ());
@@ -352,10 +361,11 @@ pub fn read_recording(
     session_id: String,
     on_chunk: Channel<InvokeResponseBody>,
 ) -> Result<(), String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get data directory: {e}"))?;
+    let data_dir = crate::host::gui_data_dir_for_build(
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to get data directory: {e}"))?,
+    );
     let path = data_dir
         .join("recordings")
         .join(format!("{session_id}.log"));
@@ -677,10 +687,11 @@ pub async fn ssh_connect(
     ssh_remote_gate()?;
     // Data mode defaults to an isolated database; true reuses the remote desktop release database.
     let shared_db = shared_db.unwrap_or(false);
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to get app data dir: {e}"))?;
+    let data_dir = crate::host::gui_data_dir_for_build(
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("failed to get app data dir: {e}"))?,
+    );
     // Keyring service identifier matches the data-directory suffix and preserves dev/release isolation.
     let identifier = data_dir
         .file_name()

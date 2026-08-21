@@ -120,6 +120,9 @@ pub enum ListenerId {
 /// 2026-08-20 confirmed dev builds run debug-compiled). Release builds — the installed app —
 /// are unchanged. The compile-time signal is injected as a bool so the mapping is
 /// unit-testable under a debug-compiled `cargo test` (mirrors `web::is_production`, HED-39).
+///
+/// Every GUI data-dir consumer must route through this (or `AppCtx::data_dir`, which calls it) so a
+/// debug build never reads or writes the installed app's production data (HED-159).
 #[cfg(feature = "gui")]
 pub(crate) fn gui_data_dir_for_build(base: PathBuf) -> PathBuf {
     dev_suffix(base, cfg!(debug_assertions))
@@ -131,7 +134,13 @@ fn dev_suffix(base: PathBuf, is_debug: bool) -> PathBuf {
         return base;
     }
     match base.file_name() {
-        Some(name) => base.with_file_name(format!("{}.dev", name.to_string_lossy())),
+        // Append to the OsString directly instead of round-tripping through lossy UTF-8, so a
+        // non-UTF-8 path component is preserved byte-for-byte (codacy).
+        Some(name) => {
+            let mut suffixed = name.to_os_string();
+            suffixed.push(".dev");
+            base.with_file_name(suffixed)
+        }
         None => base,
     }
 }
