@@ -1,7 +1,7 @@
 //! Pinned needs-human/permission-request queue (approved mock card 04). Sourced from the rooms
 //! payload (ALL targets, not just the active room), so it stays visible whichever room is open.
-//! Shows up to 3 rows; a row click switches to that row's room and highlights the message. No
-//! reply affordance in this read-only PR.
+//! Shows up to 3 rows; a row click switches to the flagging agent's conversation and highlights
+//! the message when it is present in that view. No reply affordance in this read-only PR.
 
 import { useT } from "../../../i18n";
 import type { CommsNeedsHumanRow } from "./useCommsPoll";

@@ -342,7 +342,7 @@ function bindChatroomActions(
   };
   const handleNeedsHumanRowClick = (row: CommsNeedsHumanRow) => {
     setPinned(true);
-    setActiveTarget(row.target);
+    setActiveTarget(row.sender);
     setHighlightId(row.id);
     setReplyTo(row);
   };

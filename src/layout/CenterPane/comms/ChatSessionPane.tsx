@@ -56,7 +56,7 @@ export function ChatSessionPane({ chatTarget, hidden = false, area }: ChatSessio
   }
 
   const handleNeedsHumanRowClick = (row: CommsNeedsHumanRow) => {
-    setActiveTarget(row.target);
+    setActiveTarget(row.sender);
     setHighlightId(row.id);
     setReplyTo(row);
   };

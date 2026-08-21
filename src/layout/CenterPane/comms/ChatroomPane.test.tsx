@@ -219,12 +219,12 @@ describe("ChatroomPane shell", () => {
     expect((await screen.findByTestId("comms-strip-needs-badge")).textContent).toBe("49");
   });
 
-  it("fix 4: a needs-human click to a target outside rooms[] pins activeTarget so the next rooms poll can't bounce it back to #fleet", async () => {
+  it("fix 4: a needs-human click from a sender outside rooms[] pins activeTarget so the next rooms poll can't bounce it back to #fleet", async () => {
     vi.useFakeTimers();
     try {
       localStorage.setItem(OPEN_KEY, "1");
       roomsResponse.rooms = [mkRoom({ target: "#fleet" })];
-      roomsResponse.needsHuman = [mkNeedsHumanRow(1, { target: "T.2" })];
+      roomsResponse.needsHuman = [mkNeedsHumanRow(1, { sender: "T.2", target: "#fleet" })];
 
       const { container } = render(<ChatroomPane />);
       await act(async () => {
@@ -248,6 +248,17 @@ describe("ChatroomPane shell", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("HED-291: a needs-human row addressed to @all opens the flagging sender's conversation", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.needsHuman = [mkNeedsHumanRow(1, { sender: "R.1", target: "@all" })];
+    render(<ChatroomPane />);
+    await screen.findByTestId("comms-rail");
+
+    fireEvent.click(screen.getByTestId("comms-needs-row-1"));
+    await waitFor(() => expect(screen.getByText("R.1", { selector: ".comms-chat-name" })).toBeTruthy());
+    expect(screen.queryByText("@all", { selector: ".comms-chat-name" })).toBeNull();
   });
 
   it("fix 8: Escape collapses the overlay while expanded, but does nothing while collapsed", async () => {
