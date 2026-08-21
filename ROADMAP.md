@@ -22,7 +22,7 @@ will drive heddle lanes.
    ticket, U). Route-away for Claude-primary classes at 5h ≥90% stays ON by default (knob documented).
    Fable: no model-scoped window exists in any readable surface → estimate by per-model attribution of
    weekly deltas (HED-75, W) + Fable-aware triggers (HED-76, U); Fable ≈% bar with a 50% soft-cap tick.
-Also: DeepSource → YES with a heddle `.deepsource.toml` merged FIRST (S); Deep Reviewers/Gemini/PR-Agent
+Also: DeepSource → NOT for heddle (never installed here; pre-config removed 2026-08-21, Maya); Deep Reviewers/Gemini/PR-Agent
 → SKIP for heddle (OpenRouter-keyed; 15+ free reviewers already active on the public repos).
 Review sweep (`pr-sweep.sh` → exit 0, every reviewer, every channel, vs HEAD) is a HARD GATE before any
 heddle PR is staged for Maya (enforced 2026-08-15 after 63 unresolved threads were found across 5 PRs).
