@@ -76,13 +76,13 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText("3/3")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    await waitFor(() => expect(screen.getByText("acct1")).toBeTruthy());
+    await screen.findByText("acct1");
     expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
     expect(accountDetailElement("acct3")).toBeNull();
     expect(accountRowCount("acct1")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    await waitFor(() => expect(screen.getByText("acct2")).toBeTruthy());
+    await screen.findByText("acct2");
     expect(screen.getByText("fleet.keeperEstimate")).toBeTruthy();
     expect(accountRowCount("acct2")).toBe(rowCount);
 
@@ -446,7 +446,7 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
     // AccountCycler calls t() with no provider-specific argument.
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
 
-    expect(screen.getByText("codex-acct-b")).toBeTruthy();
+    await screen.findByText("codex-acct-b");
     expect(screen.getByText("2/2")).toBeTruthy();
     expect(screen.getByText("SURG")).toBeTruthy();
     expect(screen.queryByText("BONU")).toBeNull();
