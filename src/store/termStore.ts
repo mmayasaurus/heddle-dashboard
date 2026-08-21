@@ -1377,9 +1377,10 @@ export const useTermStore = create<TermStore>((set, get) => ({
   groups: [],
   sessions: [],
   setChatSessions: (chatSessions) => {
-    set((state) => ({
-      sessions: [...state.sessions.filter((session) => session.kind !== "chat"), ...chatSessions],
-    }));
+    set((state) => {
+      const sessions = [...state.sessions.filter((session) => !session.id.startsWith("chat:")), ...chatSessions];
+      return { sessions, ...reconcileTabs({ ...state, sessions }) };
+    });
   },
   archivedSessions: [],
   treeLoaded: false,
@@ -1448,8 +1449,8 @@ export const useTermStore = create<TermStore>((set, get) => ({
     const t = await tree.listTree();
     set((state) => {
       const sessions = [
-        ...t.sessions.filter((session) => session.kind !== "chat"),
-        ...state.sessions.filter((session) => session.kind === "chat"),
+        ...t.sessions.filter((session) => !session.id.startsWith("chat:")),
+        ...state.sessions.filter((session) => session.id.startsWith("chat:")),
       ];
       const runtimes = { ...state.runtimes };
       for (const s of sessions) {

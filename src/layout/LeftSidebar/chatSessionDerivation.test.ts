@@ -71,7 +71,6 @@ describe("HED-265 chat session derivation", () => {
       ],
     });
 
-    expect(result.fleetProject).toMatchObject({ id: FLEET_PROJECT_ID, name: "Fleet" });
     expect(result.sessions
       .filter((session) => session.projectId === FLEET_PROJECT_ID)
       .map((session) => session.chatTarget))

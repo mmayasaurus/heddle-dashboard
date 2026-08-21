@@ -12,10 +12,9 @@ interface DeriveChatTreeInput {
   associations: RoomAssociation[];
 }
 
-interface DerivedChatTree {
-  fleetProject: Project | null;
-  sessions: Session[];
-}
+interface DerivedChatTree { sessions: Session[]; }
+
+export function isDerivedChatSessionId(id: string): boolean { return id.startsWith("chat:"); }
 
 function chatSession(target: string, projectId: string, sortOrder: number): Session {
   return {
@@ -79,17 +78,5 @@ export function deriveChatTree({
     sessions.push(chatSession(target, FLEET_PROJECT_ID, index));
   });
 
-  return {
-    fleetProject: fleetRooms.length > 0
-      ? {
-          id: FLEET_PROJECT_ID,
-          name: "Fleet",
-          rootPath: "",
-          sortOrder: Number.MAX_SAFE_INTEGER,
-          collapsed: false,
-          createdAt: 0,
-        }
-      : null,
-    sessions,
-  };
+  return { sessions };
 }
