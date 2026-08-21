@@ -22,6 +22,7 @@ import { MARK_LABEL_KEYS, type NodeMark, normalizeMark } from "../../marks";
 import { SessionKindIcon } from "../sessionViewers/sessionMeta";
 import { DEFAULT_BINDINGS, formatCombo } from "../../hooks/shortcutRegistry";
 import { useGitBranch } from "../../hooks/useGitBranch";
+import { FLEET_PROJECT_ID, isDerivedChatSessionId } from "./chatSessionDerivation";
 
 /** WKWebView inserts control characters such as U+001C through beforeinput when Left/Right is pressed past an
  *  input boundary. They render as boxes and are unrelated to IME; Chromium is unaffected. Strip C0/C1 and DEL
@@ -194,7 +195,7 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
     projectId: s.projectId,
     groupId: s.groupId ?? null,
   };
-  const dndProps = {
+  const dndProps = isChat ? {} : {
     draggable: p.draggable,
     onDragStart: (e: React.DragEvent) =>
       p.onDragStartRow({ kind: "session", id: s.id, projectId: s.projectId }, e),
@@ -209,7 +210,9 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
       {...dndProps}
       onMouseDown={p.onMouseDownRow}
       onClick={(e) => p.onRowClick({ id: s.id, kind: "session" }, e, true)}
-      onContextMenu={(e) => p.onRowContext(ref, e)}
+      onContextMenu={(e) => {
+        if (!isDerivedChatSessionId(s.id)) p.onRowContext(ref, e);
+      }}
     >
       {p.hasKids ? (
         <span
@@ -255,19 +258,21 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
         </>
       )}
       {/* Browser page nodes have no PTY or agent, so a status dot would be meaningless and is omitted. */}
-      {!isBrowser && <StatusIndicator status={status} unread={unread} />}
-      <span className="meta">
-        <span
-          className="add"
-          title={t("tree.newChildSession")}
-          onClick={(e) => {
-            e.stopPropagation();
-            p.onAddSession(ref, e);
-          }}
-        >
-          <Icons.plus size={12} />
+      {!isBrowser && !isChat && <StatusIndicator status={status} unread={unread} />}
+      {!isChat && (
+        <span className="meta">
+          <span
+            className="add"
+            title={t("tree.newChildSession")}
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onAddSession(ref, e);
+            }}
+          >
+            <Icons.plus size={12} />
+          </span>
         </span>
-      </span>
+      )}
     </div>
   );
 });
@@ -289,7 +294,7 @@ export function ProjectTree(h: TreeHandlers) {
     isPrimary,
   } = h;
 
-  const projects = useTermStore((s) => s.projects);
+  const storedProjects = useTermStore((s) => s.projects);
   const treeLoaded = useTermStore((s) => s.treeLoaded);
   // Delay the loading row so a fast load stays blank instead of flashing a spinner for one frame.
   const [showLoadingHint, setShowLoadingHint] = useState(false);
@@ -306,6 +311,20 @@ export function ProjectTree(h: TreeHandlers) {
     useTermStore((s) => s.shortcutOverrides.openProject) || DEFAULT_BINDINGS.openProject;
   const groups = useTermStore((s) => s.groups);
   const sessions = useTermStore((s) => s.sessions);
+  const projects = useMemo(() => {
+    if (!sessions.some((session) => session.projectId === FLEET_PROJECT_ID)) return storedProjects;
+    return [
+      ...storedProjects,
+      {
+        id: FLEET_PROJECT_ID,
+        name: "Fleet",
+        rootPath: "",
+        sortOrder: Number.MAX_SAFE_INTEGER,
+        collapsed: false,
+        createdAt: 0,
+      },
+    ];
+  }, [storedProjects, sessions]);
   const ephemeralSessions = useTermStore((s) => s.ephemeralSessions);
   const toggleCollapsed = useTermStore((s) => s.toggleCollapsed);
   const openSession = useTermStore((s) => s.openSession);
@@ -356,6 +375,7 @@ export function ProjectTree(h: TreeHandlers) {
   const nodeCollapsed = (id: string, shared: boolean | undefined) =>
     collapsedOverrides && id in collapsedOverrides ? collapsedOverrides[id] : !!shared;
   const toggleNodeCollapsed = (kind: NodeKind, id: string, shared: boolean | undefined) => {
+    if (id === FLEET_PROJECT_ID || isDerivedChatSessionId(id)) return;
     if (!collapsedOverrides) {
       void toggleCollapsed(kind, id);
       return;
@@ -814,6 +834,7 @@ export function ProjectTree(h: TreeHandlers) {
   const ctx = (node: TreeNodeRef) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (node.id === FLEET_PROJECT_ID || isDerivedChatSessionId(node.id)) return;
     // Right-click chooses a menu target without changing tree selection. Unselected nodes receive temporary context
     // highlighting; selected nodes retain batch-menu semantics. This keeps the active session from joining selection implicitly.
     onContext(node, e.clientX, e.clientY);
@@ -1162,6 +1183,7 @@ export function ProjectTree(h: TreeHandlers) {
     switch (row.kind) {
       case "project": {
         const p = row.project;
+        const isFleet = p.id === FLEET_PROJECT_ID;
         const renaming = renamingId === p.id;
         const ref: TreeNodeRef = {
           kind: "project",
@@ -1178,9 +1200,9 @@ export function ProjectTree(h: TreeHandlers) {
               (contextId === p.id ? " context" : "")
             }
             style={{ paddingLeft: 6, ...dragStyle(p.id) }}
-            onDragOver={(e) => allowDrop(e, p.id, true)}
-            onDragLeave={() => setDragOver((d) => (d?.id === p.id ? null : d))}
-            onDrop={dropOnProject(p.id)}
+            onDragOver={isFleet ? undefined : (e) => allowDrop(e, p.id, true)}
+            onDragLeave={isFleet ? undefined : () => setDragOver((d) => (d?.id === p.id ? null : d))}
+            onDrop={isFleet ? undefined : dropOnProject(p.id)}
             onMouseDown={preventModifierSelect}
             onClick={(e) => handleClick({ id: p.id, kind: "project" }, e, false)}
             onContextMenu={ctx(ref)}
@@ -1205,7 +1227,7 @@ export function ProjectTree(h: TreeHandlers) {
                 <span className="nm">{p.name}</span>
               </>
             )}
-            {metaButtons(ref, true)}
+            {!isFleet && metaButtons(ref, true)}
           </div>
         );
       }
@@ -1279,7 +1301,7 @@ export function ProjectTree(h: TreeHandlers) {
             context={contextId === s.id}
             renaming={renaming}
             renameVal={renaming ? renameVal : undefined}
-            draggable={!filtering && !renaming}
+            draggable={!filtering && !renaming && s.kind !== "chat"}
             dragHighlight={dragStyle(s.id)}
             onRowClick={sOnClick}
             onRowContext={sOnContext}

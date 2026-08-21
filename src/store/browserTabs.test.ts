@@ -339,6 +339,34 @@ describe("chat tree nodes (kind=chat, runtime-free conversations)", () => {
     expect(s.activeSessionId).toBe("C");
     expect(s.runtimes["C"]).toBeUndefined();
   });
+
+  it("opens a derived chat session through the same ChatSessionPane route", () => {
+    seed();
+    useTermStore.getState().setChatSessions([
+      { ...mkSession("derived-chat"), kind: "chat", chatTarget: "#alpha" },
+    ]);
+
+    useTermStore.getState().openSession("derived-chat");
+
+    const s = useTermStore.getState();
+    expect(s.openTabs).toContain("derived-chat");
+    expect(s.paneTrees["derived-chat"]).toBeTruthy();
+    expect(s.activeSessionId).toBe("derived-chat");
+  });
+
+  it("reconciles an open tab away when a derived room disappears", () => {
+    seed();
+    useTermStore.getState().setChatSessions([
+      { ...mkSession("chat:%23alpha"), kind: "chat", chatTarget: "#alpha" },
+    ]);
+    useTermStore.getState().openSession("chat:%23alpha");
+
+    useTermStore.getState().setChatSessions([]);
+
+    const state = useTermStore.getState();
+    expect(state.openTabs).not.toContain("chat:%23alpha");
+    expect(state.paneTrees["chat:%23alpha"]).toBeUndefined();
+  });
 });
 
 describe("closeTab on a browser tab: clearing metadata and falling back to another active tab", () => {

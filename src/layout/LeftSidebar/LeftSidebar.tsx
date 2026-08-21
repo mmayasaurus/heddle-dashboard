@@ -25,6 +25,8 @@ import {
   type TreeHandlers,
   type TreeNodeRef,
 } from "./ProjectTree";
+import { useDerivedChatSessions } from "./useDerivedChatSessions";
+import { FLEET_PROJECT_ID, isDerivedChatSessionId } from "./chatSessionDerivation";
 import {
   collectSidebarViewIds,
   computeSidebarDividers,
@@ -363,6 +365,7 @@ function SidebarTreeDivider({
 
 export function LeftSidebar() {
   const t = useT();
+  useDerivedChatSessions();
   const width = useTermStore((s) => s.leftWidth);
   const importProject = useTermStore((s) => s.importProject);
   const setCloneModalOpen = useTermStore((s) => s.setCloneModalOpen);
@@ -465,6 +468,7 @@ export function LeftSidebar() {
   } | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const startRename = (node: TreeNodeRef) => {
+    if (node.id === FLEET_PROJECT_ID || isDerivedChatSessionId(node.id)) return;
     const viewId = menu?.viewId ?? effectiveActiveViewId;
     setRenaming({ id: node.id, kind: node.kind, viewId });
     setRenameVal(node.name);
@@ -488,6 +492,7 @@ export function LeftSidebar() {
 
   // Hover add for sessions opens a type menu scoped to the node kind.
   const onAddSession = (node: TreeNodeRef, x: number, y: number) => {
+    if (node.id === FLEET_PROJECT_ID || isDerivedChatSessionId(node.id)) return;
     const projectId = node.projectId;
     let groupId: string | null = null;
     let parent: string | null = null;
@@ -503,11 +508,13 @@ export function LeftSidebar() {
 
   // Hover add creates top-level groups under projects or child groups under groups.
   const onAddGroup = (node: TreeNodeRef) => {
+    if (node.id === FLEET_PROJECT_ID || isDerivedChatSessionId(node.id)) return;
     const parentGroupId = node.kind === "group" ? node.id : null;
     openDialog({ type: "newGroup", projectId: node.projectId, parentGroupId });
   };
 
   const buildMenu = (node: TreeNodeRef): MenuItem[] => {
+    if (node.id === FLEET_PROJECT_ID || isDerivedChatSessionId(node.id)) return [];
     // Multiselection batch menu.
     if (selection.length >= 2 && selection.some((s) => s.id === node.id)) {
       const items: MenuItem[] = [];
