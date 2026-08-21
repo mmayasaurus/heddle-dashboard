@@ -608,7 +608,7 @@ async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_
     assert_eq!(associations.len(), 1, "reopening must not duplicate the association");
     assert_eq!(
         associations[0].room_name,
-        format!("hed-169-project-{}-all", project.id)
+        default_project_room_name(&project.name, &project.id)
     );
     assert_eq!(associations[0].project_id, project.id);
     assert!(associations[0].is_default);
@@ -627,11 +627,9 @@ async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_
         2,
         "reopening must re-enforce that its existing default room is closed"
     );
+    let expected_name = default_project_room_name(&project.name, &project.id);
     for call in create_calls {
-        assert_eq!(
-            call["args"]["name"],
-            format!("hed-169-project-{}-all", project.id)
-        );
+        assert_eq!(call["args"]["name"], expected_name);
         assert_eq!(call["args"]["open"], false, "the default room must be closed");
     }
 
@@ -690,8 +688,8 @@ async fn regression_pr_83_same_slug_projects_get_distinct_default_rooms() {
         .map(|call| call["args"]["name"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(rooms.len(), 2, "slug collisions must not share a default room");
-    assert!(rooms.contains(&format!("foo-bar-{}-all", project_a.id)));
-    assert!(rooms.contains(&format!("foo-bar-{}-all", project_b.id)));
+    assert!(rooms.contains(&default_project_room_name(&project_a.name, &project_a.id)));
+    assert!(rooms.contains(&default_project_room_name(&project_b.name, &project_b.id)));
 
     let associations = {
         let conn = ctx.db().conn.lock().unwrap();
@@ -699,6 +697,51 @@ async fn regression_pr_83_same_slug_projects_get_distinct_default_rooms() {
     };
     assert_eq!(associations.len(), 2);
     assert!(associations.iter().all(|association| association.is_default));
+}
+
+/// Mirror of the broker's room-name grammar (`ROOM_RE` in heddle `src/comms/address.ts`):
+/// `^#[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`. Hand-rolled so the guard carries no regex dependency and
+/// states exactly what makes a name broker-acceptable.
+fn is_broker_room_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('#') else {
+        return false;
+    };
+    let len = rest.chars().count();
+    if len == 0 || len > 64 {
+        return false;
+    }
+    let first_is_alnum = rest.chars().next().is_some_and(|c| c.is_ascii_alphanumeric());
+    first_is_alnum && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The default room name MUST conform to the broker grammar for every project, however the user
+/// named it. The earlier `<slug>-<uuid>-all` form had no leading `#` and no length bound, so the
+/// broker refused every `create_room` — a defect the name-accepting test mock could not surface, so
+/// this pins the generated name against the grammar directly.
+#[test]
+fn regression_pr_83_default_room_name_conforms_to_broker_grammar() {
+    let id = "550e8400-e29b-41d4-a716-446655440000";
+    let names = [
+        "myproject",
+        "Spinventory Rebuild Official Dashboard Monorepo Root Working Directory", // > 64 chars
+        "!!!  @@@  ///  weird...name",                                            // symbol-heavy
+        "项目名称",                                                              // non-ASCII slug
+        "",                                                                       // empty name
+        "-leading-and-trailing-",                                                 // hyphen edges
+    ];
+    for name in names {
+        let room = default_project_room_name(name, id);
+        assert!(
+            is_broker_room_name(&room),
+            "room name {room:?} for project {name:?} violates the broker grammar",
+        );
+    }
+    // Empty name AND empty id must still yield a conforming, non-degenerate name.
+    assert!(is_broker_room_name(&default_project_room_name("", "")));
+    // Same slug, different project id → distinct rooms (the collision fix relies on the id8 tail).
+    let a = default_project_room_name("dup", "aaaaaaaa-1111-2222-3333-444444444444");
+    let b = default_project_room_name("dup", "bbbbbbbb-1111-2222-3333-444444444444");
+    assert_ne!(a, b, "same-slug projects with distinct ids must get distinct rooms");
 }
 
 #[cfg(unix)]
