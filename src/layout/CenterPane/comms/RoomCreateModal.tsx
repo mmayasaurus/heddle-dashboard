@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import type { FleetAgent } from "./useCommsPoll";
-import { isOperatorFailure, operatorErrorResult, parseOperatorResult, type CommsOperatorResult } from "./useOperatorStatus";
+import { operatorErrorResult, roomMgmtRefusal, type CommsOperatorResult } from "./useOperatorStatus";
 
 function useEscapeCloses(onClose: () => void) {
   useEffect(() => {
@@ -38,7 +38,7 @@ function useCreateRoomSubmit(onClose: () => void, onCreated?: (room: string) => 
   const addMember = async (room: string, address: string): Promise<boolean> => {
     try {
       const raw = await invoke<unknown>("heddle_comms_add_member", { room, address });
-      return !isOperatorFailure(parseOperatorResult(raw));
+      return roomMgmtRefusal(raw) === null;
     } catch {
       return false;
     }
@@ -51,9 +51,9 @@ function useCreateRoomSubmit(onClose: () => void, onCreated?: (room: string) => 
     const room = `#${name.replace(/^#+/, "")}`;
     try {
       const raw = await invoke<unknown>("heddle_comms_create_room", { name: room, topic: topic || null, open });
-      const result = parseOperatorResult(raw);
-      if (isOperatorFailure(result)) {
-        setState({ submitting: false, error: result, failedMembers: [] });
+      const refusal = roomMgmtRefusal(raw);
+      if (refusal) {
+        setState({ submitting: false, error: refusal, failedMembers: [] });
         return;
       }
       await onCreated?.(room);

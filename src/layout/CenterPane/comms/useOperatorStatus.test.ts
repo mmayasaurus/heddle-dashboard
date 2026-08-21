@@ -11,6 +11,7 @@ import {
   isOperatorFailure,
   operatorHint,
   parseOperatorResult,
+  roomMgmtRefusal,
   useOperatorStatus,
   type OperatorStatusReason,
 } from "./useOperatorStatus";
@@ -205,15 +206,24 @@ describe("write-path result shape (HED-196)", () => {
     expect(parseOperatorResult({ outcome: "logged", code: 5 })).toEqual({ outcome: "error", code: null, reason: null });
   });
 
-  it("documents the SEPARATE room-management shape gap: success payloads carry no `outcome`", () => {
+  it("keeps post-message parsing separate from room-management success payloads", () => {
     // HED-196 discovery (scratchpad repro4b): create_room/join_room/leave_room SUCCESS return
     // {room}/{member}/{removed} with NO `outcome` field — a DIFFERENT shape the shared
     // CommsOperatorResult model does not cover, so isOperatorFailure would flag a *successful* room
-    // creation/member change as a failure. The missing-key fix here does NOT address that; wiring the
-    // room-management UIs is tracked separately (folds into the HED-166 room-management surface). This
-    // test pins the current behavior so that follow-up is deliberate, not an accidental regression.
+    // creation/member change as a failure. roomMgmtRefusal now handles this separate contract while
+    // preserving the post_message parser's no-outcome error sentinel by design.
     expect(isCommsOperatorResult({ room: { name: "#fleet" } })).toBe(false);
     expect(isCommsOperatorResult({ member: { room: "#fleet", address: "T" } })).toBe(false);
     expect(isCommsOperatorResult({ removed: true })).toBe(false);
+    expect(roomMgmtRefusal({ room: { name: "#fleet" } })).toBeNull();
+    expect(roomMgmtRefusal({ member: { room: "#fleet", address: "T" } })).toBeNull();
+    expect(roomMgmtRefusal({ removed: true })).toBeNull();
+  });
+
+  it("classifies only room-management refusals and malformed payloads as failures", () => {
+    const refused = { outcome: "refused", code: "denied", reason: "no permission" };
+    expect(roomMgmtRefusal(refused)).toEqual(refused);
+    expect(roomMgmtRefusal({ outcome: "ok" })).toEqual({ outcome: "error", code: null, reason: null });
+    expect(roomMgmtRefusal({})).toEqual({ outcome: "error", code: null, reason: null });
   });
 });

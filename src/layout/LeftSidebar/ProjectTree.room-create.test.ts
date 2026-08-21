@@ -19,6 +19,14 @@ describe("regression PR#285 — project room association", () => {
     expect(mockAssociate).not.toHaveBeenCalled();
   });
 
+  it("preserves a default association when its stored room name lacks #", async () => {
+    mockList.mockResolvedValue([{ roomName: "heddle-dashboard", projectId: "p1", isDefault: true }]);
+
+    await associateThisRoom("#heddle-dashboard", "p1");
+
+    expect(mockAssociate).not.toHaveBeenCalled();
+  });
+
   it("associates an unassociated room without making it the default", async () => {
     mockList.mockResolvedValue([]);
 

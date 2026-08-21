@@ -3,6 +3,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Icons from "../../components/Icons";
 import { StatusIndicator } from "../../components/StatusIndicator";
 import { useT } from "../../i18n";
@@ -22,6 +23,7 @@ import { MARK_LABEL_KEYS, type NodeMark, normalizeMark } from "../../marks";
 import { SessionKindIcon } from "../sessionViewers/sessionMeta";
 import { DEFAULT_BINDINGS, formatCombo } from "../../hooks/shortcutRegistry";
 import { useGitBranch } from "../../hooks/useGitBranch";
+import { useSuspendNativeViews } from "../../hooks/nativeViewSuspend";
 import { associateRoomToProject, listRoomAssociations } from "../../ipc/commands";
 import { invoke, isTauri } from "../../ipc/transport";
 import { RoomCreateModal } from "../CenterPane/comms/RoomCreateModal";
@@ -31,9 +33,44 @@ import { FLEET_PROJECT_ID, isDerivedChatSessionId } from "./chatSessionDerivatio
 
 /** Associates a newly-created room unless it already belongs to this project, preserving its default flag. */
 export async function associateThisRoom(room: string, projectId: string): Promise<void> {
+  const canonicalRoom = `#${room.replace(/^#+/, "")}`;
+  const normalizedRoom = canonicalRoom.slice(1);
   const associations = await listRoomAssociations();
-  if (associations.some((association) => association.roomName === room && association.projectId === projectId)) return;
-  await associateRoomToProject(room, projectId, false);
+  if (associations.some((association) => association.roomName.replace(/^#/, "") === normalizedRoom && association.projectId === projectId)) return;
+  await associateRoomToProject(canonicalRoom, projectId, false);
+}
+
+function RoomCreateModalHost({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const t = useT();
+  const [roster, setRoster] = useState<FleetAgent[]>([]);
+  const operatorStatus = useOperatorStatus(true);
+  useSuspendNativeViews();
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<FleetAgent[]>("heddle_fleet_roster").then(
+      (nextRoster) => {
+        if (!cancelled) setRoster(nextRoster);
+      },
+      () => {
+        if (!cancelled) setRoster([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return createPortal(
+    <RoomCreateModal
+      roster={roster}
+      onClose={onClose}
+      onCreated={(room) => associateThisRoom(room, projectId)}
+      submitDisabled={!operatorStatus.available}
+      submitHint={operatorHint(t, operatorStatus.reason)}
+    />,
+    document.body,
+  );
 }
 
 /** WKWebView inserts control characters such as U+001C through beforeinput when Left/Right is pressed past an
@@ -306,24 +343,6 @@ export function ProjectTree(h: TreeHandlers) {
     isPrimary,
   } = h;
   const [openForProjectId, setOpenForProjectId] = useState<string | null>(null);
-  const [roomRoster, setRoomRoster] = useState<FleetAgent[]>([]);
-  const roomOperatorStatus = useOperatorStatus(openForProjectId !== null);
-
-  useEffect(() => {
-    if (!openForProjectId || !isTauri) return;
-    let cancelled = false;
-    void invoke<FleetAgent[]>("heddle_fleet_roster").then(
-      (roster) => {
-        if (!cancelled) setRoomRoster(roster);
-      },
-      () => {
-        if (!cancelled) setRoomRoster([]);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [openForProjectId]);
 
   const storedProjects = useTermStore((s) => s.projects);
   const treeLoaded = useTermStore((s) => s.treeLoaded);
@@ -1459,15 +1478,7 @@ export function ProjectTree(h: TreeHandlers) {
       )}
     </div>
     {openForProjectId && isTauri && (
-      <RoomCreateModal
-        roster={roomRoster}
-        onClose={() => {
-          setOpenForProjectId(null);
-        }}
-        onCreated={(room) => associateThisRoom(room, openForProjectId)}
-        submitDisabled={!roomOperatorStatus.available}
-        submitHint={operatorHint(t, roomOperatorStatus.reason)}
-      />
+      <RoomCreateModalHost projectId={openForProjectId} onClose={() => setOpenForProjectId(null)} />
     )}
     </>
   );

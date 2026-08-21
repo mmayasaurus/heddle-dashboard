@@ -17,6 +17,8 @@ function mkAgent(name: string): FleetAgent {
 }
 
 const ROSTER: FleetAgent[] = [mkAgent("R"), mkAgent("T"), mkAgent("V")];
+const ROOM_SUCCESS = { room: { name: "#heddle-build" } };
+const MEMBER_SUCCESS = { member: { room: "#heddle-build", address: "R" } };
 
 function nameInput(): HTMLInputElement {
   return screen.getByTestId("comms-modal-name") as HTMLInputElement;
@@ -50,7 +52,7 @@ describe("RoomCreateModal — validation", () => {
 
 describe("RoomCreateModal — create_room defaults and naming", () => {
   it("sends open:false by default, without picking the toggle", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "drawer-observability" } });
     fireEvent.click(submitBtn());
@@ -61,7 +63,7 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
   });
 
   it("sends open:true only after the toggle is explicitly checked", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "town-hall" } });
     fireEvent.click(screen.getByTestId("comms-modal-open-toggle").querySelector("input")!);
@@ -71,7 +73,7 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
   });
 
   it("B3: a name typed without a leading # gets exactly one prefixed", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockResolvedValue(ROOM_SUCCESS);
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "ops" } });
     fireEvent.click(submitBtn());
@@ -80,7 +82,7 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
   });
 
   it("B3: a name typed WITH a leading # is not double-hashed (the form already shows one)", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockResolvedValue(ROOM_SUCCESS);
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "#ops" } });
     fireEvent.click(submitBtn());
@@ -90,7 +92,7 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
   });
 
   it("prefixes the name with # and forwards a non-empty topic", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockResolvedValue(ROOM_SUCCESS);
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
     fireEvent.change(screen.getByTestId("comms-modal-topic"), { target: { value: "build status" } });
@@ -102,7 +104,7 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
 
 describe("RoomCreateModal — member picking", () => {
   it("awaits onCreated before adding picked members or closing", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     let releaseCreated: (() => void) | undefined;
     const onCreated = vi.fn(() => new Promise<void>((resolve) => {
       releaseCreated = resolve;
@@ -123,7 +125,7 @@ describe("RoomCreateModal — member picking", () => {
   });
 
   it("keeps the modal open and surfaces an onCreated rejection without adding members", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     const onClose = vi.fn();
     render(<RoomCreateModal roster={ROSTER} onClose={onClose} onCreated={() => Promise.reject(new Error("association failed"))} />);
     fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
@@ -136,7 +138,7 @@ describe("RoomCreateModal — member picking", () => {
   });
 
   it("posts heddle_comms_add_member for each picked roster member, after create_room", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
     fireEvent.click(screen.getByTestId("comms-modal-member-R"));
@@ -149,7 +151,7 @@ describe("RoomCreateModal — member picking", () => {
   });
 
   it("toggling a chip twice deselects it — no add_member call for it", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockResolvedValue(ROOM_SUCCESS);
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "room" } });
     fireEvent.click(screen.getByTestId("comms-modal-member-R"));
@@ -161,7 +163,7 @@ describe("RoomCreateModal — member picking", () => {
   });
 
   it("with no members picked, only create_room is called", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockResolvedValue(ROOM_SUCCESS);
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
     fireEvent.change(nameInput(), { target: { value: "solo" } });
     fireEvent.click(submitBtn());
@@ -173,12 +175,12 @@ describe("RoomCreateModal — member picking", () => {
 describe("RoomCreateModal — partial failure and closing", () => {
   it("a failed member add surfaces its address, leaves the modal open, and does not call onClose", async () => {
     mockInvoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === "heddle_comms_create_room") return Promise.resolve({ outcome: "ok", code: null, reason: null });
+      if (cmd === "heddle_comms_create_room") return Promise.resolve(ROOM_SUCCESS);
       if (cmd === "heddle_comms_add_member") {
         const address = args?.address as string;
         return address === "T"
           ? Promise.resolve({ outcome: "refused", code: "not-found", reason: "no such address" })
-          : Promise.resolve({ outcome: "ok", code: null, reason: null });
+          : Promise.resolve(MEMBER_SUCCESS);
       }
       return Promise.reject(new Error("unexpected cmd " + cmd));
     });
@@ -213,7 +215,7 @@ describe("RoomCreateModal — partial failure and closing", () => {
   });
 
   it("a fully clean create (room + every picked member) closes the modal", async () => {
-    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
     const onClose = vi.fn();
     render(<RoomCreateModal roster={ROSTER} onClose={onClose} />);
     fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
