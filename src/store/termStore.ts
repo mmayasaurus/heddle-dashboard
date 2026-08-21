@@ -645,6 +645,8 @@ export interface TermStore {
   projects: Project[];
   groups: Group[];
   sessions: Session[];
+  /** Transient room-derived chat nodes. These are mixed into `sessions` for existing tree/tab rendering, but never persisted. */
+  setChatSessions: (sessions: Session[]) => void;
   /** Archived sessions loaded on demand for the archive browser. */
   archivedSessions: Session[];
   /** False until the first `loadTree` resolves, so the sidebar can avoid flashing the empty state at startup. */
@@ -1374,6 +1376,11 @@ export const useTermStore = create<TermStore>((set, get) => ({
   projects: [],
   groups: [],
   sessions: [],
+  setChatSessions: (chatSessions) => {
+    set((state) => ({
+      sessions: [...state.sessions.filter((session) => session.kind !== "chat"), ...chatSessions],
+    }));
+  },
   archivedSessions: [],
   treeLoaded: false,
   runtimes: {},
@@ -1440,9 +1447,15 @@ export const useTermStore = create<TermStore>((set, get) => ({
   loadTree: async () => {
     const t = await tree.listTree();
     set((state) => {
+      const sessions = [
+        ...t.sessions.filter((session) => session.kind !== "chat"),
+        ...state.sessions.filter((session) => session.kind === "chat"),
+      ];
       const runtimes = { ...state.runtimes };
-      for (const s of t.sessions) {
-        if (!runtimes[s.id]) runtimes[s.id] = { status: "idle" };
+      for (const s of sessions) {
+        // Chat sessions are runtime-free (kind:'chat', no PTY) — never assign them a runtime entry,
+        // matching the SessionKind contract (#67/#71); derived chat nodes must stay runtime-less.
+        if (s.kind !== "chat" && !runtimes[s.id]) runtimes[s.id] = { status: "idle" };
       }
       let layoutPatch = {};
       if (!layoutRestored) {
@@ -1464,7 +1477,7 @@ export const useTermStore = create<TermStore>((set, get) => ({
             }
             // Prune invalid leaves and repair active state through reconciliation.
             const reconciled = reconcileTabs({
-              sessions: t.sessions,
+              sessions,
               ephemeralSessions: restoredEph,
               openTabs: saved.openTabs,
               paneTrees: saved.paneTrees,
@@ -1485,7 +1498,7 @@ export const useTermStore = create<TermStore>((set, get) => ({
       } else {
         // Later tree refreshes reconcile current memory state only, preserving visible and background tabs.
         layoutPatch = reconcileTabs({
-          sessions: t.sessions,
+          sessions,
           ephemeralSessions: state.ephemeralSessions,
           openTabs: state.openTabs,
           paneTrees: state.paneTrees,
@@ -1504,7 +1517,7 @@ export const useTermStore = create<TermStore>((set, get) => ({
       return {
         projects: t.projects,
         groups: t.groups,
-        sessions: t.sessions,
+        sessions,
         treeLoaded: true,
         runtimes,
         sidebarTreeViews,

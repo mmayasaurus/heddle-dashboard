@@ -25,6 +25,7 @@ import {
   type TreeHandlers,
   type TreeNodeRef,
 } from "./ProjectTree";
+import { useDerivedChatSessions } from "./useDerivedChatSessions";
 import {
   collectSidebarViewIds,
   computeSidebarDividers,
@@ -363,6 +364,7 @@ function SidebarTreeDivider({
 
 export function LeftSidebar() {
   const t = useT();
+  useDerivedChatSessions();
   const width = useTermStore((s) => s.leftWidth);
   const importProject = useTermStore((s) => s.importProject);
   const setCloneModalOpen = useTermStore((s) => s.setCloneModalOpen);

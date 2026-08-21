@@ -22,6 +22,7 @@ import { MARK_LABEL_KEYS, type NodeMark, normalizeMark } from "../../marks";
 import { SessionKindIcon } from "../sessionViewers/sessionMeta";
 import { DEFAULT_BINDINGS, formatCombo } from "../../hooks/shortcutRegistry";
 import { useGitBranch } from "../../hooks/useGitBranch";
+import { FLEET_PROJECT_ID } from "./chatSessionDerivation";
 
 /** WKWebView inserts control characters such as U+001C through beforeinput when Left/Right is pressed past an
  *  input boundary. They render as boxes and are unrelated to IME; Chromium is unaffected. Strip C0/C1 and DEL
@@ -194,7 +195,7 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
     projectId: s.projectId,
     groupId: s.groupId ?? null,
   };
-  const dndProps = {
+  const dndProps = isChat ? {} : {
     draggable: p.draggable,
     onDragStart: (e: React.DragEvent) =>
       p.onDragStartRow({ kind: "session", id: s.id, projectId: s.projectId }, e),
@@ -256,18 +257,20 @@ const SessionRow = memo(function SessionRow(p: SessionRowProps) {
       )}
       {/* Browser page nodes have no PTY or agent, so a status dot would be meaningless and is omitted. */}
       {!isBrowser && <StatusIndicator status={status} unread={unread} />}
-      <span className="meta">
-        <span
-          className="add"
-          title={t("tree.newChildSession")}
-          onClick={(e) => {
-            e.stopPropagation();
-            p.onAddSession(ref, e);
-          }}
-        >
-          <Icons.plus size={12} />
+      {!isChat && (
+        <span className="meta">
+          <span
+            className="add"
+            title={t("tree.newChildSession")}
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onAddSession(ref, e);
+            }}
+          >
+            <Icons.plus size={12} />
+          </span>
         </span>
-      </span>
+      )}
     </div>
   );
 });
@@ -289,7 +292,7 @@ export function ProjectTree(h: TreeHandlers) {
     isPrimary,
   } = h;
 
-  const projects = useTermStore((s) => s.projects);
+  const storedProjects = useTermStore((s) => s.projects);
   const treeLoaded = useTermStore((s) => s.treeLoaded);
   // Delay the loading row so a fast load stays blank instead of flashing a spinner for one frame.
   const [showLoadingHint, setShowLoadingHint] = useState(false);
@@ -306,6 +309,20 @@ export function ProjectTree(h: TreeHandlers) {
     useTermStore((s) => s.shortcutOverrides.openProject) || DEFAULT_BINDINGS.openProject;
   const groups = useTermStore((s) => s.groups);
   const sessions = useTermStore((s) => s.sessions);
+  const projects = useMemo(() => {
+    if (!sessions.some((session) => session.projectId === FLEET_PROJECT_ID)) return storedProjects;
+    return [
+      ...storedProjects,
+      {
+        id: FLEET_PROJECT_ID,
+        name: "Fleet",
+        rootPath: "",
+        sortOrder: Number.MAX_SAFE_INTEGER,
+        collapsed: false,
+        createdAt: 0,
+      },
+    ];
+  }, [storedProjects, sessions]);
   const ephemeralSessions = useTermStore((s) => s.ephemeralSessions);
   const toggleCollapsed = useTermStore((s) => s.toggleCollapsed);
   const openSession = useTermStore((s) => s.openSession);
@@ -1279,7 +1296,7 @@ export function ProjectTree(h: TreeHandlers) {
             context={contextId === s.id}
             renaming={renaming}
             renameVal={renaming ? renameVal : undefined}
-            draggable={!filtering && !renaming}
+            draggable={!filtering && !renaming && s.kind !== "chat"}
             dragHighlight={dragStyle(s.id)}
             onRowClick={sOnClick}
             onRowContext={sOnContext}
