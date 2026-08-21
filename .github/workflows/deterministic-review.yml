@@ -111,6 +111,10 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA_FALLBACK: ${{ github.event.pull_request.base.sha }}
+          # Pass the workflow-evaluated runner.temp so the script writes its scan outputs to the
+          # exact path the Upload step reads (both now reference ${{ runner.temp }}), with no room
+          # for a $RUNNER_TEMP-vs-runner.temp divergence in the container (qodo, #84).
+          SEMGREP_OUTPUT_DIR: ${{ runner.temp }}
         run: sh .github/scripts/semgrep-scan.sh
 
       - name: Upload SARIF to code scanning

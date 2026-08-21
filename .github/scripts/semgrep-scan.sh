@@ -40,8 +40,11 @@ fi
 
 # Keep scanner artifacts out of the PR-controlled workspace. Remove a planted
 # symlink rather than following it when semgrep creates either output file.
-SEMGREP_JSON="${RUNNER_TEMP:-/tmp}/semgrep.json"
-SEMGREP_SARIF="${RUNNER_TEMP:-/tmp}/semgrep.sarif"
+# Scan outputs go to the workflow-passed runner.temp (SEMGREP_OUTPUT_DIR) so they land at the exact
+# path the workflow's Upload SARIF step reads; fall back to RUNNER_TEMP for direct/test invocation.
+SEMGREP_OUT_DIR="${SEMGREP_OUTPUT_DIR:-${RUNNER_TEMP:-/tmp}}"
+SEMGREP_JSON="$SEMGREP_OUT_DIR/semgrep.json"
+SEMGREP_SARIF="$SEMGREP_OUT_DIR/semgrep.sarif"
 for output in "$SEMGREP_JSON" "$SEMGREP_SARIF"; do
   if [ -L "$output" ]; then
     rm -f -- "$output" \
