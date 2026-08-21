@@ -56,7 +56,7 @@ jobs:
       - name: Guard — non-empty scan surface
         run: |
           set -eu
-          N=$(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
+          N=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
           if [ "$N" -eq 0 ]; then
             echo "::error::actions-hygiene: 0 workflow files under .github/workflows — the scan surface is empty (a green scan of nothing is not a pass). NOT a clean pass"
             exit 1
@@ -100,7 +100,7 @@ jobs:
       - name: Guard — non-empty scan surface
         run: |
           set -eu
-          N=$(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
+          N=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
           if [ "$N" -eq 0 ]; then
             echo "::error::actions-hygiene: 0 workflow files under .github/workflows — the scan surface is empty (a green scan of nothing is not a pass). NOT a clean pass"
             exit 1
