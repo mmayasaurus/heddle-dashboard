@@ -7,7 +7,7 @@
 //! so the operator can retry without retyping. The @all toggle re-ADDRESSES the send to the
 //! broker's broadcast address; it never decorates the body.
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import type { CommsNeedsHumanRow } from "./useCommsPoll";
@@ -44,15 +44,23 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
   const [sending, setSending] = useState(false);
   const [refusal, setRefusal] = useState<CommsOperatorResult | null>(null);
   const [deliveryNote, setDeliveryNote] = useState<string | null>(null);
+  const genRef = useRef(0);
+
+  useEffect(() => {
+    genRef.current++;
+    setSending(false);
+  }, [target]);
 
   const send = async (body: string) => {
     if (target == null) return;
+    const gen = ++genRef.current;
     setRefusal(null);
     setDeliveryNote(null);
     setSending(true);
     try {
       const raw = await invoke<unknown>("heddle_comms_send", { target, body, replyTo: replyToId ?? null });
       const result = parseOperatorResult(raw);
+      if (genRef.current !== gen) return;
       if (isOperatorFailure(result)) {
         setRefusal(result);
         return;
@@ -60,9 +68,9 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
       setDeliveryNote(deliveryNoteText(t, result, target));
       onDone();
     } catch (e) {
-      setRefusal(operatorErrorResult(e));
+      if (genRef.current === gen) setRefusal(operatorErrorResult(e));
     } finally {
-      setSending(false);
+      if (genRef.current === gen) setSending(false);
     }
   };
 
