@@ -252,6 +252,26 @@ function pickClaudeChipAccount(
   return best;
 }
 
+/** Codex emits a per-model bucket (e.g. "GPT-5.3-Codex-Spark") at 0% with no $used/$limit for
+ * every model you haven't touched; those empty buckets are noise in the caps view. Drop them —
+ * but ONLY for codex: other providers legitimately emit 0% percent-only windows that must render
+ * (Gemini's 3p-weekly / 3p-5h third-party pools, Cursor's included-* pools). Scoped by provider
+ * because the bucket ids are model-name slugs, indistinguishable from those pools by id/label. */
+function suppressCodexEmptyBuckets(limits: ProviderLimit[]): ProviderLimit[] {
+  const isEmptyBucket = (w: LimitWindow) =>
+    w.usedPercentage === 0 && w.usedAmount == null && w.limitAmount == null;
+  const dropEmpty = (ws: LimitWindow[] | undefined) =>
+    ws == null ? ws : ws.filter((w) => !isEmptyBucket(w));
+  return limits.map((p) => {
+    if (p.provider !== "codex") return p;
+    return {
+      ...p,
+      windows: dropEmpty(p.windows),
+      accounts: p.accounts?.map((a) => ({ ...a, windows: dropEmpty(a.windows) })),
+    };
+  });
+}
+
 export function FleetDrawer() {
   const t = useT();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
@@ -280,7 +300,7 @@ export function FleetDrawer() {
         invoke<Dispatch[]>("heddle_recent", { limit: 30 }),
         invoke<ProviderUsage[]>("heddle_provider_usage"),
       ]);
-      setLimits(l);
+      setLimits(suppressCodexEmptyBuckets(l));
       setRoster(ro);
       setRecent(r);
       setUsage(u);
@@ -641,13 +661,7 @@ function isNullWindow(win: LimitWindow | null | undefined): boolean {
 /** A window carries real data worth rendering — a bare id/label with nothing else (e.g. a named
  * window emitted for a failed/disabled account fetch) does not. */
 function isUsableWindow(win: LimitWindow | null | undefined): boolean {
-  if (win == null) return false;
-  // A 0%-used named window with no dollar amounts is empty noise — e.g. codex's per-model
-  // buckets (a "GPT-5.3-Codex-Spark" pool at 0% with no $used/$limit). Suppress it, but KEEP
-  // amount-bearing 0% windows (cursor on-demand $0/$100 carries usedAmount 0, not null) and
-  // null-pct windows (the indeterminate dash from HED-209 — usedPercentage null, not 0).
-  if (win.usedPercentage === 0 && win.usedAmount == null && win.limitAmount == null) return false;
-  return win.usedPercentage != null || win.resetsAt != null;
+  return win != null && (win.usedPercentage != null || win.resetsAt != null);
 }
 
 /** True when neither rolling window carries real data but at least one named window does — the

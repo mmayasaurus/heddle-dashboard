@@ -572,6 +572,34 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
   });
 });
 
+describe("FleetDrawer codex empty-bucket suppression is provider-scoped (HED-215)", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("keeps a non-codex provider's 0% percent-only pools (Gemini 3p windows must still render)", async () => {
+    const gemini = {
+      provider: "gemini",
+      model: null,
+      capturedAt: now,
+      fiveHour: { usedPercentage: 5, resetsAt: now + 3600 },
+      sevenDay: { usedPercentage: 10, resetsAt: now + 86_400 },
+      windows: [
+        { id: "3p-weekly", label: "Claude and GPT models 7d", usedPercentage: 0, resetsAt: now + 86_400, usedAmount: null, limitAmount: null, unit: null },
+        { id: "3p-5h", label: "Claude and GPT models 5h", usedPercentage: 0, resetsAt: now + 3600, usedAmount: null, limitAmount: null, unit: null },
+      ],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([gemini]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("3P 7d")).toBeTruthy());
+    expect(screen.getByText("3P 5h")).toBeTruthy();
+  });
+});
+
 describe("FleetDrawer generalized account cycler (claude regression)", () => {
   beforeEach(() => {
     localStorage.setItem("heddle-fleet-open", "1");
