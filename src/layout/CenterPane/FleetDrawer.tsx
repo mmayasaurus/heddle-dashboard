@@ -252,6 +252,26 @@ function pickClaudeChipAccount(
   return best;
 }
 
+/** Codex emits a per-model bucket (e.g. "GPT-5.3-Codex-Spark") at 0% with no $used/$limit for
+ * every model you haven't touched; those empty buckets are noise in the caps view. Drop them —
+ * but ONLY for codex: other providers legitimately emit 0% percent-only windows that must render
+ * (Gemini's 3p-weekly / 3p-5h third-party pools, Cursor's included-* pools). Scoped by provider
+ * because the bucket ids are model-name slugs, indistinguishable from those pools by id/label. */
+function suppressCodexEmptyBuckets(limits: ProviderLimit[]): ProviderLimit[] {
+  const isEmptyBucket = (w: LimitWindow) =>
+    w.usedPercentage === 0 && w.usedAmount == null && w.limitAmount == null;
+  const dropEmpty = (ws: LimitWindow[] | undefined) =>
+    ws == null ? ws : ws.filter((w) => !isEmptyBucket(w));
+  return limits.map((p) => {
+    if (p.provider !== "codex") return p;
+    return {
+      ...p,
+      windows: dropEmpty(p.windows),
+      accounts: p.accounts?.map((a) => ({ ...a, windows: dropEmpty(a.windows) })),
+    };
+  });
+}
+
 export function FleetDrawer() {
   const t = useT();
   const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
@@ -280,7 +300,7 @@ export function FleetDrawer() {
         invoke<Dispatch[]>("heddle_recent", { limit: 30 }),
         invoke<ProviderUsage[]>("heddle_provider_usage"),
       ]);
-      setLimits(l);
+      setLimits(suppressCodexEmptyBuckets(l));
       setRoster(ro);
       setRecent(r);
       setUsage(u);

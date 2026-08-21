@@ -507,6 +507,52 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
     expect(document.querySelectorAll(".fleet-provcap-account-detail .fleet-capline").length).toBe(3);
   });
 
+  it("suppresses an empty 0%-used codex per-model bucket while keeping the account's 5h/7d rows", async () => {
+    const emptyBucketAccount = {
+      ...codexAccounts[0],
+      id: "codex-empty",
+      fiveHour: { usedPercentage: 33, resetsAt: now + 3600 },
+      sevenDay: { usedPercentage: 12, resetsAt: now + 86_400 },
+      windows: [{ id: "gpt-empty", label: "GPT-Empty", usedPercentage: 0, resetsAt: now + 3600 }],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...codex,
+        accounts: [emptyBucketAccount, codexAccounts[1]],
+        activeAccount: "codex-empty",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-empty")).toBeTruthy());
+    expect(screen.getByText("5h")).toBeTruthy();
+    expect(screen.getByText("7d")).toBeTruthy();
+    expect(screen.queryByTitle("GPT-Empty")).toBeNull();
+  });
+
+  it("keeps a used codex per-model bucket", async () => {
+    const usedBucketAccount = {
+      ...codexAccounts[0],
+      id: "codex-used",
+      fiveHour: { usedPercentage: 33, resetsAt: now + 3600 },
+      sevenDay: { usedPercentage: 12, resetsAt: now + 86_400 },
+      windows: [{ id: "gpt-used", label: "GPT-Used", usedPercentage: 61, resetsAt: now + 3600 }],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...codex,
+        accounts: [usedBucketAccount, codexAccounts[1]],
+        activeAccount: "codex-used",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("codex-used")).toBeTruthy());
+    expect(screen.getByTitle("GPT-Used")).toBeTruthy();
+  });
+
   it("defaults to the first account with usable data, skipping a no-data account, when activeAccount doesn't match", async () => {
     const noData = { ...codexAccounts[0], id: "codex-acct-x", windows: [] };
     const withData = { ...codexAccounts[1], id: "codex-acct-y" };
@@ -523,6 +569,34 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
     await waitFor(() => expect(screen.getByText("codex-acct-y")).toBeTruthy());
     expect(screen.getByText("2/2")).toBeTruthy();
     expect(screen.queryByText("codex-acct-x")).toBeNull();
+  });
+});
+
+describe("FleetDrawer codex empty-bucket suppression is provider-scoped (HED-215)", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("keeps a non-codex provider's 0% percent-only pools (Gemini 3p windows must still render)", async () => {
+    const gemini = {
+      provider: "gemini",
+      model: null,
+      capturedAt: now,
+      fiveHour: { usedPercentage: 5, resetsAt: now + 3600 },
+      sevenDay: { usedPercentage: 10, resetsAt: now + 86_400 },
+      windows: [
+        { id: "3p-weekly", label: "Claude and GPT models 7d", usedPercentage: 0, resetsAt: now + 86_400, usedAmount: null, limitAmount: null, unit: null },
+        { id: "3p-5h", label: "Claude and GPT models 5h", usedPercentage: 0, resetsAt: now + 3600, usedAmount: null, limitAmount: null, unit: null },
+      ],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([gemini]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("3P 7d")).toBeTruthy());
+    expect(screen.getByText("3P 5h")).toBeTruthy();
   });
 });
 
