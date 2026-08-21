@@ -849,7 +849,19 @@ function AccountCycler({
       <LiveClock render={(now) => {
         const capturedAt = selectedAccount.capturedAt ?? (p.activeAccount === selectedAccount.id ? p.capturedAt : null);
         const capturedMinutes = capturedMinutesAgo(capturedAt, now);
-        const stale = selectedAccount.stale === true;
+        const liveStale = isStaleByAge(capturedAt, p.staleAfterSecs, selectedAccount.stale, now);
+        const showMarker = liveStale && selectedAccount.loggedIn !== false;
+        // The "idle" framing (with the 5h/7d-only-while-driven hint) is Claude-specific: its 5h/7d
+        // come from the statusline tap, so an idle account's numbers simply aren't refreshing.
+        // Codex/Cursor set loggedIn=null and their `stale` is a real fetch/refresh FAILURE — keep the
+        // actionable "stale" warning for them, never a reassuring "idle".
+        // "idle" implies a logged-IN account whose numbers just aren't refreshing; require
+        // loggedIn === true so an unknown-login (null) account shows the honest "stale" marker
+        // instead of a reassuring "idle" that would contradict the "login unknown" state row (qodo).
+        const isIdle = showMarker && isClaude && selectedAccount.loggedIn === true;
+        const markerText = showMarker ? ` · ${t(isIdle ? "fleet.idle" : "fleet.stale")}` : "";
+        const markerTooltip = showMarker ? ` · ${t(isIdle ? "fleet.idleHint" : "fleet.stale")}` : "";
+        const capturedTooltip = capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${markerTooltip}` : "—";
         const keeperEstimate = [selectedAccount.fiveHour, selectedAccount.sevenDay].some(
           (window) => window?.usedPercentage == null && (window?.resetsAt ?? 0) > Math.floor(now / 1_000),
         );
@@ -861,10 +873,10 @@ function AccountCycler({
         ].filter((message): message is string => message != null);
         return (
           <>
-            <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
+            <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedTooltip}>
               {capturedMinutes != null ? (
-                <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}`}>
-                  {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                <span className={"fleet-provcap-captured" + (showMarker ? (isIdle ? " idle" : " stale") : "")}>
+                  {t("fleet.capturedMinutesAgo", capturedMinutes)}{markerText}
                 </span>
               ) : "—"}
             </div>

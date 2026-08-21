@@ -396,6 +396,7 @@ svg { display: block; }
 .fleet-provcap-captured-row { min-height: 14px; color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured { color: var(--text-faint); font-size: 9.5px; }
 .fleet-provcap-captured.stale { color: var(--yellow); }
+.fleet-provcap-captured.idle { color: var(--text-dim); }
 .fleet-capline { --fleet-capline-row-height: 14px; display: grid; grid-template-columns: 40px 140px 44px minmax(72px, 1fr); align-items: center; column-gap: 8px; min-height: var(--fleet-capline-row-height); line-height: var(--fleet-capline-row-height); }
 .fleet-capline-lbl { min-width: 0; overflow: hidden; color: var(--text-faint); font-size: 10px; text-transform: uppercase; text-overflow: ellipsis; }
 .fleet-seg { position: relative; display: inline-block; font-size: 11px; letter-spacing: -0.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }

@@ -24,6 +24,8 @@ const en = {
   "fleet.noActiveWindow": "no active window",
   "fleet.capturedMinutesAgo": (n: number) => `captured ${n}m ago`,
   "fleet.stale": "stale",
+  "fleet.idle": "idle",
+  "fleet.idleHint": "5h/7d refresh only while this account drives a session",
   "fleet.limitReached": "limit reached",
   "fleet.resetting": "resetting…",
   "fleet.currentProject": "Current project",

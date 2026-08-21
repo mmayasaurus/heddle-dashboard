@@ -207,6 +207,57 @@ describe("FleetDrawer Claude account cycler", () => {
     await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     expect(screen.getByText(/fleet\.capturedMinutesAgo:\d+/)).toBeTruthy();
   });
+
+  it("labels a stale logged-in account as idle instead of stale", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[2], capturedAt: now - 60 * 60, stale: true }],
+        activeAccount: "acct3",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText(/ · fleet\.idle$/)).toBeTruthy());
+    expect(screen.queryByText(/fleet\.stale/)).toBeNull();
+  });
+
+  it("keeps the actionable 'stale' label for a non-Claude (codex) stale account — never the Claude 'idle' framing", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        provider: "codex",
+        model: "codex · 2 acct",
+        capturedAt: now - 60 * 60,
+        activeAccount: "cdx1",
+        accounts: [
+          { id: "cdx1", label: "one@example.com", plan: null, capturedAt: now - 60 * 60, stale: true, loggedIn: null, limitReached: false, note: null, fiveHour: {}, sevenDay: {} },
+          { id: "cdx2", label: "two@example.com", plan: null, capturedAt: now, stale: false, loggedIn: null, limitReached: false, note: null, fiveHour: {}, sevenDay: {} },
+        ],
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText(/ · fleet\.stale$/)).toBeTruthy());
+    expect(screen.queryByText(/fleet\.idle/)).toBeNull();
+  });
+
+  it("shows 'stale' not 'idle' for a Claude account with unknown login (loggedIn null) — idle implies logged in", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[2], id: "acctU", loggedIn: null, capturedAt: now - 60 * 60, stale: true }],
+        activeAccount: "acctU",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acctU")).toBeTruthy());
+    expect(screen.getByText(/ · fleet\.stale$/)).toBeTruthy();
+    expect(screen.queryByText(/fleet\.idle/)).toBeNull();
+  });
 });
 
 // Real cursor payload shape (src-tauri/src/heddle_stats/cursor.rs + tests/fixtures/heddle_stats/
