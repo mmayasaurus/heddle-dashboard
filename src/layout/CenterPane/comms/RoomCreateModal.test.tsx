@@ -101,6 +101,40 @@ describe("RoomCreateModal — create_room defaults and naming", () => {
 });
 
 describe("RoomCreateModal — member picking", () => {
+  it("awaits onCreated before adding picked members or closing", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    let releaseCreated: (() => void) | undefined;
+    const onCreated = vi.fn(() => new Promise<void>((resolve) => {
+      releaseCreated = resolve;
+    }));
+    const onClose = vi.fn();
+    render(<RoomCreateModal roster={ROSTER} onClose={onClose} onCreated={onCreated} />);
+    fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
+    fireEvent.click(screen.getByTestId("comms-modal-member-R"));
+    fireEvent.click(submitBtn());
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("#heddle-build"));
+    expect(mockInvoke).not.toHaveBeenCalledWith("heddle_comms_add_member", expect.anything());
+    expect(onClose).not.toHaveBeenCalled();
+
+    releaseCreated?.();
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("heddle_comms_add_member", { room: "#heddle-build", address: "R" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the modal open and surfaces an onCreated rejection without adding members", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
+    const onClose = vi.fn();
+    render(<RoomCreateModal roster={ROSTER} onClose={onClose} onCreated={() => Promise.reject(new Error("association failed"))} />);
+    fireEvent.change(nameInput(), { target: { value: "heddle-build" } });
+    fireEvent.click(screen.getByTestId("comms-modal-member-R"));
+    fireEvent.click(submitBtn());
+
+    expect((await screen.findByTestId("comms-modal-create-error")).textContent).toContain("association failed");
+    expect(mockInvoke).not.toHaveBeenCalledWith("heddle_comms_add_member", expect.anything());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("posts heddle_comms_add_member for each picked roster member, after create_room", async () => {
     mockInvoke.mockResolvedValue({ outcome: "ok", code: null, reason: null });
     render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);

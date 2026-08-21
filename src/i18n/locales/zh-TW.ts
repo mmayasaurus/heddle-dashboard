@@ -329,6 +329,7 @@ const zhTW: typeof en = {
 
   // ── Sidebar (project tree, menus, and dialogs) ──
   "tree.newSession": "新增會話", // New Session
+  "tree.newRoom": "新增聊天室", // New room
   "tree.newTerminalSession": "新增終端機會話", // New Terminal Session
   "tree.newBrowserPage": "新增瀏覽器頁面", // New Browser Page
   "tree.newAgentSession": (agent) => `新增 ${agent} 會話`, // New {agent} Session

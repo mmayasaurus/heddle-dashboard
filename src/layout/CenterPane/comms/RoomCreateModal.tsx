@@ -32,7 +32,7 @@ interface SubmitState {
 
 /** Creates the room, then adds every picked member in turn, collecting failures without aborting
  *  the rest of the batch. Closes the modal only when nothing failed. */
-function useCreateRoomSubmit(onClose: () => void) {
+function useCreateRoomSubmit(onClose: () => void, onCreated?: (room: string) => void | Promise<void>) {
   const [state, setState] = useState<SubmitState>({ submitting: false, error: null, failedMembers: [] });
 
   const addMember = async (room: string, address: string): Promise<boolean> => {
@@ -56,6 +56,7 @@ function useCreateRoomSubmit(onClose: () => void) {
         setState({ submitting: false, error: result, failedMembers: [] });
         return;
       }
+      await onCreated?.(room);
     } catch (e) {
       setState({ submitting: false, error: operatorErrorResult(e), failedMembers: [] });
       return;
@@ -169,16 +170,21 @@ function RoomCreateFields({ name, setName, topic, setTopic, open, setOpen, nameE
 export interface RoomCreateModalProps {
   roster: FleetAgent[];
   onClose: () => void;
+  /** Runs after the broker has created the normalized room and before any member additions. */
+  onCreated?: (room: string) => void | Promise<void>;
+  /** Optional availability gate for a scoped entry point; legacy callers omit it. */
+  submitDisabled?: boolean;
+  submitHint?: string | null;
 }
 
-export function RoomCreateModal({ roster, onClose }: RoomCreateModalProps) {
+export function RoomCreateModal({ roster, onClose, onCreated, submitDisabled = false, submitHint = null }: RoomCreateModalProps) {
   const t = useT();
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [nameError, setNameError] = useState(false);
-  const { submitting, error, failedMembers, submit } = useCreateRoomSubmit(onClose);
+  const { submitting, error, failedMembers, submit } = useCreateRoomSubmit(onClose, onCreated);
   useEscapeCloses(onClose);
 
   const toggleMember = (address: string) => {
@@ -228,7 +234,7 @@ export function RoomCreateModal({ roster, onClose }: RoomCreateModalProps) {
             {t("fleet.comms.membersFailed", failedMembers.join(", "))}
           </div>
         )}
-        <button className="comms-send" type="button" data-testid="comms-modal-submit" disabled={submitting} onClick={handleSubmit}>
+        <button className="comms-send" type="button" data-testid="comms-modal-submit" disabled={submitting || submitDisabled} title={submitHint ?? undefined} onClick={handleSubmit}>
           {submitting ? t("fleet.comms.creating") : t("fleet.comms.createRoom")}
         </button>
       </div>

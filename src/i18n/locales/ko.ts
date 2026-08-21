@@ -332,6 +332,7 @@ const ko: typeof en = {
 
   // ── Sidebar ──
   "tree.newSession": "새 세션", // New Session
+  "tree.newRoom": "새 채팅방", // New room
   "tree.newTerminalSession": "새 터미널 세션", // New Terminal Session
   "tree.newBrowserPage": "새 브라우저 페이지", // New Browser Page
   "tree.newAgentSession": (agent) => `새 ${agent} 세션`, // New {agent} Session

@@ -354,6 +354,7 @@ const en = {
 
   // ── Sidebar (project tree, menus, and dialogs) ──
   "tree.newSession": "New Session",
+  "tree.newRoom": "New room",
   "tree.newTerminalSession": "New Terminal Session",
   "tree.newBrowserPage": "New Browser Page",
   "tree.newAgentSession": (agent: string) => `New ${agent} Session`,

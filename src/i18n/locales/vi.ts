@@ -329,6 +329,7 @@ const vi: typeof en = {
 
   // Cây dự án và phiên
   "tree.newSession": "Phiên mới",
+  "tree.newRoom": "Phòng mới",
   "tree.newTerminalSession": "Phiên terminal mới",
   "tree.newBrowserPage": "Trang trình duyệt mới",
   "tree.newAgentSession": (agent: string) => `Phiên ${agent} mới`,

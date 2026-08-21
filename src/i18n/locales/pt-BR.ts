@@ -335,6 +335,7 @@ const ptBR: typeof en = {
 
   // ── Sidebar ──
   "tree.newSession": "Nova sessão", // New Session
+  "tree.newRoom": "Nova sala", // New room
   "tree.newTerminalSession": "Nova sessão de terminal", // New Terminal Session
   "tree.newBrowserPage": "Nova página de navegador", // New Browser Page
   "tree.newAgentSession": (agent) => `Nova sessão ${agent}`, // New {agent} Session

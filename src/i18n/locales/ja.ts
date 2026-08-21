@@ -333,6 +333,7 @@ const ja: typeof en = {
 
   // ── Sidebar ──
   "tree.newSession": "新規セッション", // New Session
+  "tree.newRoom": "新しいルーム", // New room
   "tree.newTerminalSession": "新規ターミナルセッション", // New Terminal Session
   "tree.newBrowserPage": "新規ブラウザページ", // New Browser Page
   "tree.newAgentSession": (agent) => `新規 ${agent} セッション`, // New {agent} Session
