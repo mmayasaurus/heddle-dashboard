@@ -855,7 +855,10 @@ function AccountCycler({
         // come from the statusline tap, so an idle account's numbers simply aren't refreshing.
         // Codex/Cursor set loggedIn=null and their `stale` is a real fetch/refresh FAILURE — keep the
         // actionable "stale" warning for them, never a reassuring "idle".
-        const isIdle = showMarker && isClaude;
+        // "idle" implies a logged-IN account whose numbers just aren't refreshing; require
+        // loggedIn === true so an unknown-login (null) account shows the honest "stale" marker
+        // instead of a reassuring "idle" that would contradict the "login unknown" state row (qodo).
+        const isIdle = showMarker && isClaude && selectedAccount.loggedIn === true;
         const markerText = showMarker ? ` · ${t(isIdle ? "fleet.idle" : "fleet.stale")}` : "";
         const markerTooltip = showMarker ? ` · ${t(isIdle ? "fleet.idleHint" : "fleet.stale")}` : "";
         const capturedTooltip = capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${markerTooltip}` : "—";

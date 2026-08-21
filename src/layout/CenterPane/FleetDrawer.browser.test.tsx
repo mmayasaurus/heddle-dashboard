@@ -242,6 +242,22 @@ describe("FleetDrawer Claude account cycler", () => {
     await waitFor(() => expect(screen.getByText(/ · fleet\.stale$/)).toBeTruthy());
     expect(screen.queryByText(/fleet\.idle/)).toBeNull();
   });
+
+  it("shows 'stale' not 'idle' for a Claude account with unknown login (loggedIn null) — idle implies logged in", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[2], id: "acctU", loggedIn: null, capturedAt: now - 60 * 60, stale: true }],
+        activeAccount: "acctU",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText("acctU")).toBeTruthy());
+    expect(screen.getByText(/ · fleet\.stale$/)).toBeTruthy();
+    expect(screen.queryByText(/fleet\.idle/)).toBeNull();
+  });
 });
 
 // Real cursor payload shape (src-tauri/src/heddle_stats/cursor.rs + tests/fixtures/heddle_stats/
