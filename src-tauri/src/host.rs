@@ -114,14 +114,39 @@ pub enum ListenerId {
     Headless(u64),
 }
 
+/// Append a `.dev` suffix to the GUI app-data directory for DEBUG builds so a development
+/// or worktree build never shares the installed release app's live `heddle.db` (HED-159:
+/// `tauri dev` resolves to `com.heddle.app`'s data dir = the production database; T's repro
+/// 2026-08-20 confirmed dev builds run debug-compiled). Release builds — the installed app —
+/// are unchanged. The compile-time signal is injected as a bool so the mapping is
+/// unit-testable under a debug-compiled `cargo test` (mirrors `web::is_production`, HED-39).
+#[cfg(feature = "gui")]
+pub(crate) fn gui_data_dir_for_build(base: PathBuf) -> PathBuf {
+    dev_suffix(base, cfg!(debug_assertions))
+}
+
+#[cfg(feature = "gui")]
+fn dev_suffix(base: PathBuf, is_debug: bool) -> PathBuf {
+    if !is_debug {
+        return base;
+    }
+    match base.file_name() {
+        Some(name) => base.with_file_name(format!("{}.dev", name.to_string_lossy())),
+        None => base,
+    }
+}
+
 impl AppCtx {
     /// Application data directory from Tauri's identifier-based path API or the headless startup path.
+    /// GUI debug builds get a `.dev`-isolated sibling (`gui_data_dir_for_build`) so a dev/worktree
+    /// build never shares the installed app's production database (HED-159).
     pub fn data_dir(&self) -> Result<PathBuf, String> {
         match self {
             #[cfg(feature = "gui")]
             AppCtx::Tauri(app) => app
                 .path()
                 .app_data_dir()
+                .map(gui_data_dir_for_build)
                 .map_err(|e| format!("Failed to get app data directory: {e}")),
             AppCtx::Headless(host) => Ok(host.data_dir.clone()),
         }
@@ -282,6 +307,25 @@ impl EventBus {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn debug_builds_get_a_dev_isolated_data_dir() {
+        use std::path::PathBuf;
+        // HED-159: a debug (dev/worktree) build must NOT share the installed app's data dir.
+        // The signal is injected so BOTH branches are testable under a debug-compiled cargo test.
+        let base = PathBuf::from("/Users/x/Library/Application Support/com.heddle.app");
+        // Release (the installed app): unchanged — never disturb the production profile.
+        assert_eq!(dev_suffix(base.clone(), false), base);
+        // Debug (dev build): a `.dev` sibling, isolated from the production heddle.db.
+        assert_eq!(
+            dev_suffix(base.clone(), true),
+            PathBuf::from("/Users/x/Library/Application Support/com.heddle.app.dev")
+        );
+        // A path with no final component is returned as-is (never panics).
+        let root = PathBuf::from("/");
+        assert_eq!(dev_suffix(root.clone(), true), root);
+    }
 
     #[test]
     fn event_bus_listen_emit_unlisten() {
