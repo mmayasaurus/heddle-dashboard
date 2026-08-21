@@ -63,9 +63,9 @@ function installDefaultMock() {
     if (cmd === "heddle_fleet_roster") return Promise.resolve([]);
     if (cmd === "heddle_comms_operator_status") return Promise.resolve(operatorStatusResponse);
     if (cmd === "heddle_comms_send") return Promise.resolve(OK_RESULT);
-    if (cmd === "heddle_comms_create_room") return Promise.resolve(OK_RESULT);
-    if (cmd === "heddle_comms_add_member") return Promise.resolve(OK_RESULT);
-    if (cmd === "heddle_comms_remove_member") return Promise.resolve(OK_RESULT);
+    if (cmd === "heddle_comms_create_room") return Promise.resolve({ room: { name: "#fleet" } });
+    if (cmd === "heddle_comms_add_member") return Promise.resolve({ member: { room: args?.room, address: args?.address } });
+    if (cmd === "heddle_comms_remove_member") return Promise.resolve({ removed: true });
     return Promise.reject(new Error("unexpected invoke cmd: " + cmd));
   });
 }
@@ -340,6 +340,23 @@ describe("ChatroomPane — HED-74c operator composer + room management wiring", 
 
     fireEvent.click(screen.getByTestId("comms-room-#heddle-build"));
     expect(await screen.findByTestId("comms-member-controls")).toBeTruthy();
+  });
+
+  it("accepts real add/remove member success payloads without showing an error", async () => {
+    localStorage.setItem(OPEN_KEY, "1");
+    roomsResponse.rooms = [mkRoom({ target: "#heddle-build", open: false, memberCount: 3 })];
+    render(<ChatroomPane />);
+    const input = await screen.findByTestId("comms-member-ctl-input") as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: "T" } });
+    fireEvent.click(screen.getByTestId("comms-member-add"));
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(screen.queryByTestId("comms-member-ctl-result")).toBeNull();
+
+    fireEvent.change(input, { target: { value: "T" } });
+    fireEvent.click(screen.getByTestId("comms-member-remove"));
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(screen.queryByTestId("comms-member-ctl-result")).toBeNull();
   });
 
   it("B5: RoomMemberControls resets its address input when switching between two closed rooms", async () => {

@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "../../../ipc/transport";
 import { useT } from "../../../i18n";
 import type { FleetAgent } from "./useCommsPoll";
-import { isOperatorFailure, operatorErrorResult, parseOperatorResult, type CommsOperatorResult } from "./useOperatorStatus";
+import { operatorErrorResult, roomMgmtRefusal, type CommsOperatorResult } from "./useOperatorStatus";
 
 function useEscapeCloses(onClose: () => void) {
   useEffect(() => {
@@ -32,13 +32,13 @@ interface SubmitState {
 
 /** Creates the room, then adds every picked member in turn, collecting failures without aborting
  *  the rest of the batch. Closes the modal only when nothing failed. */
-function useCreateRoomSubmit(onClose: () => void) {
+function useCreateRoomSubmit(onClose: () => void, onCreated?: (_room: string) => void | Promise<void>) {
   const [state, setState] = useState<SubmitState>({ submitting: false, error: null, failedMembers: [] });
 
   const addMember = async (room: string, address: string): Promise<boolean> => {
     try {
       const raw = await invoke<unknown>("heddle_comms_add_member", { room, address });
-      return !isOperatorFailure(parseOperatorResult(raw));
+      return roomMgmtRefusal(raw) === null;
     } catch {
       return false;
     }
@@ -51,11 +51,12 @@ function useCreateRoomSubmit(onClose: () => void) {
     const room = `#${name.replace(/^#+/, "")}`;
     try {
       const raw = await invoke<unknown>("heddle_comms_create_room", { name: room, topic: topic || null, open });
-      const result = parseOperatorResult(raw);
-      if (isOperatorFailure(result)) {
-        setState({ submitting: false, error: result, failedMembers: [] });
+      const refusal = roomMgmtRefusal(raw);
+      if (refusal) {
+        setState({ submitting: false, error: refusal, failedMembers: [] });
         return;
       }
+      await onCreated?.(room);
     } catch (e) {
       setState({ submitting: false, error: operatorErrorResult(e), failedMembers: [] });
       return;
@@ -169,16 +170,21 @@ function RoomCreateFields({ name, setName, topic, setTopic, open, setOpen, nameE
 export interface RoomCreateModalProps {
   roster: FleetAgent[];
   onClose: () => void;
+  /** Runs after the broker has created the normalized room and before any member additions. */
+  onCreated?: (_room: string) => void | Promise<void>;
+  /** Optional availability gate for a scoped entry point; legacy callers omit it. */
+  submitDisabled?: boolean;
+  submitHint?: string | null;
 }
 
-export function RoomCreateModal({ roster, onClose }: RoomCreateModalProps) {
+export function RoomCreateModal({ roster, onClose, onCreated, submitDisabled = false, submitHint = null }: RoomCreateModalProps) {
   const t = useT();
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [nameError, setNameError] = useState(false);
-  const { submitting, error, failedMembers, submit } = useCreateRoomSubmit(onClose);
+  const { submitting, error, failedMembers, submit } = useCreateRoomSubmit(onClose, onCreated);
   useEscapeCloses(onClose);
 
   const toggleMember = (address: string) => {
@@ -228,7 +234,7 @@ export function RoomCreateModal({ roster, onClose }: RoomCreateModalProps) {
             {t("fleet.comms.membersFailed", failedMembers.join(", "))}
           </div>
         )}
-        <button className="comms-send" type="button" data-testid="comms-modal-submit" disabled={submitting} onClick={handleSubmit}>
+        <button className="comms-send" type="button" data-testid="comms-modal-submit" disabled={submitting || submitDisabled} title={submitHint ?? undefined} onClick={handleSubmit}>
           {submitting ? t("fleet.comms.creating") : t("fleet.comms.createRoom")}
         </button>
       </div>

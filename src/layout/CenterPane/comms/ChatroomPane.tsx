@@ -31,10 +31,9 @@ import {
   type UseCommsPollResult,
 } from "./useCommsPoll";
 import {
-  isOperatorFailure,
   operatorErrorResult,
   operatorHint,
-  parseOperatorResult,
+  roomMgmtRefusal,
   useOperatorStatus,
   type CommsOperatorResult,
   type UseOperatorStatusResult,
@@ -98,9 +97,9 @@ function useMemberAction(room: string) {
     setBusy(true);
     try {
       const raw = await invoke<unknown>(cmd, { room, address: trimmed });
-      const parsed = parseOperatorResult(raw);
-      if (isOperatorFailure(parsed)) {
-        setResult(parsed);
+      const refusal = roomMgmtRefusal(raw);
+      if (refusal) {
+        setResult(refusal);
       } else {
         setResult(null);
         setAddress("");

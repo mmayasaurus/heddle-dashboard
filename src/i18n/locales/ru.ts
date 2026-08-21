@@ -345,6 +345,7 @@ const ru: typeof en = {
 
   // ── Sidebar ──
   "tree.newSession": "Новая сессия", // New Session
+  "tree.newRoom": "Новая комната", // New room
   "tree.newTerminalSession": "Новая сессия терминала", // New Terminal Session
   "tree.newBrowserPage": "Новая страница браузера", // New Browser Page
   "tree.newAgentSession": (agent) => `Новая сессия ${agent}`, // New {agent} Session

@@ -335,6 +335,7 @@ const fr: typeof en = {
 
   // ── Sidebar ──
   "tree.newSession": "Nouvelle session", // New Session
+  "tree.newRoom": "Nouveau salon", // New room
   "tree.newTerminalSession": "Nouvelle session terminal", // New Terminal Session
   "tree.newBrowserPage": "Nouvelle page de navigateur", // New Browser Page
   "tree.newAgentSession": (agent) => `Nouvelle session ${agent}`, // New {agent} Session

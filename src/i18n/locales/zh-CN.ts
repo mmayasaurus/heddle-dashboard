@@ -328,6 +328,7 @@ const zhCN: typeof en = {
 
   // ── Sidebar (project tree, menus, and dialogs) ──
   "tree.newSession": "新建会话",
+  "tree.newRoom": "新建聊天室",
   "tree.newTerminalSession": "新建终端会话",
   "tree.newBrowserPage": "新建浏览器页面",
   "tree.newAgentSession": (agent) => `新建 ${agent} 会话`,

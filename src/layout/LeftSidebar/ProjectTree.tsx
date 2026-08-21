@@ -3,6 +3,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Icons from "../../components/Icons";
 import { StatusIndicator } from "../../components/StatusIndicator";
 import { useT } from "../../i18n";
@@ -22,7 +23,57 @@ import { MARK_LABEL_KEYS, type NodeMark, normalizeMark } from "../../marks";
 import { SessionKindIcon } from "../sessionViewers/sessionMeta";
 import { DEFAULT_BINDINGS, formatCombo } from "../../hooks/shortcutRegistry";
 import { useGitBranch } from "../../hooks/useGitBranch";
+import { useSuspendNativeViews } from "../../hooks/nativeViewSuspend";
+import { associateRoomToProject, listRoomAssociations } from "../../ipc/commands";
+import { invoke, isTauri } from "../../ipc/transport";
+import { RoomCreateModal } from "../CenterPane/comms/RoomCreateModal";
+import { operatorHint, useOperatorStatus } from "../CenterPane/comms/useOperatorStatus";
+import type { FleetAgent } from "../CenterPane/comms/useCommsPoll";
 import { FLEET_PROJECT_ID, isDerivedChatSessionId } from "./chatSessionDerivation";
+
+/** Associates a newly-created room unless it already belongs to this project, preserving its default flag. */
+export async function associateThisRoom(room: string, projectId: string): Promise<void> {
+  const canonicalRoom = `#${room.replace(/^#+/, "")}`;
+  const normalizedRoom = canonicalRoom.slice(1);
+  const associations = await listRoomAssociations();
+  const existing = associations.find((association) => association.roomName.replace(/^#/, "") === normalizedRoom);
+  if (existing?.projectId === projectId) return;
+  if (existing) throw new Error(`Room ${canonicalRoom} already belongs to another project`);
+  await associateRoomToProject(canonicalRoom, projectId, false);
+}
+
+function RoomCreateModalHost({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const t = useT();
+  const [roster, setRoster] = useState<FleetAgent[]>([]);
+  const operatorStatus = useOperatorStatus(true);
+  useSuspendNativeViews();
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<FleetAgent[]>("heddle_fleet_roster").then(
+      (nextRoster) => {
+        if (!cancelled) setRoster(nextRoster);
+      },
+      () => {
+        if (!cancelled) setRoster([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return createPortal(
+    <RoomCreateModal
+      roster={roster}
+      onClose={onClose}
+      onCreated={(room) => associateThisRoom(room, projectId)}
+      submitDisabled={!operatorStatus.available}
+      submitHint={operatorHint(t, operatorStatus.reason)}
+    />,
+    document.body,
+  );
+}
 
 /** WKWebView inserts control characters such as U+001C through beforeinput when Left/Right is pressed past an
  *  input boundary. They render as boxes and are unrelated to IME; Chromium is unaffected. Strip C0/C1 and DEL
@@ -293,6 +344,7 @@ export function ProjectTree(h: TreeHandlers) {
     view,
     isPrimary,
   } = h;
+  const [openForProjectId, setOpenForProjectId] = useState<string | null>(null);
 
   const storedProjects = useTermStore((s) => s.projects);
   const treeLoaded = useTermStore((s) => s.treeLoaded);
@@ -1151,7 +1203,7 @@ export function ProjectTree(h: TreeHandlers) {
   );
 
   // Hover create controls: session/group for projects and groups, child session for sessions.
-  const metaButtons = (ref: TreeNodeRef, canAddGroup: boolean) => (
+  const metaButtons = (ref: TreeNodeRef, canAddGroup: boolean, canAddRoom = false) => (
     <span className="meta">
       <span
         className="add"
@@ -1173,6 +1225,19 @@ export function ProjectTree(h: TreeHandlers) {
           }}
         >
           <Icons.newGroup size={12} />
+        </span>
+      )}
+      {canAddRoom && isTauri && (
+        <span
+          className="add"
+          data-testid={`tree-new-room-${ref.projectId}`}
+          title={t("tree.newRoom")}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpenForProjectId(ref.projectId);
+          }}
+        >
+          <Icons.chat size={12} />
         </span>
       )}
     </span>
@@ -1227,7 +1292,7 @@ export function ProjectTree(h: TreeHandlers) {
                 <span className="nm">{p.name}</span>
               </>
             )}
-            {!isFleet && metaButtons(ref, true)}
+            {!isFleet && metaButtons(ref, true, true)}
           </div>
         );
       }
@@ -1385,6 +1450,7 @@ export function ProjectTree(h: TreeHandlers) {
   const showEmptyHint = filtering && rows.length === 0;
 
   return (
+    <>
     <div ref={setParent} className="tree">
       {showEmptyHint ? (
         <div style={{ padding: "12px", fontSize: 12, color: "var(--text-faint)" }}>
@@ -1413,5 +1479,9 @@ export function ProjectTree(h: TreeHandlers) {
         </div>
       )}
     </div>
+    {openForProjectId && isTauri && (
+      <RoomCreateModalHost key={openForProjectId} projectId={openForProjectId} onClose={() => setOpenForProjectId(null)} />
+    )}
+    </>
   );
 }

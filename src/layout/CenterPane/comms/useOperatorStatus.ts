@@ -115,10 +115,8 @@ export function useOperatorStatus(expanded: boolean): UseOperatorStatusResult {
 // {outcome:"logged", code:"room-pull"} — hence parseOperatorResult normalizes a missing key to null
 // (HED-196). CAVEAT: the room-management writes do NOT share this shape on SUCCESS — create_room
 // returns {room}, join_room {member}, leave_room {removed}, with NO `outcome` field (only their
-// REFUSALS use {outcome,code,reason}). So this type models post_message only; feeding a room-mgmt
-// success through isCommsOperatorResult wrongly flags it as an error — wiring correct room-mgmt
-// success handling is tracked for the HED-166 room-management surface (see the characterization test
-// in useOperatorStatus.test.ts pinning that gap).
+// REFUSALS use {outcome,code,reason}). So this type models post_message only; room-management
+// consumers use roomMgmtRefusal below, preserving this parser's correct no-outcome error sentinel.
 
 export interface CommsOperatorResult {
   outcome: string;
@@ -161,4 +159,19 @@ export function operatorErrorResult(e: unknown): CommsOperatorResult {
  *  with their reason and must never clear anything the operator already typed. */
 export function isOperatorFailure(r: CommsOperatorResult): boolean {
   return r.outcome === "refused" || r.outcome === "error";
+}
+
+/**
+ * Classifies the distinct room-management wire contract: create_room succeeds with `{room}`;
+ * join_room with `{member}`; and leave_room with `{removed}`. The Tauri commands pass those broker
+ * values through verbatim, while refusals retain `{outcome:"refused",code,reason}`. This must stay
+ * separate from parseOperatorResult, whose no-outcome error sentinel is correct for post_message.
+ */
+export function roomMgmtRefusal(raw: unknown): CommsOperatorResult | null {
+  if (raw && typeof raw === "object") {
+    const value = raw as Record<string, unknown>;
+    if (value.outcome === "refused") return parseOperatorResult(raw);
+    if ("room" in value || "member" in value || "removed" in value) return null;
+  }
+  return { outcome: "error", code: null, reason: null };
 }
