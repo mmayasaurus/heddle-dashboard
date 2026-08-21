@@ -283,6 +283,44 @@ mod tests {
     }
 
     #[test]
+    fn regression_pr_83_dead_agents_are_excluded_from_room_membership() {
+        // `live_fleet_agents` keeps recently-exited sessions with alive = false for display; those
+        // must NOT be provisioned as default-room members. Only the live in-scope agent is retained.
+        let worktrees = vec!["/projects/app".to_string()];
+        let agents = vec![
+            FleetAgent {
+                name: "LIVE".to_string(),
+                model: None,
+                pid: 1,
+                session_id: String::new(),
+                cwd: "/projects/app".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "DEAD".to_string(),
+                model: None,
+                pid: 2,
+                session_id: String::new(),
+                cwd: "/projects/app".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: vec![],
+            },
+        ];
+
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            BTreeSet::from(["LIVE".to_string()])
+        );
+    }
+
+    #[test]
     fn ps_args_parses_pid_and_full_argv_line() {
         let args = parse_ps_args(
             "  101 claude --resume abc123 --model claude-opus-4-8\n  102 /usr/bin/claude --model=claude-fable-5\n",
@@ -435,7 +473,9 @@ fn project_agent_addresses_in_worktrees(
 ) -> BTreeSet<String> {
     agents
         .iter()
-        .filter(|agent| agent_in_project_worktrees(&agent.cwd, worktrees))
+        // `live_fleet_agents` retains recently-exited sessions (alive = false) for the roster's
+        // display; room membership must converge to the LIVE project agents, so exclude the dead.
+        .filter(|agent| agent.alive && agent_in_project_worktrees(&agent.cwd, worktrees))
         .map(|agent| agent.name.clone())
         .collect()
 }

@@ -864,8 +864,9 @@ pub async fn provision_default_project_room(ctx: &AppCtx, project: &Project) -> 
     provision_default_project_room_with_members(ctx, project, &project_agents, &existing_members).await
 }
 
-/// Ensures a project has exactly one closed default room and keeps its broker membership aligned
-/// with HED-167's project-worktree agent set.
+/// Ensures a project has exactly one default room — created closed, and closed for good because the
+/// broker's `open` flag is write-once at first insert — and keeps its broker membership aligned with
+/// HED-167's project-worktree agent set.
 #[tauri::command]
 pub async fn heddle_ensure_project_default_room(
     app: tauri::AppHandle,
