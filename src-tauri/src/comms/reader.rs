@@ -16,7 +16,7 @@
 //! `schema_supported`) → `schemaOk: false` with the observed version, empty payloads, and no table is ever queried in
 //! that state. Only a supported `user_version` reads tables.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -316,6 +316,39 @@ async fn blocking<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Exact members of a closed broker room. Unlike the UI snapshots, provisioning must not treat an
+/// unavailable or unsupported broker database as an empty set: doing so could remove real members.
+pub async fn room_members(room: &str) -> Result<BTreeSet<String>, String> {
+    let room = room.to_string();
+    blocking(move || {
+        let path = comms_db_path()
+            .ok_or_else(|| "Cannot synchronize room members: comms database path is unavailable".to_string())?;
+        room_members_at(&path, &room)
+    })
+    .await
+}
+
+fn room_members_at(path: &Path, room: &str) -> Result<BTreeSet<String>, String> {
+    if !path.exists() {
+        return Err("Cannot synchronize room members: comms database is unavailable".to_string());
+    }
+    let conn = open_readonly(path)?;
+    let version = read_user_version(&conn)?;
+    if !schema_supported(version) {
+        return Err(format!(
+            "Cannot synchronize room members: unsupported comms database schema version {version}"
+        ));
+    }
+    let mut stmt = conn
+        .prepare("SELECT address FROM room_members WHERE room = ?1")
+        .map_err(|e| format!("Failed to prepare room members query: {e}"))?;
+    let rows = stmt
+        .query_map([room], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query room members: {e}"))?;
+    rows.collect::<rusqlite::Result<BTreeSet<_>>>()
+        .map_err(|e| format!("Failed to read room member: {e}"))
 }
 
 // ──────────────────────────────────── heddle_comms_rooms ──────────────────────────────────────

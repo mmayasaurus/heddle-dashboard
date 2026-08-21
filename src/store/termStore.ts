@@ -12,7 +12,7 @@ import {
   type ShellOption,
 } from "../ipc/commands";
 import { pushSetting } from "../ipc/settingsSync";
-import { isTauri } from "../ipc/transport";
+import { invoke, isTauri } from "../ipc/transport";
 import { env } from "../platform";
 import { genId } from "../genId";
 import type { SpawnRequest, StatusSignal } from "../ipc/events";
@@ -1578,6 +1578,12 @@ export const useTermStore = create<TermStore>((set, get) => ({
       statusFilterIds: null,
       markFilter: null,
     }));
+    // This is intentionally detached from opening: a broker or operator failure must never make
+    // a valid project import fail. Desktop invokes the direct Tauri command; remote clients have
+    // no local operator broker to provision.
+    if (isTauri) {
+      void invoke("heddle_ensure_project_default_room", { projectId: project.id }).catch(() => {});
+    }
     saveSidebarViewsTick(get);
   },
 

@@ -19,7 +19,7 @@
 //! same cached client/backoff fields.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -59,7 +59,7 @@ fn put_settings(ctx: &AppCtx, value: &Value) {
 /// answers `tools/call` per `mode`. `__MODE__` is substituted at write time (not read from an env
 /// var) so parallel tests never share mutable process environment.
 const FAKE_CHILD_TEMPLATE: &str = r#"#!/usr/bin/env python3
-import sys, json
+import sys, json, os
 
 MODE = "__MODE__"
 
@@ -97,8 +97,16 @@ while True:
         payload = {"revoked": MODE == "whoami_revoked", "identity": "operator"}
     elif MODE == "refused":
         payload = {"outcome": "refused", "code": "floor-held", "reason": "held by someone"}
+    elif MODE == "refused_create_room" and name == "create_room":
+        payload = {"outcome": "refused", "code": "room-refused", "reason": "room creation refused"}
+    elif MODE == "refused_join_room" and name == "join_room":
+        payload = {"outcome": "refused", "code": "member-refused", "reason": "member add refused"}
     elif MODE == "echo_args":
         payload = args
+    elif MODE == "record_calls":
+        with open(os.path.join(os.path.dirname(__file__), "calls.jsonl"), "a") as calls_file:
+            calls_file.write(json.dumps({"tool": name, "args": args}) + "\n")
+        payload = {"ok": True}
     else:
         payload = {"ok": True}
     send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
@@ -565,6 +573,267 @@ async fn create_room_sends_closed_over_the_wire_when_open_omitted() {
         .expect("echo_args always succeeds");
     assert_eq!(echoed.get("open"), Some(&Value::Bool(false)));
     shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_with_exact_members() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "record_calls");
+
+    let project_root = dir.path().join("HED 169 Project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let project_agents = BTreeSet::from(["R".to_string(), "S".to_string()]);
+    let existing_members = BTreeSet::from(["S".to_string(), "T".to_string()]);
+
+    provision_default_project_room_with_members(&ctx, &project, &project_agents, &existing_members)
+        .await
+        .expect("opening a project should provision its default room");
+    provision_default_project_room_with_members(&ctx, &project, &project_agents, &project_agents)
+        .await
+        .expect("reopening a project should reuse its default room");
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 1, "reopening must not duplicate the association");
+    assert_eq!(
+        associations[0].room_name,
+        default_project_room_name(&project.name, &project.id)
+    );
+    assert_eq!(associations[0].project_id, project.id);
+    assert!(associations[0].is_default);
+
+    let calls: Vec<Value> = std::fs::read_to_string(dir.path().join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let create_calls: Vec<&Value> = calls
+        .iter()
+        .filter(|call| call["tool"] == "create_room")
+        .collect();
+    assert_eq!(
+        create_calls.len(),
+        2,
+        "reopening must re-enforce that its existing default room is closed"
+    );
+    let expected_name = default_project_room_name(&project.name, &project.id);
+    for call in create_calls {
+        assert_eq!(call["args"]["name"], expected_name);
+        assert_eq!(call["args"]["open"], false, "the default room must be closed");
+    }
+
+    let joined: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "join_room")
+        .map(|call| call["args"]["address"].as_str().unwrap().to_string())
+        .collect();
+    let left: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "leave_room")
+        .map(|call| call["args"]["address"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(joined, BTreeSet::from(["R".to_string()]));
+    assert_eq!(left, BTreeSet::from(["T".to_string()]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_same_slug_projects_get_distinct_default_rooms() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "record_calls");
+
+    let root_a = dir.path().join("first").join("Foo Bar");
+    let root_b = dir.path().join("second").join("Foo-Bar");
+    std::fs::create_dir_all(&root_a).unwrap();
+    std::fs::create_dir_all(&root_b).unwrap();
+    let (project_a, project_b) = {
+        let conn = ctx.db().conn.lock().unwrap();
+        (
+            crate::db::repo::import_project(&conn, root_a.to_str().unwrap()).unwrap(),
+            crate::db::repo::import_project(&conn, root_b.to_str().unwrap()).unwrap(),
+        )
+    };
+
+    let no_agents = BTreeSet::new();
+    provision_default_project_room_with_members(&ctx, &project_a, &no_agents, &no_agents)
+        .await
+        .expect("the first project should provision");
+    provision_default_project_room_with_members(&ctx, &project_b, &no_agents, &no_agents)
+        .await
+        .expect("the second project should provision");
+    shutdown().await;
+
+    let calls: Vec<Value> = std::fs::read_to_string(dir.path().join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let rooms: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "create_room")
+        .map(|call| call["args"]["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(rooms.len(), 2, "slug collisions must not share a default room");
+    assert!(rooms.contains(&default_project_room_name(&project_a.name, &project_a.id)));
+    assert!(rooms.contains(&default_project_room_name(&project_b.name, &project_b.id)));
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 2);
+    assert!(associations.iter().all(|association| association.is_default));
+}
+
+/// Mirror of the broker's room-name grammar (`ROOM_RE` in heddle `src/comms/address.ts`):
+/// `^#[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`. Hand-rolled so the guard carries no regex dependency and
+/// states exactly what makes a name broker-acceptable.
+fn is_broker_room_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('#') else {
+        return false;
+    };
+    let len = rest.chars().count();
+    if len == 0 || len > 64 {
+        return false;
+    }
+    let first_is_alnum = rest.chars().next().is_some_and(|c| c.is_ascii_alphanumeric());
+    first_is_alnum && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The default room name MUST conform to the broker grammar for every project, however the user
+/// named it. The earlier `<slug>-<uuid>-all` form had no leading `#` and no length bound, so the
+/// broker refused every `create_room` — a defect the name-accepting test mock could not surface, so
+/// this pins the generated name against the grammar directly.
+#[test]
+fn regression_pr_83_default_room_name_conforms_to_broker_grammar() {
+    let id = "550e8400-e29b-41d4-a716-446655440000";
+    let names = [
+        "myproject",
+        "Spinventory Rebuild Official Dashboard Monorepo Root Working Directory", // > 64 chars
+        "!!!  @@@  ///  weird...name",                                            // symbol-heavy
+        "项目名称",                                                              // non-ASCII slug
+        "",                                                                       // empty name
+        "-leading-and-trailing-",                                                 // hyphen edges
+    ];
+    for name in names {
+        let room = default_project_room_name(name, id);
+        assert!(
+            is_broker_room_name(&room),
+            "room name {room:?} for project {name:?} violates the broker grammar",
+        );
+    }
+    // Empty name AND empty id must still yield a conforming, non-degenerate name.
+    assert!(is_broker_room_name(&default_project_room_name("", "")));
+    // Same slug, different project id → distinct rooms (the collision fix relies on the id8 tail).
+    let a = default_project_room_name("dup", "aaaaaaaa-1111-2222-3333-444444444444");
+    let b = default_project_room_name("dup", "bbbbbbbb-1111-2222-3333-444444444444");
+    assert_ne!(a, b, "same-slug projects with distinct ids must get distinct rooms");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_refused_create_leaves_no_default_room_association() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "refused_create_room");
+
+    let project_root = dir.path().join("refused-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let no_agents = BTreeSet::new();
+
+    let error = provision_default_project_room_with_members(&ctx, &project, &no_agents, &no_agents)
+        .await
+        .expect_err("a refused room create must stop provisioning");
+    assert!(error.contains("room-refused"));
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert!(
+        associations.is_empty(),
+        "a refused create must not leave a dangling default association"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_refused_member_add_leaves_no_default_room_association() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "refused_join_room");
+
+    let project_root = dir.path().join("member-refused-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let agents = BTreeSet::from(["R".to_string()]);
+    let no_members = BTreeSet::new();
+
+    let error = provision_default_project_room_with_members(&ctx, &project, &agents, &no_members)
+        .await
+        .expect_err("a refused member add must stop provisioning");
+    assert!(error.contains("member-refused"));
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert!(associations.is_empty());
+}
+
+#[tokio::test]
+async fn regression_pr_83_concurrent_default_association_keeps_one_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    let project_root = dir.path().join("concurrent-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let room = default_project_room_name(&project.name, &project.id);
+
+    let (first, second) = tokio::join!(
+        associate_default_room(&ctx, room.clone(), project.id.clone()),
+        associate_default_room(&ctx, room.clone(), project.id.clone()),
+    );
+    first.expect("the first association attempt should succeed");
+    second.expect("the concurrent association attempt should converge");
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 1);
+    assert_eq!(associations[0].room_name, room);
+    assert!(associations[0].is_default);
 }
 
 #[cfg(unix)]

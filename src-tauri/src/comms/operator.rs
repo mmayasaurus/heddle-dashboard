@@ -35,6 +35,7 @@
 //! normal process exit (Rust does not run destructors for statics), which is exactly why the
 //! explicit `RunEvent::Exit` call is the one that matters.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -49,6 +50,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::heddle_stats::augmented_path;
 use crate::host::AppCtx;
+use crate::models::Project;
 
 /// Minimum time between spawn RETRY attempts after a spawn attempt itself just failed, so a
 /// persistently broken binary/root setting cannot be re-attempted on every single composer action.
@@ -676,6 +678,16 @@ fn create_room_args(name: String, topic: Option<String>, open: Option<bool>) -> 
     args
 }
 
+async fn create_room(
+    ctx: &AppCtx,
+    name: String,
+    topic: Option<String>,
+    open: Option<bool>,
+) -> Result<Value, String> {
+    let args = create_room_args(name, topic, open);
+    passthrough(ctx, "create_room", Some(args)).await
+}
+
 #[tauri::command]
 pub async fn heddle_comms_create_room(
     app: tauri::AppHandle,
@@ -683,8 +695,7 @@ pub async fn heddle_comms_create_room(
     topic: Option<String>,
     open: Option<bool>,
 ) -> Result<Value, String> {
-    let args = create_room_args(name, topic, open);
-    passthrough(&AppCtx::Tauri(app), "create_room", Some(args)).await
+    create_room(&AppCtx::Tauri(app), name, topic, open).await
 }
 
 #[tauri::command]
@@ -693,7 +704,7 @@ pub async fn heddle_comms_add_member(
     room: String,
     address: String,
 ) -> Result<Value, String> {
-    member_call(app, "join_room", room, address).await
+    member_call(&AppCtx::Tauri(app), "join_room", room, address).await
 }
 
 #[tauri::command]
@@ -702,11 +713,11 @@ pub async fn heddle_comms_remove_member(
     room: String,
     address: String,
 ) -> Result<Value, String> {
-    member_call(app, "leave_room", room, address).await
+    member_call(&AppCtx::Tauri(app), "leave_room", room, address).await
 }
 
 async fn member_call(
-    app: tauri::AppHandle,
+    ctx: &AppCtx,
     tool: &'static str,
     room: String,
     address: String,
@@ -714,7 +725,166 @@ async fn member_call(
     let mut args = Map::new();
     args.insert("room".into(), Value::String(room));
     args.insert("address".into(), Value::String(address));
-    passthrough(&AppCtx::Tauri(app), tool, Some(args)).await
+    passthrough(ctx, tool, Some(args)).await
+}
+
+/// Reduce arbitrary project labels and UUIDs to the broker's lowercase alphanumeric/hyphen room
+/// alphabet.
+fn broker_safe_room_fragment(value: &str) -> String {
+    let mut slug = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+/// Stable room name for a project's all-agent conversation, conforming to the broker's room-name
+/// grammar (`ROOM_RE` in heddle `src/comms/address.ts`): a leading `#`, then 1–64 characters of
+/// `[A-Za-z0-9_-]` beginning with an alphanumeric. A name that violates it is refused by
+/// `create_room`, so this MUST emit a conforming string — the missing `#` and unbounded length of
+/// the earlier form made every provisioning call a silent broker refusal.
+///
+/// Shape: `#<slug>-<id8>-all`. `<slug>` is the broker-safe project label, truncated to fit the
+/// 64-char budget; `<id8>` is the first 8 broker-safe characters of the project UUID (its leading
+/// hex segment). The UUID discriminator makes two projects with the same slug land on distinct
+/// rooms; a real name collision would need the same slug AND the same leading 8 hex, and even then
+/// the one-default-per-project unique index rejects the second association. Both parts fall back to
+/// `project` when empty so the result always starts with an alphanumeric.
+fn default_project_room_name(project_name: &str, project_id: &str) -> String {
+    let id8: String = broker_safe_room_fragment(project_id).chars().take(8).collect();
+    let id8 = if id8.is_empty() { "project".to_string() } else { id8 };
+    // After `#` the broker allows 64 chars; reserve the fixed tail `-<id8>-all` for the slug budget.
+    let slug_budget = 64usize.saturating_sub(1 + id8.len() + 4);
+    let slug: String = broker_safe_room_fragment(project_name).chars().take(slug_budget).collect();
+    let slug = slug.trim_end_matches('-');
+    let head = if slug.is_empty() { "project" } else { slug };
+    format!("#{head}-{id8}-all")
+}
+
+async fn default_room_for_project(ctx: &AppCtx, project_id: &str) -> Result<Option<String>, String> {
+    let ctx = ctx.clone();
+    let project_id = project_id.to_string();
+    blocking(move || {
+        Ok(crate::command_core::list_room_associations(&ctx)?
+            .into_iter()
+            .find(|association| association.project_id == project_id && association.is_default)
+            .map(|association| association.room_name))
+    })
+    .await?
+}
+
+/// A broker business refusal is a successful MCP response, but never a successful provisioning
+/// step. Keep it as an `Err` locally so no new default association is persisted after a refused
+/// create or membership update.
+fn require_broker_acceptance(operation: &str, response: &Value) -> Result<(), String> {
+    if response.get("outcome").and_then(Value::as_str) == Some("refused") {
+        let detail = response
+            .get("code")
+            .or_else(|| response.get("reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("refused");
+        return Err(format!("Default project room {operation} was refused: {detail}"));
+    }
+    Ok(())
+}
+
+async fn associate_default_room(ctx: &AppCtx, room: String, project_id: String) -> Result<(), String> {
+    let ctx = ctx.clone();
+    blocking(move || {
+        let conn = ctx.db().conn.lock().unwrap();
+        let already_has_default = crate::db::repo::list_room_associations(&conn)?
+            .iter()
+            .any(|association| association.project_id == project_id && association.is_default);
+        if already_has_default {
+            return Ok(());
+        }
+        crate::db::repo::associate_room_to_project(&conn, &room, &project_id, true)
+    })
+    .await?
+}
+
+/// Creates the default room once, records the HED-168 default association, and converges the
+/// closed room's membership to `project_agents`. The explicit membership inputs keep the broker
+/// write sequence independently testable; production derives both sets in
+/// [`provision_default_project_room`].
+async fn provision_default_project_room_with_members(
+    ctx: &AppCtx,
+    project: &Project,
+    project_agents: &BTreeSet<String>,
+    existing_members: &BTreeSet<String>,
+) -> Result<(), String> {
+    let existing_default = default_room_for_project(ctx, &project.id).await?;
+    let room = match existing_default.as_ref() {
+        Some(room) => room.clone(),
+        None => default_project_room_name(&project.name, &project.id),
+    };
+
+    // `create_room` is idempotent by room name at the broker (heddle log.ts: INSERT ... ON
+    // CONFLICT(name) DO NOTHING), so re-creating a persisted room is a no-op that returns the
+    // existing record. That idempotency is why calling it on every open is safe: concurrent first
+    // opens converge on this project's stable ID-bearing name instead of racing to two rooms. The
+    // room's `open` flag is write-once at first insert — it is created closed and the broker exposes
+    // no path to reopen it — so this call cannot and need not re-close an already-persisted room.
+    let created = create_room(ctx, room.clone(), None, Some(false)).await?;
+    require_broker_acceptance("creation", &created)?;
+
+    for address in project_agents.difference(existing_members) {
+        let joined = member_call(ctx, "join_room", room.clone(), address.clone()).await?;
+        require_broker_acceptance("member add", &joined)?;
+    }
+    for address in existing_members.difference(project_agents) {
+        let left = member_call(ctx, "leave_room", room.clone(), address.clone()).await?;
+        require_broker_acceptance("member removal", &left)?;
+    }
+
+    // Persist only after every broker operation was accepted. The database write is transactional
+    // and has a partial unique index on one default per project; concurrent opens using the same
+    // room name therefore converge on one association.
+    if existing_default.is_none() {
+        associate_default_room(ctx, room, project.id.clone()).await?;
+    }
+    Ok(())
+}
+
+/// Provisions the project's persisted default room on every project open. HED-167 supplies the
+/// project agent addresses from registered worktrees; HED-168 supplies the persisted default-room
+/// lookup and association, so reopening never creates a second room or association.
+pub async fn provision_default_project_room(ctx: &AppCtx, project: &Project) -> Result<(), String> {
+    let existing_members = match default_room_for_project(ctx, &project.id).await? {
+        Some(room) => crate::comms::reader::room_members(&room).await?,
+        None => BTreeSet::new(),
+    };
+    let root_path = project.root_path.clone();
+    let project_agents = blocking(move || crate::heddle_stats::roster::project_agent_addresses(&root_path))
+        .await??;
+    provision_default_project_room_with_members(ctx, project, &project_agents, &existing_members).await
+}
+
+/// Ensures a project has exactly one default room — created closed, and closed for good because the
+/// broker's `open` flag is write-once at first insert — and keeps its broker membership aligned with
+/// HED-167's project-worktree agent set.
+#[tauri::command]
+pub async fn heddle_ensure_project_default_room(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<(), String> {
+    let ctx = AppCtx::Tauri(app);
+    let project = {
+        let ctx = ctx.clone();
+        blocking(move || {
+            crate::command_core::list_tree(&ctx)?
+                .projects
+                .into_iter()
+                .find(|project| project.id == project_id)
+                .ok_or_else(|| format!("Project not found: {project_id}"))
+        })
+        .await??
+    };
+    provision_default_project_room(&ctx, &project).await
 }
 
 /// Cancels the live child (if any) so its process is killed rather than merely dropped. `pub`

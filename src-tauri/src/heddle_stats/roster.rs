@@ -3,7 +3,7 @@
 //! `kill(pid, 0)`) with the in-flight heddle workers each one owns, plus an "(orphaned)" bucket
 //! for workers whose orchestrator is gone.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::Serialize;
 
@@ -205,6 +205,122 @@ mod tests {
     }
 
     #[test]
+    fn regression_pr_169_project_agents_use_their_broker_addresses_from_exact_worktrees() {
+        let agents = vec![
+            FleetAgent {
+                name: "R".to_string(),
+                model: None,
+                pid: 1,
+                session_id: String::new(),
+                cwd: "/projects/spinventory/.worktrees/r".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "S".to_string(),
+                model: None,
+                pid: 2,
+                session_id: String::new(),
+                cwd: "/projects/spinventory".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "T".to_string(),
+                model: None,
+                pid: 3,
+                session_id: String::new(),
+                cwd: "/projects/spinventory-not-a-worktree".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+        ];
+        let worktrees = vec![
+            "/projects/spinventory".to_string(),
+            "/projects/spinventory/.worktrees/r".to_string(),
+        ];
+
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            std::collections::BTreeSet::from(["R".to_string(), "S".to_string()])
+        );
+    }
+
+    #[test]
+    fn regression_pr_83_non_git_project_root_remains_an_agent_scope() {
+        let non_git_root = "/projects/plain-directory";
+        let worktrees = project_worktrees_or_root(
+            non_git_root,
+            Err("Not a git repository: /projects/plain-directory".to_string()),
+        );
+        let agents = vec![FleetAgent {
+            name: "R".to_string(),
+            model: None,
+            pid: 1,
+            session_id: String::new(),
+            cwd: "/projects/plain-directory/nested".to_string(),
+            status: String::new(),
+            kind: String::new(),
+            updated_at_ms: 0,
+            alive: true,
+            workers: vec![],
+        }];
+
+        assert_eq!(worktrees, vec![non_git_root.to_string()]);
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            BTreeSet::from(["R".to_string()])
+        );
+    }
+
+    #[test]
+    fn regression_pr_83_dead_agents_are_excluded_from_room_membership() {
+        // `live_fleet_agents` keeps recently-exited sessions with alive = false for display; those
+        // must NOT be provisioned as default-room members. Only the live in-scope agent is retained.
+        let worktrees = vec!["/projects/app".to_string()];
+        let agents = vec![
+            FleetAgent {
+                name: "LIVE".to_string(),
+                model: None,
+                pid: 1,
+                session_id: String::new(),
+                cwd: "/projects/app".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "DEAD".to_string(),
+                model: None,
+                pid: 2,
+                session_id: String::new(),
+                cwd: "/projects/app".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: false,
+                workers: vec![],
+            },
+        ];
+
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            BTreeSet::from(["LIVE".to_string()])
+        );
+    }
+
+    #[test]
     fn ps_args_parses_pid_and_full_argv_line() {
         let args = parse_ps_args(
             "  101 claude --resume abc123 --model claude-opus-4-8\n  102 /usr/bin/claude --model=claude-fable-5\n",
@@ -333,6 +449,49 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
     }
 
     verify_and_retain(agents)
+}
+
+/// Broker addresses for fleet agents whose working directories belong to one of the project's
+/// registered worktrees. `FleetAgent::name` is the broker address: the existing room member picker
+/// passes it directly to `heddle_comms_add_member`.
+pub fn project_agent_addresses(project_root: &str) -> Result<BTreeSet<String>, String> {
+    let worktrees = project_worktrees_or_root(project_root, crate::git::list_project_worktrees(project_root));
+    Ok(project_agent_addresses_in_worktrees(&worktrees, &live_fleet_agents()))
+}
+
+/// A non-Git project has no worktree registry. Its root is still the project's only legitimate
+/// agent scope, so use it as the singleton membership set rather than aborting room provisioning.
+/// Falling back also lets a project receive its closed default room when Git is temporarily
+/// unavailable; the roster is simply empty unless a live agent is rooted below that directory.
+fn project_worktrees_or_root(project_root: &str, worktrees: Result<Vec<String>, String>) -> Vec<String> {
+    worktrees.unwrap_or_else(|_| vec![project_root.to_string()])
+}
+
+fn project_agent_addresses_in_worktrees(
+    worktrees: &[String],
+    agents: &[FleetAgent],
+) -> BTreeSet<String> {
+    agents
+        .iter()
+        // `live_fleet_agents` retains recently-exited sessions (alive = false) for the roster's
+        // display; room membership must converge to the LIVE project agents, so exclude the dead.
+        .filter(|agent| agent.alive && agent_in_project_worktrees(&agent.cwd, worktrees))
+        .map(|agent| agent.name.clone())
+        .collect()
+}
+
+/// Rust counterpart to HED-167's `agentInProjectWorktrees`: compare the agent cwd against the
+/// exact registered worktree set, allowing descendants but never a loose shared-prefix match.
+fn agent_in_project_worktrees(agent_cwd: &str, worktrees: &[String]) -> bool {
+    let cwd = normalize_worktree_path(agent_cwd);
+    worktrees.iter().any(|worktree| {
+        let root = normalize_worktree_path(worktree);
+        !root.is_empty() && (cwd == root || cwd.starts_with(&(root + "/")))
+    })
+}
+
+fn normalize_worktree_path(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
 fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {
