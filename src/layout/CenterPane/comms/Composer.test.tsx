@@ -156,7 +156,10 @@ describe("Composer — delivery notes for logged, non-live sends (HED-298)", () 
     fireEvent.change(input(), { target: { value: "please review" } });
     fireEvent.click(sendBtn());
 
-    expect((await screen.findByTestId("comms-delivery-note")).textContent).toContain("S has no live session");
+    const deliveryNote = await screen.findByTestId("comms-delivery-note");
+    expect(deliveryNote.textContent).toContain("S has no live session");
+    expect(deliveryNote.getAttribute("role")).toBe("status");
+    expect(deliveryNote.getAttribute("aria-live")).toBe("polite");
     expect(input().value).toBe("");
     expect(screen.queryByTestId("comms-refusal")).toBeNull();
   });
@@ -237,6 +240,31 @@ describe("regression PR#89 — stale delivery results", () => {
     await waitFor(() => expect(input().value).toBe("draft for T"));
     expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
     expect(screen.queryByTestId("comms-refusal")).toBeNull();
+  });
+
+  it("does not apply an @all result after switching rooms", async () => {
+    let resolveSend!: (value: unknown) => void;
+    mockInvoke.mockImplementation(() => new Promise((resolve) => (resolveSend = resolve)));
+    const onClearReplyTo = vi.fn();
+    const replyTo = mkReplyTo();
+    const { rerender } = render(<Composer target="#a" status={AVAILABLE} floorHolder={null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />);
+
+    fireEvent.click(within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox"));
+    fireEvent.change(input(), { target: { value: "for everyone" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(input().disabled).toBe(true));
+
+    rerender(<Composer target="#b" status={AVAILABLE} floorHolder={null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />);
+    await waitFor(() => expect(input().disabled).toBe(false));
+    fireEvent.change(input(), { target: { value: "draft for #b" } });
+
+    resolveSend({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session" });
+
+    await waitFor(() => expect(input().value).toBe("draft for #b"));
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+    expect(screen.queryByTestId("comms-refusal")).toBeNull();
+    expect(screen.getByTestId("comms-reply-ctx")).toBeTruthy();
+    expect(onClearReplyTo).not.toHaveBeenCalled();
   });
 });
 

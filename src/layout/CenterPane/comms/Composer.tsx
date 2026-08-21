@@ -40,7 +40,13 @@ function deliveryNoteText(t: ReturnType<typeof useT>, result: CommsOperatorResul
 
 /** Owns the send call + its outcome. Never clears `sending`'s caller-owned text on refusal/error —
  *  only `onDone` (called on confirmed success) is responsible for that, via the caller's callback. */
-function useComposerSend(target: string | null, replyToId: number | undefined, onDone: () => void, t: ReturnType<typeof useT>) {
+function useComposerSend(
+  target: string | null,
+  contextTarget: string | null,
+  replyToId: number | undefined,
+  onDone: () => void,
+  t: ReturnType<typeof useT>,
+) {
   const [sending, setSending] = useState(false);
   const [refusal, setRefusal] = useState<CommsOperatorResult | null>(null);
   const [deliveryNote, setDeliveryNote] = useState<string | null>(null);
@@ -49,7 +55,7 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
   useEffect(() => {
     genRef.current++;
     setSending(false);
-  }, [target]);
+  }, [contextTarget]);
 
   const send = async (body: string) => {
     if (target == null) return;
@@ -181,11 +187,17 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo,
   // not a body prefix. Prefixing the text would post an ordinary room message that merely STARTS
   // with "@all" — it would look sent and reach nobody extra. The toggle changes the destination.
   const effectiveTarget = atAll ? "@all" : target;
-  const { sending, refusal, setRefusal, deliveryNote, setDeliveryNote, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
-    setText("");
-    onClearReplyTo();
-    onSent?.();
-  }, t);
+  const { sending, refusal, setRefusal, deliveryNote, setDeliveryNote, send } = useComposerSend(
+    effectiveTarget,
+    target,
+    replyTo?.id,
+    () => {
+      setText("");
+      onClearReplyTo();
+      onSent?.();
+    },
+    t,
+  );
 
   // Composer state is per-TARGET, not global: a half-typed body, the @all toggle, and a stale
   // refusal banner all belong to the room/DM they were composed for. Switching the active target
@@ -217,7 +229,7 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo,
       {replyTo && <ReplyContext replyTo={replyTo} onClear={onClearReplyTo} />}
       {refusal && <RefusalBanner result={refusal} floorHolder={floorHolder} />}
       {deliveryNote && (
-        <div className="comms-delivery-note" data-testid="comms-delivery-note">
+        <div className="comms-delivery-note" data-testid="comms-delivery-note" role="status" aria-live="polite">
           {deliveryNote}
         </div>
       )}
