@@ -24,7 +24,7 @@ import {
   onViewRequest,
 } from "./ipc/events";
 import { reconcileSettings } from "./ipc/settingsSync";
-import { invoke, isTauri } from "./ipc/transport";
+import { isTauri } from "./ipc/transport";
 import { wsClient } from "./ipc/wsClient";
 import { env, platform } from "./platform";
 import { ConnectionBanner } from "./remote/ConnectionBanner";
@@ -107,10 +107,7 @@ function App() {
       void platform.window
         .takeOpenProjectRequest()
         .then((path) => {
-          if (path) return useTermStore.getState().openProjectPath(path).then(() => {
-            const projectId = useTermStore.getState().selection[0]?.id;
-            if (projectId) return invoke("heddle_ensure_project_default_room", { projectId });
-          });
+          if (path) return useTermStore.getState().openProjectPath(path);
         })
         .catch(() => {
           // Platform/import layers already report errors; prevent an unhandled rejection in the event callback.

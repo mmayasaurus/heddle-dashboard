@@ -97,6 +97,10 @@ while True:
         payload = {"revoked": MODE == "whoami_revoked", "identity": "operator"}
     elif MODE == "refused":
         payload = {"outcome": "refused", "code": "floor-held", "reason": "held by someone"}
+    elif MODE == "refused_create_room" and name == "create_room":
+        payload = {"outcome": "refused", "code": "room-refused", "reason": "room creation refused"}
+    elif MODE == "refused_join_room" and name == "join_room":
+        payload = {"outcome": "refused", "code": "member-refused", "reason": "member add refused"}
     elif MODE == "echo_args":
         payload = args
     elif MODE == "record_calls":
@@ -602,7 +606,10 @@ async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_
         crate::db::repo::list_room_associations(&conn).unwrap()
     };
     assert_eq!(associations.len(), 1, "reopening must not duplicate the association");
-    assert_eq!(associations[0].room_name, "hed-169-project-all");
+    assert_eq!(
+        associations[0].room_name,
+        format!("hed-169-project-{}-all", project.id)
+    );
     assert_eq!(associations[0].project_id, project.id);
     assert!(associations[0].is_default);
 
@@ -615,9 +622,18 @@ async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_
         .iter()
         .filter(|call| call["tool"] == "create_room")
         .collect();
-    assert_eq!(create_calls.len(), 1, "reopening must not create a duplicate room");
-    assert_eq!(create_calls[0]["args"]["name"], "hed-169-project-all");
-    assert_eq!(create_calls[0]["args"]["open"], false, "the default room must be closed");
+    assert_eq!(
+        create_calls.len(),
+        2,
+        "reopening must re-enforce that its existing default room is closed"
+    );
+    for call in create_calls {
+        assert_eq!(
+            call["args"]["name"],
+            format!("hed-169-project-{}-all", project.id)
+        );
+        assert_eq!(call["args"]["open"], false, "the default room must be closed");
+    }
 
     let joined: BTreeSet<String> = calls
         .iter()
@@ -631,6 +647,150 @@ async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_
         .collect();
     assert_eq!(joined, BTreeSet::from(["R".to_string()]));
     assert_eq!(left, BTreeSet::from(["T".to_string()]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_same_slug_projects_get_distinct_default_rooms() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "record_calls");
+
+    let root_a = dir.path().join("first").join("Foo Bar");
+    let root_b = dir.path().join("second").join("Foo-Bar");
+    std::fs::create_dir_all(&root_a).unwrap();
+    std::fs::create_dir_all(&root_b).unwrap();
+    let (project_a, project_b) = {
+        let conn = ctx.db().conn.lock().unwrap();
+        (
+            crate::db::repo::import_project(&conn, root_a.to_str().unwrap()).unwrap(),
+            crate::db::repo::import_project(&conn, root_b.to_str().unwrap()).unwrap(),
+        )
+    };
+
+    let no_agents = BTreeSet::new();
+    provision_default_project_room_with_members(&ctx, &project_a, &no_agents, &no_agents)
+        .await
+        .expect("the first project should provision");
+    provision_default_project_room_with_members(&ctx, &project_b, &no_agents, &no_agents)
+        .await
+        .expect("the second project should provision");
+    shutdown().await;
+
+    let calls: Vec<Value> = std::fs::read_to_string(dir.path().join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let rooms: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "create_room")
+        .map(|call| call["args"]["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(rooms.len(), 2, "slug collisions must not share a default room");
+    assert!(rooms.contains(&format!("foo-bar-{}-all", project_a.id)));
+    assert!(rooms.contains(&format!("foo-bar-{}-all", project_b.id)));
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 2);
+    assert!(associations.iter().all(|association| association.is_default));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_refused_create_leaves_no_default_room_association() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "refused_create_room");
+
+    let project_root = dir.path().join("refused-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let no_agents = BTreeSet::new();
+
+    let error = provision_default_project_room_with_members(&ctx, &project, &no_agents, &no_agents)
+        .await
+        .expect_err("a refused room create must stop provisioning");
+    assert!(error.contains("room-refused"));
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert!(
+        associations.is_empty(),
+        "a refused create must not leave a dangling default association"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_83_refused_member_add_leaves_no_default_room_association() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "refused_join_room");
+
+    let project_root = dir.path().join("member-refused-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let agents = BTreeSet::from(["R".to_string()]);
+    let no_members = BTreeSet::new();
+
+    let error = provision_default_project_room_with_members(&ctx, &project, &agents, &no_members)
+        .await
+        .expect_err("a refused member add must stop provisioning");
+    assert!(error.contains("member-refused"));
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert!(associations.is_empty());
+}
+
+#[tokio::test]
+async fn regression_pr_83_concurrent_default_association_keeps_one_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    let project_root = dir.path().join("concurrent-project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let room = default_project_room_name(&project.name, &project.id);
+
+    let (first, second) = tokio::join!(
+        associate_default_room(&ctx, room.clone(), project.id.clone()),
+        associate_default_room(&ctx, room.clone(), project.id.clone()),
+    );
+    first.expect("the first association attempt should succeed");
+    second.expect("the concurrent association attempt should converge");
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 1);
+    assert_eq!(associations[0].room_name, room);
+    assert!(associations[0].is_default);
 }
 
 #[cfg(unix)]

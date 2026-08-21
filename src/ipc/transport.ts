@@ -142,6 +142,7 @@ const DIRECT_DESKTOP_CMDS = new Set([
   "heddle_comms_operator_status",
   "heddle_comms_send",
   "heddle_comms_create_room",
+  "heddle_ensure_project_default_room",
   "heddle_comms_add_member",
   "heddle_comms_remove_member",
 ]);

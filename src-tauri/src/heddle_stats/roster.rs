@@ -256,6 +256,33 @@ mod tests {
     }
 
     #[test]
+    fn regression_pr_83_non_git_project_root_remains_an_agent_scope() {
+        let non_git_root = "/projects/plain-directory";
+        let worktrees = project_worktrees_or_root(
+            non_git_root,
+            Err("Not a git repository: /projects/plain-directory".to_string()),
+        );
+        let agents = vec![FleetAgent {
+            name: "R".to_string(),
+            model: None,
+            pid: 1,
+            session_id: String::new(),
+            cwd: "/projects/plain-directory/nested".to_string(),
+            status: String::new(),
+            kind: String::new(),
+            updated_at_ms: 0,
+            alive: true,
+            workers: vec![],
+        }];
+
+        assert_eq!(worktrees, vec![non_git_root.to_string()]);
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            BTreeSet::from(["R".to_string()])
+        );
+    }
+
+    #[test]
     fn ps_args_parses_pid_and_full_argv_line() {
         let args = parse_ps_args(
             "  101 claude --resume abc123 --model claude-opus-4-8\n  102 /usr/bin/claude --model=claude-fable-5\n",
@@ -390,8 +417,16 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
 /// registered worktrees. `FleetAgent::name` is the broker address: the existing room member picker
 /// passes it directly to `heddle_comms_add_member`.
 pub fn project_agent_addresses(project_root: &str) -> Result<BTreeSet<String>, String> {
-    let worktrees = crate::git::list_project_worktrees(project_root)?;
+    let worktrees = project_worktrees_or_root(project_root, crate::git::list_project_worktrees(project_root));
     Ok(project_agent_addresses_in_worktrees(&worktrees, &live_fleet_agents()))
+}
+
+/// A non-Git project has no worktree registry. Its root is still the project's only legitimate
+/// agent scope, so use it as the singleton membership set rather than aborting room provisioning.
+/// Falling back also lets a project receive its closed default room when Git is temporarily
+/// unavailable; the roster is simply empty unless a live agent is rooted below that directory.
+fn project_worktrees_or_root(project_root: &str, worktrees: Result<Vec<String>, String>) -> Vec<String> {
+    worktrees.unwrap_or_else(|_| vec![project_root.to_string()])
 }
 
 fn project_agent_addresses_in_worktrees(
