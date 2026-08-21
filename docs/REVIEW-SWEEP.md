@@ -53,7 +53,7 @@ Most review applications trigger automatically on push. A couple need an explici
 
 Certain operational automated outputs should be recognized as non-findings, documented during review, and bypassed:
 
-- Stale rate-limit or error notices left on older PRs by bots that have since been removed (e.g. lingering "rate limit exceeded" or "OPENAI_API_KEY not set" bodies) — a removed bot posts nothing new, so any body from one is a non-finding.
+- Stale rate-limit or configuration-error notices from a bot that has since been removed (e.g. lingering "rate limit exceeded" or "OPENAI_API_KEY not set" bodies) — those operational notices are non-findings. A **substantive** review a bot left before it was removed still counts: removal stops new reviews, it does not retract old ones, so keep dispositioning existing bodies against the latest commit.
 - A "CI failed" report from a bot when the underlying failure is a non-required job rather than a real defect.
 - A **pending** `gate`, `semgrep`, or `gitleaks` title/body-edit echo while its matching commit-path leaf is still running. Confirm the job summary says it is waiting for the SHA-bound verdict, then wait for its final conclusion. A final skipped, cancelled, or red public check is a finding, not noise.
 
