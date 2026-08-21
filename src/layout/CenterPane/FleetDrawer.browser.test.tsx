@@ -207,6 +207,21 @@ describe("FleetDrawer Claude account cycler", () => {
     await waitFor(() => expect(accountDetailElement("acct3")).toBeTruthy());
     expect(screen.getByText(/fleet\.capturedMinutesAgo:\d+/)).toBeTruthy();
   });
+
+  it("labels a stale logged-in account as idle instead of stale", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_limits") return Promise.resolve([{
+        ...claude,
+        accounts: [{ ...claude.accounts[2], capturedAt: now - 60 * 60, stale: true }],
+        activeAccount: "acct3",
+      }]);
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(screen.getByText(/ · fleet\.idle$/)).toBeTruthy());
+    expect(screen.queryByText(/fleet\.stale/)).toBeNull();
+  });
 });
 
 // Real cursor payload shape (src-tauri/src/heddle_stats/cursor.rs + tests/fixtures/heddle_stats/

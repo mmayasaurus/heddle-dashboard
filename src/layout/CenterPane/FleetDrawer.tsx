@@ -861,10 +861,10 @@ function AccountCycler({
         ].filter((message): message is string => message != null);
         return (
           <>
-            <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}` : "—"}>
+            <div className="fleet-provcap-account-row fleet-provcap-captured-row" title={capturedMinutes != null ? `${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.idleHint")}` : ""}` : "—"}>
               {capturedMinutes != null ? (
-                <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " stale" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}`}>
-                  {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.stale")}` : ""}
+                <span className={"fleet-provcap-captured" + (stale && selectedAccount.loggedIn !== false ? " idle" : "")} title={`${t("fleet.capturedMinutesAgo", capturedMinutes)}${stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.idleHint")}` : ""}`}>
+                  {t("fleet.capturedMinutesAgo", capturedMinutes)}{stale && selectedAccount.loggedIn !== false ? ` · ${t("fleet.idle")}` : ""}
                 </span>
               ) : "—"}
             </div>
