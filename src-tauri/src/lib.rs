@@ -610,11 +610,14 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             #[cfg(windows)]
             register_aumid_for_notifications(&app.config().identifier, &app.package_info().name);
 
-            // Store the database under the application data directory.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("failed to get app data dir: {e}"))?;
+            // Store the database under the application data directory. Debug builds get a
+            // `.dev`-isolated sibling so a dev/worktree build never opens the installed app's
+            // production heddle.db (HED-159); create_dir_all makes the .dev dir on first run.
+            let data_dir = crate::host::gui_data_dir_for_build(
+                app.path()
+                    .app_data_dir()
+                    .map_err(|e| format!("failed to get app data dir: {e}"))?,
+            );
             std::fs::create_dir_all(&data_dir)
                 .map_err(|e| format!("failed to create data dir: {e}"))?;
             // Record data_dir so Windows SSH connections prefer bundled tools over a broken/missing PATH install.
