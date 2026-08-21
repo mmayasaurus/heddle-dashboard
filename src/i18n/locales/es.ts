@@ -944,6 +944,8 @@ const es: typeof en = {
   "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
   "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
   "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.deliveredNoLiveSession": (target) => `Entregado al registro — ${target} no tiene sesión activa, así que no recibirá un aviso en vivo (aún puede consultar el mensaje).`, // Delivered to the log — {target} has no live session…
+  "fleet.comms.broadcastInboxSplit": (inbox, total) => `${inbox} de ${total} destinatarios no tienen sesión activa — entregado a su bandeja de entrada.`, // {inbox} of {total} recipients have no live session…
   "fleet.comms.newRoom": "+ New room", // TODO translate
   "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
   "fleet.comms.newRoomModalTitle": "New room", // TODO translate

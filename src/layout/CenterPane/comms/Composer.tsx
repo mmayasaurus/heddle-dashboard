@@ -25,14 +25,30 @@ function refusalText(t: ReturnType<typeof useT>, result: CommsOperatorResult, fl
   return result.reason ?? t("fleet.comms.refusalGeneric");
 }
 
+function deliveryNoteText(t: ReturnType<typeof useT>, result: CommsOperatorResult, target: string): string | null {
+  if (result.outcome === "failed" && result.code === "no-live-session") {
+    return t("fleet.comms.deliveredNoLiveSession", target);
+  }
+  if (result.code !== "broadcast" || result.reason == null) return null;
+
+  const inboxSplit = /\d+\/(\d+) pushed, (\d+)\/\1 to inbox/.exec(result.reason);
+  if (!inboxSplit) return null;
+  const [, recipientCount, inboxCount] = inboxSplit;
+  if (Number(inboxCount) === 0) return null;
+  return t("fleet.comms.broadcastInboxSplit", Number(inboxCount), Number(recipientCount));
+}
+
 /** Owns the send call + its outcome. Never clears `sending`'s caller-owned text on refusal/error —
  *  only `onDone` (called on confirmed success) is responsible for that, via the caller's callback. */
-function useComposerSend(target: string | null, replyToId: number | undefined, onDone: () => void) {
+function useComposerSend(target: string | null, replyToId: number | undefined, onDone: () => void, t: ReturnType<typeof useT>) {
   const [sending, setSending] = useState(false);
   const [refusal, setRefusal] = useState<CommsOperatorResult | null>(null);
+  const [deliveryNote, setDeliveryNote] = useState<string | null>(null);
 
   const send = async (body: string) => {
     if (target == null) return;
+    setRefusal(null);
+    setDeliveryNote(null);
     setSending(true);
     try {
       const raw = await invoke<unknown>("heddle_comms_send", { target, body, replyTo: replyToId ?? null });
@@ -41,7 +57,7 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
         setRefusal(result);
         return;
       }
-      setRefusal(null);
+      setDeliveryNote(deliveryNoteText(t, result, target));
       onDone();
     } catch (e) {
       setRefusal(operatorErrorResult(e));
@@ -50,7 +66,7 @@ function useComposerSend(target: string | null, replyToId: number | undefined, o
     }
   };
 
-  return { sending, refusal, setRefusal, send };
+  return { sending, refusal, setRefusal, deliveryNote, setDeliveryNote, send };
 }
 
 interface ReplyContextProps {
@@ -157,11 +173,11 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo,
   // not a body prefix. Prefixing the text would post an ordinary room message that merely STARTS
   // with "@all" — it would look sent and reach nobody extra. The toggle changes the destination.
   const effectiveTarget = atAll ? "@all" : target;
-  const { sending, refusal, setRefusal, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
+  const { sending, refusal, setRefusal, deliveryNote, setDeliveryNote, send } = useComposerSend(effectiveTarget, replyTo?.id, () => {
     setText("");
     onClearReplyTo();
     onSent?.();
-  });
+  }, t);
 
   // Composer state is per-TARGET, not global: a half-typed body, the @all toggle, and a stale
   // refusal banner all belong to the room/DM they were composed for. Switching the active target
@@ -172,7 +188,8 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo,
     setText("");
     setAtAll(false);
     setRefusal(null);
-  }, [target, setRefusal]);
+    setDeliveryNote(null);
+  }, [target, setDeliveryNote, setRefusal]);
 
   const hint = operatorHint(t, status.reason);
   const disabled = !status.available || target == null || sending;
@@ -191,6 +208,11 @@ export function Composer({ target, status, floorHolder, replyTo, onClearReplyTo,
     <div className="comms-composer" data-testid="comms-composer">
       {replyTo && <ReplyContext replyTo={replyTo} onClear={onClearReplyTo} />}
       {refusal && <RefusalBanner result={refusal} floorHolder={floorHolder} />}
+      {deliveryNote && (
+        <div className="comms-delivery-note" data-testid="comms-delivery-note">
+          {deliveryNote}
+        </div>
+      )}
       {hint && (
         <div className="comms-composer-hint" data-testid="comms-composer-hint">
           {hint}

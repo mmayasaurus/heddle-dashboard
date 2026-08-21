@@ -973,6 +973,8 @@ const en = {
   "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.",
   "fleet.comms.refusalFloorHeld": (holder: string) => `${holder} holds the floor — try again shortly.`,
   "fleet.comms.refusalGeneric": "The broker refused this message.",
+  "fleet.comms.deliveredNoLiveSession": (target: string) => `Delivered to the log — ${target} has no live session, so it won't get a live ping (it can still pull the message).`,
+  "fleet.comms.broadcastInboxSplit": (inbox: number, total: number) => `${inbox} of ${total} recipients have no live session — delivered to their inbox.`,
   "fleet.comms.newRoom": "+ New room",
   "fleet.comms.newRoomTitle": "New room — operator and orchestrators only",
   "fleet.comms.newRoomModalTitle": "New room",

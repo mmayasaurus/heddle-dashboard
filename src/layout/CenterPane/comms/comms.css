@@ -647,6 +647,14 @@
   padding: 4px 8px;
   font-size: 11.5px;
 }
+.comms-delivery-note {
+  color: var(--text-dim);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
 .comms-composer-hint {
   color: var(--yellow);
   font-size: 11px;
