@@ -148,6 +148,126 @@ describe("Composer — success clears and never inserts locally", () => {
   });
 });
 
+describe("Composer — delivery notes for logged, non-live sends (HED-298)", () => {
+  it("shows a note for a deaf DM while clearing the logged message", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session; it can pull the message from the log" });
+    render(<Composer target="S" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "please review" } });
+    fireEvent.click(sendBtn());
+
+    const deliveryNote = await screen.findByTestId("comms-delivery-note");
+    expect(deliveryNote.textContent).toContain("S has no live session");
+    expect(deliveryNote.getAttribute("role")).toBe("status");
+    expect(deliveryNote.getAttribute("aria-live")).toBe("polite");
+    expect(input().value).toBe("");
+    expect(screen.queryByTestId("comms-refusal")).toBeNull();
+  });
+
+  it("shows the inbox-recipient count for a broadcast inbox split while clearing the draft", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "sent", code: "broadcast", reason: "1/3 pushed, 2/3 to inbox" });
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.click(within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox"));
+    fireEvent.change(input(), { target: { value: "attention everyone" } });
+    fireEvent.click(sendBtn());
+
+    expect((await screen.findByTestId("comms-delivery-note")).textContent).toContain("2 of 3 recipients");
+    expect(input().value).toBe("");
+  });
+
+  it.each([
+    ["all-pushed broadcast", { outcome: "sent", code: "broadcast", reason: "3/3 pushed, 0/3 to inbox" }],
+    ["pull-model room", { outcome: "logged", code: "room-pull" }],
+    ["live DM", { outcome: "sent", code: "queued-for-channel", reason: "session S will inject it" }],
+    ["no-recipient send", { outcome: "logged", code: "no-recipients" }],
+  ])("does not show a delivery note for a %s", async (_label, result) => {
+    mockInvoke.mockResolvedValue(result);
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "logged as expected" } });
+    fireEvent.click(sendBtn());
+
+    await waitFor(() => expect(input().value).toBe(""));
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+  });
+
+  it("keeps a refusal distinct: draft preserved and no delivery note", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "refused", code: "floor-held", reason: "floor-held" });
+    render(<Composer target="#fleet" status={AVAILABLE} floorHolder="V" replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "wait for me" } });
+    fireEvent.click(sendBtn());
+
+    await screen.findByTestId("comms-refusal");
+    expect(input().value).toBe("wait for me");
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+  });
+
+  it("clears an earlier delivery note when a later send is refused", async () => {
+    mockInvoke.mockResolvedValueOnce({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session" });
+    mockInvoke.mockResolvedValueOnce({ outcome: "refused", code: "floor-held", reason: "floor-held" });
+    render(<Composer target="S" status={AVAILABLE} floorHolder="V" replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "first message" } });
+    fireEvent.click(sendBtn());
+    await screen.findByTestId("comms-delivery-note");
+
+    fireEvent.change(input(), { target: { value: "retry message" } });
+    fireEvent.click(sendBtn());
+
+    await screen.findByTestId("comms-refusal");
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+  });
+});
+
+describe("regression PR#89 — stale delivery results", () => {
+  it("does not apply a deaf-DM result or clear a new target's draft after switching targets", async () => {
+    let resolveSend!: (value: unknown) => void;
+    mockInvoke.mockImplementation(() => new Promise((resolve) => (resolveSend = resolve)));
+    const { rerender } = render(<Composer target="S" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "for S" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(input().disabled).toBe(true));
+
+    rerender(<Composer target="T" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+    await waitFor(() => expect(input().disabled).toBe(false));
+    fireEvent.change(input(), { target: { value: "draft for T" } });
+
+    resolveSend({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session" });
+
+    await waitFor(() => expect(input().value).toBe("draft for T"));
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+    expect(screen.queryByTestId("comms-refusal")).toBeNull();
+  });
+
+  it("does not apply an @all result after switching rooms", async () => {
+    let resolveSend!: (value: unknown) => void;
+    mockInvoke.mockImplementation(() => new Promise((resolve) => (resolveSend = resolve)));
+    const onClearReplyTo = vi.fn();
+    const replyTo = mkReplyTo();
+    const { rerender } = render(<Composer target="#a" status={AVAILABLE} floorHolder={null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />);
+
+    fireEvent.click(within(screen.getByTestId("comms-atall-toggle")).getByRole("checkbox"));
+    fireEvent.change(input(), { target: { value: "for everyone" } });
+    fireEvent.click(sendBtn());
+    await waitFor(() => expect(input().disabled).toBe(true));
+
+    rerender(<Composer target="#b" status={AVAILABLE} floorHolder={null} replyTo={replyTo} onClearReplyTo={onClearReplyTo} />);
+    await waitFor(() => expect(input().disabled).toBe(false));
+    fireEvent.change(input(), { target: { value: "draft for #b" } });
+
+    resolveSend({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session" });
+
+    await waitFor(() => expect(input().value).toBe("draft for #b"));
+    expect(screen.queryByTestId("comms-delivery-note")).toBeNull();
+    expect(screen.queryByTestId("comms-refusal")).toBeNull();
+    expect(screen.getByTestId("comms-reply-ctx")).toBeTruthy();
+    expect(onClearReplyTo).not.toHaveBeenCalled();
+  });
+});
+
 describe("Composer — Enter vs Shift+Enter", () => {
   it("Enter (no shift) sends the message", async () => {
     mockInvoke.mockResolvedValue({ outcome: "sent", code: null, reason: null });
@@ -307,6 +427,19 @@ describe("Composer — resets draft state when the active target changes (B4)", 
     fireEvent.click(toggle);
 
     expect(input().value).toBe("still typing");
+  });
+
+  it("clears a delivery note when target changes", async () => {
+    mockInvoke.mockResolvedValue({ outcome: "failed", code: "no-live-session", reason: "S has no live comms session" });
+    const { rerender } = render(<Composer target="S" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    fireEvent.change(input(), { target: { value: "check this" } });
+    fireEvent.click(sendBtn());
+    await screen.findByTestId("comms-delivery-note");
+
+    rerender(<Composer target="T" status={AVAILABLE} floorHolder={null} replyTo={null} onClearReplyTo={vi.fn()} />);
+
+    await waitFor(() => expect(screen.queryByTestId("comms-delivery-note")).toBeNull());
   });
 });
 

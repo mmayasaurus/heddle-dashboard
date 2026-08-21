@@ -934,6 +934,8 @@ const ja: typeof en = {
   "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
   "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
   "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.deliveredNoLiveSession": (target) => `ログに配信しました — ${target} にはライブセッションがないため、ライブ通知は届きません（メッセージは引き続き取得できます）。`, // Delivered to the log — {target} has no live session…
+  "fleet.comms.broadcastInboxSplit": (inbox, total) => `${total} 人中 ${inbox} 人の受信者にはライブセッションがありません — 受信トレイに配信しました。`, // {inbox} of {total} recipients have no live session…
   "fleet.comms.newRoom": "+ New room", // TODO translate
   "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
   "fleet.comms.newRoomModalTitle": "New room", // TODO translate

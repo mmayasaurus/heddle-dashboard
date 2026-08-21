@@ -923,6 +923,8 @@ const zhTW: typeof en = {
   "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
   "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
   "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.deliveredNoLiveSession": (target) => `已傳送到記錄 — ${target} 沒有即時工作階段，因此不會收到即時通知（仍可擷取此訊息）。`, // Delivered to the log — {target} has no live session…
+  "fleet.comms.broadcastInboxSplit": (inbox, total) => `${total} 位收件者中有 ${inbox} 位沒有即時工作階段 — 已傳送到他們的收件匣。`, // {inbox} of {total} recipients have no live session…
   "fleet.comms.newRoom": "+ New room", // TODO translate
   "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
   "fleet.comms.newRoomModalTitle": "New room", // TODO translate

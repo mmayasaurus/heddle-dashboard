@@ -915,6 +915,8 @@ const vi: typeof en = {
   "fleet.comms.operatorHintSpawnFailed": "The operator connection failed to start — check the logs and try again.", // TODO translate
   "fleet.comms.refusalFloorHeld": (holder) => `${holder} holds the floor — try again shortly.`, // TODO translate
   "fleet.comms.refusalGeneric": "The broker refused this message.", // TODO translate
+  "fleet.comms.deliveredNoLiveSession": (target) => `Đã gửi vào nhật ký — ${target} không có phiên hoạt động nên sẽ không nhận được thông báo trực tiếp (vẫn có thể lấy tin nhắn).`, // Delivered to the log — {target} has no live session…
+  "fleet.comms.broadcastInboxSplit": (inbox, total) => `${inbox} trong số ${total} người nhận không có phiên hoạt động — đã gửi vào hộp thư đến của họ.`, // {inbox} of {total} recipients have no live session…
   "fleet.comms.newRoom": "+ New room", // TODO translate
   "fleet.comms.newRoomTitle": "New room — operator and orchestrators only", // TODO translate
   "fleet.comms.newRoomModalTitle": "New room", // TODO translate
