@@ -47,6 +47,22 @@ jobs:
         with:
           persist-credentials: false
 
+      # Fail-closed scan-surface guard (HED-252, mirrors the semgrep volume guard,
+      # HED-70): actionlint auto-discovers `.github/workflows/` and exits 0 with no
+      # output when it finds nothing, so an empty checkout or a broken discovery reads
+      # as a green pass. actionlint reports no scanned-file count (no JSON mode; -format
+      # renders errors only), so assert the discovered surface is non-empty here — this
+      # repo always has workflows, so 0 means the scan is empty, not clean.
+      - name: Guard — non-empty scan surface
+        run: |
+          set -eu
+          N=$(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$N" -eq 0 ]; then
+            echo "::error::actions-hygiene: 0 workflow files under .github/workflows — the scan surface is empty (a green scan of nothing is not a pass). NOT a clean pass"
+            exit 1
+          fi
+          echo "scan surface: $N workflow file(s) under .github/workflows"
+
       # rhysd/actionlint's documented Docker usage, version- AND digest-pinned
       # (the docs' `:latest` is a moving target). Digest = the multi-arch
       # manifest list for 1.7.12 on Docker Hub, resolved 2026-08-15.
@@ -74,6 +90,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Fail-closed scan-surface guard (HED-252, mirrors the semgrep volume guard,
+      # HED-70): zizmor auto-discovers `.github/` and exits 0 when it finds nothing,
+      # so an empty checkout reads as a green pass. Neither the zizmor CLI (no --format
+      # emits an audited-file count) nor zizmor-action (only a SARIF output) reports
+      # scanned volume, so assert the workflow surface is non-empty — this repo always
+      # has workflows, so 0 means the scan is empty, not clean.
+      - name: Guard — non-empty scan surface
+        run: |
+          set -eu
+          N=$(find .github/workflows -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$N" -eq 0 ]; then
+            echo "::error::actions-hygiene: 0 workflow files under .github/workflows — the scan surface is empty (a green scan of nothing is not a pass). NOT a clean pass"
+            exit 1
+          fi
+          echo "scan surface: $N workflow file(s) under .github/workflows"
 
       # zizmor's official action; defaults = persona regular, online audits on
       # (uses the job token for read-only GitHub API lookups). SARIF upload
