@@ -6,7 +6,7 @@ const { chatColumnProps, poll } = vi.hoisted(() => ({
     activeTarget: string | null;
     highlightId: number | null;
     replyTo: { id: number } | null;
-    onNeedsHumanRowClick: (row: { id: number; target: string }) => void;
+    onNeedsHumanRowClick: (row: { id: number; sender: string; target: string }) => void;
   }[],
   poll: {
     loaded: true,
@@ -68,9 +68,9 @@ describe("regression PR#71 — chat session pane renders its target's ChatColumn
     render(<ChatSessionPane chatTarget="#fleet" />);
 
     act(() => {
-      chatColumnProps[0].onNeedsHumanRowClick({ id: 19, target: "@operator" });
+      chatColumnProps[0].onNeedsHumanRowClick({ id: 19, sender: "R", target: "@all" });
     });
-    expect(chatColumnProps[1].activeTarget).toBe("@operator");
+    expect(chatColumnProps[1].activeTarget).toBe("R");
     expect(chatColumnProps[1].highlightId).toBe(19);
     expect(chatColumnProps[1].replyTo?.id).toBe(19);
   });
@@ -79,7 +79,7 @@ describe("regression PR#71 — chat session pane renders its target's ChatColumn
     const { rerender } = render(<ChatSessionPane chatTarget="#fleet" />);
 
     act(() => {
-      chatColumnProps[0].onNeedsHumanRowClick({ id: 19, target: "@operator" });
+      chatColumnProps[0].onNeedsHumanRowClick({ id: 19, sender: "R", target: "@all" });
     });
     rerender(<ChatSessionPane chatTarget="#other-room" />);
 
