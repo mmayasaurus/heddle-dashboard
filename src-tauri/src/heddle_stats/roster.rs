@@ -3,7 +3,7 @@
 //! `kill(pid, 0)`) with the in-flight heddle workers each one owns, plus an "(orphaned)" bucket
 //! for workers whose orchestrator is gone.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::Serialize;
 
@@ -205,6 +205,57 @@ mod tests {
     }
 
     #[test]
+    fn regression_pr_169_project_agents_use_their_broker_addresses_from_exact_worktrees() {
+        let agents = vec![
+            FleetAgent {
+                name: "R".to_string(),
+                model: None,
+                pid: 1,
+                session_id: String::new(),
+                cwd: "/projects/spinventory/.worktrees/r".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "S".to_string(),
+                model: None,
+                pid: 2,
+                session_id: String::new(),
+                cwd: "/projects/spinventory".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+            FleetAgent {
+                name: "T".to_string(),
+                model: None,
+                pid: 3,
+                session_id: String::new(),
+                cwd: "/projects/spinventory-not-a-worktree".to_string(),
+                status: String::new(),
+                kind: String::new(),
+                updated_at_ms: 0,
+                alive: true,
+                workers: vec![],
+            },
+        ];
+        let worktrees = vec![
+            "/projects/spinventory".to_string(),
+            "/projects/spinventory/.worktrees/r".to_string(),
+        ];
+
+        assert_eq!(
+            project_agent_addresses_in_worktrees(&worktrees, &agents),
+            std::collections::BTreeSet::from(["R".to_string(), "S".to_string()])
+        );
+    }
+
+    #[test]
     fn ps_args_parses_pid_and_full_argv_line() {
         let args = parse_ps_args(
             "  101 claude --resume abc123 --model claude-opus-4-8\n  102 /usr/bin/claude --model=claude-fable-5\n",
@@ -333,6 +384,39 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
     }
 
     verify_and_retain(agents)
+}
+
+/// Broker addresses for fleet agents whose working directories belong to one of the project's
+/// registered worktrees. `FleetAgent::name` is the broker address: the existing room member picker
+/// passes it directly to `heddle_comms_add_member`.
+pub fn project_agent_addresses(project_root: &str) -> Result<BTreeSet<String>, String> {
+    let worktrees = crate::git::list_project_worktrees(project_root)?;
+    Ok(project_agent_addresses_in_worktrees(&worktrees, &live_fleet_agents()))
+}
+
+fn project_agent_addresses_in_worktrees(
+    worktrees: &[String],
+    agents: &[FleetAgent],
+) -> BTreeSet<String> {
+    agents
+        .iter()
+        .filter(|agent| agent_in_project_worktrees(&agent.cwd, worktrees))
+        .map(|agent| agent.name.clone())
+        .collect()
+}
+
+/// Rust counterpart to HED-167's `agentInProjectWorktrees`: compare the agent cwd against the
+/// exact registered worktree set, allowing descendants but never a loose shared-prefix match.
+fn agent_in_project_worktrees(agent_cwd: &str, worktrees: &[String]) -> bool {
+    let cwd = normalize_worktree_path(agent_cwd);
+    worktrees.iter().any(|worktree| {
+        let root = normalize_worktree_path(worktree);
+        !root.is_empty() && (cwd == root || cwd.starts_with(&(root + "/")))
+    })
+}
+
+fn normalize_worktree_path(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
 fn verify_and_retain(agents: Vec<FleetAgent>) -> Vec<FleetAgent> {

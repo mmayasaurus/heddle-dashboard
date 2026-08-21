@@ -885,6 +885,7 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             comms::operator::heddle_comms_operator_status,
             comms::operator::heddle_comms_send,
             comms::operator::heddle_comms_create_room,
+            comms::operator::heddle_ensure_project_default_room,
             comms::operator::heddle_comms_add_member,
             comms::operator::heddle_comms_remove_member,
         ])

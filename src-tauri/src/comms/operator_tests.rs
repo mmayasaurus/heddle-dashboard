@@ -19,7 +19,7 @@
 //! same cached client/backoff fields.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -59,7 +59,7 @@ fn put_settings(ctx: &AppCtx, value: &Value) {
 /// answers `tools/call` per `mode`. `__MODE__` is substituted at write time (not read from an env
 /// var) so parallel tests never share mutable process environment.
 const FAKE_CHILD_TEMPLATE: &str = r#"#!/usr/bin/env python3
-import sys, json
+import sys, json, os
 
 MODE = "__MODE__"
 
@@ -99,6 +99,10 @@ while True:
         payload = {"outcome": "refused", "code": "floor-held", "reason": "held by someone"}
     elif MODE == "echo_args":
         payload = args
+    elif MODE == "record_calls":
+        with open(os.path.join(os.path.dirname(__file__), "calls.jsonl"), "a") as calls_file:
+            calls_file.write(json.dumps({"tool": name, "args": args}) + "\n")
+        payload = {"ok": True}
     else:
         payload = {"ok": True}
     send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
@@ -565,6 +569,68 @@ async fn create_room_sends_closed_over_the_wire_when_open_omitted() {
         .expect("echo_args always succeeds");
     assert_eq!(echoed.get("open"), Some(&Value::Bool(false)));
     shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn regression_pr_169_opening_a_project_provisions_one_closed_default_room_with_exact_members() {
+    let _serial = test_serial().lock().await;
+    reset_state().await;
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = test_ctx(dir.path());
+    configure_fake_child(&ctx, dir.path(), "record_calls");
+
+    let project_root = dir.path().join("HED 169 Project");
+    std::fs::create_dir(&project_root).unwrap();
+    let project = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::import_project(&conn, project_root.to_str().unwrap()).unwrap()
+    };
+    let project_agents = BTreeSet::from(["R".to_string(), "S".to_string()]);
+    let existing_members = BTreeSet::from(["S".to_string(), "T".to_string()]);
+
+    provision_default_project_room_with_members(&ctx, &project, &project_agents, &existing_members)
+        .await
+        .expect("opening a project should provision its default room");
+    provision_default_project_room_with_members(&ctx, &project, &project_agents, &project_agents)
+        .await
+        .expect("reopening a project should reuse its default room");
+    shutdown().await;
+
+    let associations = {
+        let conn = ctx.db().conn.lock().unwrap();
+        crate::db::repo::list_room_associations(&conn).unwrap()
+    };
+    assert_eq!(associations.len(), 1, "reopening must not duplicate the association");
+    assert_eq!(associations[0].room_name, "hed-169-project-all");
+    assert_eq!(associations[0].project_id, project.id);
+    assert!(associations[0].is_default);
+
+    let calls: Vec<Value> = std::fs::read_to_string(dir.path().join("calls.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let create_calls: Vec<&Value> = calls
+        .iter()
+        .filter(|call| call["tool"] == "create_room")
+        .collect();
+    assert_eq!(create_calls.len(), 1, "reopening must not create a duplicate room");
+    assert_eq!(create_calls[0]["args"]["name"], "hed-169-project-all");
+    assert_eq!(create_calls[0]["args"]["open"], false, "the default room must be closed");
+
+    let joined: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "join_room")
+        .map(|call| call["args"]["address"].as_str().unwrap().to_string())
+        .collect();
+    let left: BTreeSet<String> = calls
+        .iter()
+        .filter(|call| call["tool"] == "leave_room")
+        .map(|call| call["args"]["address"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(joined, BTreeSet::from(["R".to_string()]));
+    assert_eq!(left, BTreeSet::from(["T".to_string()]));
 }
 
 #[cfg(unix)]

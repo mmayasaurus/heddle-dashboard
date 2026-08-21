@@ -8,6 +8,7 @@
 use super::*;
 use crate::db::{repo, schema};
 use rusqlite::Connection;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Verbatim broker schema (pragmas, tables, indexes, append-only/lineage triggers) from
@@ -509,6 +510,30 @@ fn closed_room_reports_member_count_open_room_reports_null() {
     let leads = snap.rooms.iter().find(|r| r.target == "#leads").unwrap();
     assert!(!leads.open);
     assert_eq!(leads.member_count, Some(2));
+}
+
+#[test]
+fn regression_pr_169_room_members_reads_the_exact_closed_room_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("comms.db");
+    seeded_db(&path);
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "INSERT INTO rooms (name, created_by, created_at, open) \
+         VALUES ('hed-169-project-all', 'operator', '2026-08-16T12:00:00.000Z', 0); \
+         INSERT INTO room_members (room, address, added_by, added_at) \
+         VALUES ('hed-169-project-all', 'R', 'operator', '2026-08-16T12:00:00.000Z'); \
+         INSERT INTO room_members (room, address, added_by, added_at) \
+         VALUES ('hed-169-project-all', 'S', 'operator', '2026-08-16T12:00:00.000Z');",
+    )
+    .unwrap();
+    drop(conn);
+
+    assert_eq!(
+        room_members_at(&path, "hed-169-project-all").unwrap(),
+        BTreeSet::from(["R".to_string(), "S".to_string()])
+    );
+    assert!(room_members_at(&path, "other-room").unwrap().is_empty());
 }
 
 // ─────────────────────────────────────── test 9 ───────────────────────────────────────

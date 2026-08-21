@@ -35,6 +35,7 @@
 //! normal process exit (Rust does not run destructors for statics), which is exactly why the
 //! explicit `RunEvent::Exit` call is the one that matters.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -49,6 +50,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::heddle_stats::augmented_path;
 use crate::host::AppCtx;
+use crate::models::Project;
 
 /// Minimum time between spawn RETRY attempts after a spawn attempt itself just failed, so a
 /// persistently broken binary/root setting cannot be re-attempted on every single composer action.
@@ -676,6 +678,16 @@ fn create_room_args(name: String, topic: Option<String>, open: Option<bool>) -> 
     args
 }
 
+async fn create_room(
+    ctx: &AppCtx,
+    name: String,
+    topic: Option<String>,
+    open: Option<bool>,
+) -> Result<Value, String> {
+    let args = create_room_args(name, topic, open);
+    passthrough(ctx, "create_room", Some(args)).await
+}
+
 #[tauri::command]
 pub async fn heddle_comms_create_room(
     app: tauri::AppHandle,
@@ -683,8 +695,7 @@ pub async fn heddle_comms_create_room(
     topic: Option<String>,
     open: Option<bool>,
 ) -> Result<Value, String> {
-    let args = create_room_args(name, topic, open);
-    passthrough(&AppCtx::Tauri(app), "create_room", Some(args)).await
+    create_room(&AppCtx::Tauri(app), name, topic, open).await
 }
 
 #[tauri::command]
@@ -693,7 +704,7 @@ pub async fn heddle_comms_add_member(
     room: String,
     address: String,
 ) -> Result<Value, String> {
-    member_call(app, "join_room", room, address).await
+    member_call(&AppCtx::Tauri(app), "join_room", room, address).await
 }
 
 #[tauri::command]
@@ -702,11 +713,11 @@ pub async fn heddle_comms_remove_member(
     room: String,
     address: String,
 ) -> Result<Value, String> {
-    member_call(app, "leave_room", room, address).await
+    member_call(&AppCtx::Tauri(app), "leave_room", room, address).await
 }
 
 async fn member_call(
-    app: tauri::AppHandle,
+    ctx: &AppCtx,
     tool: &'static str,
     room: String,
     address: String,
@@ -714,7 +725,87 @@ async fn member_call(
     let mut args = Map::new();
     args.insert("room".into(), Value::String(room));
     args.insert("address".into(), Value::String(address));
-    passthrough(&AppCtx::Tauri(app), tool, Some(args)).await
+    passthrough(ctx, tool, Some(args)).await
+}
+
+/// Stable, broker-safe room name for a project's all-agent conversation. Project names are user
+/// editable, so this only runs before the first association; later opens reuse the HED-168 default
+/// association keyed by project ID.
+fn default_project_room_name(project_name: &str) -> String {
+    let mut slug = String::new();
+    for ch in project_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug = slug.trim_matches('-');
+    format!("{}-all", if slug.is_empty() { "project" } else { slug })
+}
+
+fn default_room_for_project(ctx: &AppCtx, project_id: &str) -> Result<Option<String>, String> {
+    Ok(crate::command_core::list_room_associations(ctx)?
+        .into_iter()
+        .find(|association| association.project_id == project_id && association.is_default)
+        .map(|association| association.room_name))
+}
+
+/// Creates the default room once, records the HED-168 default association, and converges the
+/// closed room's membership to `project_agents`. The explicit membership inputs keep the broker
+/// write sequence independently testable; production derives both sets in
+/// [`provision_default_project_room`].
+async fn provision_default_project_room_with_members(
+    ctx: &AppCtx,
+    project: &Project,
+    project_agents: &BTreeSet<String>,
+    existing_members: &BTreeSet<String>,
+) -> Result<(), String> {
+    let room = match default_room_for_project(ctx, &project.id)? {
+        Some(room) => room,
+        None => {
+            let room = default_project_room_name(&project.name);
+            create_room(ctx, room.clone(), None, Some(false)).await?;
+            crate::command_core::associate_room_to_project(ctx, &room, &project.id, true)?;
+            room
+        }
+    };
+
+    for address in project_agents.difference(existing_members) {
+        member_call(ctx, "join_room", room.clone(), address.clone()).await?;
+    }
+    for address in existing_members.difference(project_agents) {
+        member_call(ctx, "leave_room", room.clone(), address.clone()).await?;
+    }
+    Ok(())
+}
+
+/// Provisions the project's persisted default room on every project open. HED-167 supplies the
+/// project agent addresses from registered worktrees; HED-168 supplies the persisted default-room
+/// lookup and association, so reopening never creates a second room or association.
+pub async fn provision_default_project_room(ctx: &AppCtx, project: &Project) -> Result<(), String> {
+    let existing_members = match default_room_for_project(ctx, &project.id)? {
+        Some(room) => crate::comms::reader::room_members(&room).await?,
+        None => BTreeSet::new(),
+    };
+    let project_agents = crate::heddle_stats::roster::project_agent_addresses(&project.root_path)?;
+    provision_default_project_room_with_members(ctx, project, &project_agents, &existing_members).await
+}
+
+/// Ensures a project has exactly one closed default room and keeps its broker membership aligned
+/// with HED-167's project-worktree agent set.
+#[tauri::command]
+pub async fn heddle_ensure_project_default_room(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<(), String> {
+    let ctx = AppCtx::Tauri(app);
+    let project = crate::command_core::list_tree(&ctx)?
+        .projects
+        .into_iter()
+        .find(|project| project.id == project_id)
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    provision_default_project_room(&ctx, &project).await
 }
 
 /// Cancels the live child (if any) so its process is killed rather than merely dropped. `pub`
