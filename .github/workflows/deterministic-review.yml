@@ -111,112 +111,11 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA_FALLBACK: ${{ github.event.pull_request.base.sha }}
-        # POSIX sh on purpose: inside a `container:` the runner defaults to
-        # `sh -e`, not bash (first run of this workflow proved it — a bash
-        # array here failed with "syntax error: unexpected (").
-        #
-        # PR-controlled suppressions are neutralised (CodeRabbit, r3): every
-        # `.semgrepignore` in the PR tree is replaced by the BASE branch's copy
-        # (or removed if the base has none) and that swap is committed LOCALLY —
-        # `--baseline-commit` refuses a dirty tree, and the commit never leaves
-        # the runner (no credentials in .git). Inline `nosemgrep` comments are
-        # ignored via --disable-nosem. `.gitignore` is not a vector: semgrep
-        # only applies it to UNTRACKED files, and PR files are tracked.
-        run: |
-          set -u
-          # Container jobs: the workspace is owned by the runner uid, git in
-          # this step runs as the image user, and actions/checkout writes its
-          # safe.directory entry to a TEMPORARY HOME — so without this line
-          # every git call below dies with "dubious ownership" (round-4 run).
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          BASELINE=""
-          if [ -n "$IS_PR" ]; then
-            # actions/checkout checks out refs/pull/N/merge — GitHub's synthetic
-            # merge commit: first parent = the base branch tip actually merged,
-            # second parent = the PR head. Both facts are CHECKED (qodo, HED-80
-            # r1): HEAD^2 must be the PR head, otherwise this is some other
-            # merge commit (ref: override) and HEAD^1 would be an unrelated
-            # baseline. Fallback = merge-base of the CURRENT base tip and HEAD
-            # (fetch-depth 0 has origin/<base>), never the stale base.sha
-            # unless even that is unavailable.
-            if [ "$(git rev-parse -q --verify HEAD^2 2>/dev/null)" = "$PR_HEAD_SHA" ]; then
-              BASELINE=$(git rev-parse HEAD^1)
-            elif BASELINE=$(git merge-base "origin/$PR_BASE_REF" HEAD 2>/dev/null) && [ -n "$BASELINE" ]; then
-              echo "::warning::HEAD is not GitHub's synthetic merge of this PR — baseline = merge-base(origin/$PR_BASE_REF, HEAD)"
-            else
-              BASELINE="$BASE_SHA_FALLBACK"
-              echo "::warning::could not resolve the current base tip — falling back to pull_request.base.sha as the baseline (may lag main)"
-            fi
-          fi
-          if [ -n "$BASELINE" ]; then
-            git ls-files | grep -E '(^|/)\.semgrepignore$' | while IFS= read -r f; do
-              git rm -q -- "$f"
-            done
-            git ls-tree -r --name-only "$BASELINE" | grep -E '(^|/)\.semgrepignore$' | while IFS= read -r f; do
-              mkdir -p "$(dirname "$f")"; git show "$BASELINE:$f" > "$f"; git add -- "$f"
-            done
-            if ! git diff --cached --quiet; then
-              git -c user.name=ci -c user.email=ci@localhost commit -q -m "ci: base-branch .semgrepignore for the diff-aware scan"
-              echo "::notice::.semgrepignore differs from the base branch — scanned with the base branch's copy"
-            fi
-          fi
-          set -- scan --config p/typescript --config p/react --config p/rust \
-                 --metrics=off --disable-nosem --sarif-output=semgrep.sarif --json-output=semgrep.json \
-                 --exclude node_modules --exclude dist --exclude src-tauri/target --exclude src-tauri/gen
-          if [ -n "$BASELINE" ]; then
-            echo "diff-aware scan: baseline $BASELINE"
-            set -- "$@" --baseline-commit="$BASELINE"
-          else
-            echo "full scan (push to main)"
-          fi
-          # No --error: report-only tier. A tool crash / unparseable output is
-          # still an honest red (the upload step needs the file).
-          semgrep "$@"
-          # One-line receipt in the job summary. python3 is guaranteed in the
-          # image (the semgrep CLI is a Python package); jq is not (qodo, r3).
-          N=$(python3 -c 'import json; print(len(json.load(open("semgrep.sarif"))["runs"][0]["results"]))')
-          echo "semgrep: **$N** finding(s) (${BASELINE:+new vs base }${BASELINE:-full scan})" >> "$GITHUB_STEP_SUMMARY"
-          # ── Scanned-volume guard (HED-70): a green scanner is not proof it scanned.
-          #    gitleaks shipped GREEN with EMPTY scans in heddle#2 r3/r4 when its git
-          #    broke; semgrep already ABORTS (non-zero, so this step reds) when
-          #    --baseline-commit's git fails, so this guard covers the residue.
-          #    paths.scanned lists the files semgrep analysed (measured, uvx semgrep
-          #    1.173.0). semgrep emits NO paths.skipped, so on a PR a 0-scan cannot be
-          #    proven a real miss vs a legitimate skip (excludes / .semgrepignore /
-          #    deletions) — a PR 0-scan WARNS; only a full-main 0-scan or unreadable
-          #    output (schema drift) fails closed.
-          SCANNED=$(python3 -c 'import json,sys; p=json.load(open("semgrep.json")).get("paths") or {}; s=p.get("scanned"); print(len(s)) if isinstance(s,list) else sys.exit(3)' 2>/dev/null) \
-            || { echo "::error::semgrep scanned-volume unreadable (paths.scanned missing/unparseable in semgrep.json) — NOT a clean pass"; echo "semgrep: ❌ scanned-volume unreadable — NOT a clean pass" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
-          if [ -n "$BASELINE" ]; then
-            # PR: expected = in-language changed files MINUS the scan's own excludes.
-            # Keep both sets in sync with the scan flags above (excludes:
-            # node_modules / dist / src-tauri/target / src-tauri/gen; languages from
-            # p/typescript + p/react + p/rust → ts tsx js jsx mjs cjs rs). Too-narrow
-            # here only weakens the guard (safe); too-broad false-reds (unsafe).
-            CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASELINE"..HEAD) \
-              || { echo "::error::git diff failed for the semgrep scanned-volume guard — NOT a clean pass"; exit 1; }
-            INLANG=$(printf '%s\n' "$CHANGED" \
-              | grep -vE '(^|/)(node_modules|dist|src-tauri/(target|gen))/' \
-              | grep -cE '\.(ts|tsx|js|jsx|mjs|cjs|rs)$' || true)
-            if [ "$INLANG" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
-              # WARN, not RED: semgrep emits no paths.skipped, so a PR 0-scan cannot be
-              # proven a real miss vs a legitimate skip (nested excludes / .semgrepignore
-              # / deletions). Only a full-main 0-scan or unreadable output fails closed.
-              echo "::warning::semgrep scanned 0 targets while this PR changed $INLANG in-language file(s) — expected when they are all excluded / .semgrepignore'd, but verify it is not a scan miss."
-              echo "semgrep volume: scanned 0 target(s) with $INLANG in-language file(s) changed — verify (excludes/ignores expected)" >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "semgrep volume: scanned $SCANNED target(s); diff has $INLANG in-language file(s)" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            # main push (full scan): the repo always has TS + Rust source, so a real
-            # scan covers > 0 targets; 0 means the scan was empty (git broke, etc.).
-            if [ "$SCANNED" -eq 0 ]; then
-              echo "::error::semgrep scanned 0 targets on a full main scan, but the repo has TS/Rust source — the scan is empty (a green scanner is not a scan). NOT a clean pass"
-              echo "semgrep: ❌ full scan covered 0 targets — NOT a clean pass" >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            echo "semgrep volume: scanned $SCANNED target(s) (full scan)" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # Pass the workflow-evaluated runner.temp so the script writes its scan outputs to the
+          # exact path the Upload step reads (both now reference ${{ runner.temp }}), with no room
+          # for a $RUNNER_TEMP-vs-runner.temp divergence in the container (qodo, #84).
+          SEMGREP_OUTPUT_DIR: ${{ runner.temp }}
+        run: sh .github/scripts/semgrep-scan.sh
 
       - name: Upload SARIF to code scanning
         # Needs a write token — same-repo PRs and main pushes only; fork PRs
@@ -226,7 +125,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: ${{ runner.temp }}/semgrep.sarif
           category: semgrep
 
   semgrep:
