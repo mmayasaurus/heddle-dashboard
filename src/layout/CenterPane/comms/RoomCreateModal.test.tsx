@@ -50,6 +50,21 @@ describe("RoomCreateModal — validation", () => {
   });
 });
 
+describe("RoomCreateModal — operator gating", () => {
+  it("disables submission and exposes the operator hint when gated", () => {
+    render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} submitDisabled submitHint="operator unavailable" />);
+
+    expect(submitBtn().disabled).toBe(true);
+    expect(submitBtn().title).toBe("operator unavailable");
+  });
+
+  it("leaves submission enabled by default", () => {
+    render(<RoomCreateModal roster={ROSTER} onClose={vi.fn()} />);
+
+    expect(submitBtn().disabled).toBe(false);
+  });
+});
+
 describe("RoomCreateModal — create_room defaults and naming", () => {
   it("sends open:false by default, without picking the toggle", async () => {
     mockInvoke.mockImplementation((cmd: string) => Promise.resolve(cmd === "heddle_comms_create_room" ? ROOM_SUCCESS : MEMBER_SUCCESS));
