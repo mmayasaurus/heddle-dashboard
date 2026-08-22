@@ -248,6 +248,74 @@ fn empty_or_malformed_payloads_yield_no_entry() {
 }
 
 #[test]
+fn cache_file_reader_maps_windows_binds_the_max_and_marks_stale() {
+    let cache = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(cache.path(), LB_WITH_5H).unwrap();
+
+    let now = 1_786_822_350 + STALE_AFTER_SECS + 1;
+    let limit =
+        limit_from_cache_path(cache.path(), now, false).expect("fixture cache yields a limit");
+
+    // A 5h secondary window (< 100_000 seconds) and a 7d primary window map to their
+    // respective slots; the binding keeps the max usage and its matching reset timestamp.
+    assert_eq!(limit.five_hour.used_percentage, Some(37.0));
+    assert_eq!(limit.five_hour.resets_at, Some(1_786_840_000));
+    assert_eq!(limit.seven_day.used_percentage, Some(5.0));
+    assert_eq!(limit.seven_day.resets_at, Some(1_787_343_662));
+    assert_eq!(limit.stale, Some(true));
+}
+
+#[test]
+fn missing_or_malformed_cache_files_degrade_to_no_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(limit_from_cache_path(&dir.path().join("missing.json"), 1, false).is_none());
+
+    let malformed = dir.path().join("malformed.json");
+    std::fs::write(&malformed, "not json").unwrap();
+    assert!(limit_from_cache_path(&malformed, 1, false).is_none());
+}
+
+#[test]
+fn cache_older_than_ninety_seconds_requests_a_refresh() {
+    let cache = serde_json::json!({ "fetched_at": 1_000.0 });
+    assert!(!needs_refresh(&cache, 1_090));
+    assert!(needs_refresh(&cache, 1_091));
+    assert!(!needs_refresh(&serde_json::json!({}), 1_091));
+}
+
+#[test]
+fn window_length_boundary_maps_under_100k_to_five_hours_and_100k_to_seven_days() {
+    let rate_limit = serde_json::json!({
+        "primary_window": {
+            "used_percent": 11,
+            "limit_window_seconds": 99_999,
+            "reset_at": 2_001
+        },
+        "secondary_window": {
+            "used_percent": 22,
+            "limit_window_seconds": 100_000,
+            "reset_at": 2_002
+        }
+    });
+
+    let (five_hour, seven_day) = windows_from_rate_limit(&rate_limit);
+    assert_eq!(
+        five_hour,
+        LimitWindow {
+            used_percentage: Some(11.0),
+            resets_at: Some(2_001)
+        }
+    );
+    assert_eq!(
+        seven_day,
+        LimitWindow {
+            used_percentage: Some(22.0),
+            resets_at: Some(2_002)
+        }
+    );
+}
+
+#[test]
 fn notes_are_single_spaced() {
     // `\` line continuations swallow the next line's leading whitespace (Rust reference,
     // "String continuation escapes"), so the rendered notes contain no runs of spaces.

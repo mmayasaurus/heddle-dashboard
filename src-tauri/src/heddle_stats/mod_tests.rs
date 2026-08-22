@@ -48,6 +48,36 @@ fn non_tap_json_is_ignored_by_the_tap_reader() {
 }
 
 #[test]
+fn tap_files_are_parsed_then_combined_in_claude_codex_rest_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let tap = |model: &str| {
+        serde_json::json!({
+            "model": model,
+            "rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": 2_000}},
+            "capturedAt": 1_000
+        })
+        .to_string()
+    };
+    std::fs::write(dir.path().join("claude.json"), tap("claude-model")).unwrap();
+    std::fs::write(dir.path().join("zeta.json"), tap("zeta-model")).unwrap();
+    std::fs::write(dir.path().join("alpha.json"), tap("alpha-model")).unwrap();
+    std::fs::write(dir.path().join("malformed.json"), "not json").unwrap();
+    std::fs::write(dir.path().join("limits.json"), tap("assembled-mirror")).unwrap();
+
+    let mut limits = tap_limits(dir.path(), 1_001);
+    let codex: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json"
+    ))
+    .unwrap();
+    limits.push(codex::parse_cache(&codex, 1_001).unwrap());
+    sort_limits(&mut limits);
+
+    let providers: Vec<&str> = limits.iter().map(|limit| limit.provider.as_str()).collect();
+    assert_eq!(providers, ["claude", "codex", "alpha", "zeta"]);
+    assert_eq!(limits[0].model.as_deref(), Some("claude-model"));
+}
+
+#[test]
 fn provider_limit_json_keeps_the_original_keys_and_adds_only_optional_ones() {
     let l = ProviderLimit {
         provider: "claude".into(),

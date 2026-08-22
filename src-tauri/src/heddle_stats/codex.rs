@@ -23,6 +23,7 @@
 //! without a claudex session (one child at a time, reaped, at most once a minute), and flag the
 //! entry `stale` when it hasn't refreshed in 5 minutes (network down, expired login, helper missing).
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use serde_json::Value;
@@ -74,21 +75,38 @@ static LAST_KICK_AT: AtomicI64 = AtomicI64::new(0);
 /// Read the cache, kick a refresh if it is getting old, and return the Codex entry.
 /// `None` when there is no cache at all (claudex-usage never ran here).
 pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
-    let text = std::fs::read_to_string(home().join(CACHE_REL)).ok()?;
+    limit_from_cache_path(&home().join(CACHE_REL), now, true)
+}
+
+/// Read and parse a claudex cache at an injected path. Production enables the detached refresh;
+/// tests disable it so fixture reads never launch the user's helper.
+pub(super) fn limit_from_cache_path(
+    path: &Path,
+    now: i64,
+    refresh_if_old: bool,
+) -> Option<ProviderLimit> {
+    let text = std::fs::read_to_string(path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
-    maybe_refresh(&v, now);
+    if refresh_if_old {
+        maybe_refresh(&v, now);
+    }
     parse_cache(&v, now)
 }
 
 /// Self-refresh: if the cache is older than `REFRESH_AFTER_SECS`, run `claudex-usage --refresh lb`
 /// out-of-band so the NEXT poll reads fresh data. The dashboard never blocks on the network.
 fn maybe_refresh(v: &Value, now: i64) {
-    let Some(fetched) = v["fetched_at"].as_f64() else {
-        return;
-    };
-    if (now as f64) - fetched > REFRESH_AFTER_SECS {
+    if needs_refresh(v, now) {
         kick_refresh(now, false);
     }
+}
+
+/// Whether a cache should trigger the out-of-band refresh. Kept pure so the 90-second threshold
+/// can be tested without spawning the external helper.
+fn needs_refresh(v: &Value, now: i64) -> bool {
+    v["fetched_at"]
+        .as_f64()
+        .is_some_and(|fetched| (now as f64) - fetched > REFRESH_AFTER_SECS)
 }
 
 /// Kick `claudex-usage --refresh lb` regardless of cache age. `true` when a helper child was
