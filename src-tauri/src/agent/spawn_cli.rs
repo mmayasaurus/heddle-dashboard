@@ -274,14 +274,14 @@ fn render_user_cli(exe: &Path) -> String {
     {
         let quoted = exe.to_string_lossy().replace('\'', "'\\''");
         return format!(
-            "#!/bin/sh\n# {SHIM_MARKER}\ncase \"${{1:-}}\" in -h|--help) exec '{quoted}' --heddle-help;; esac\nexec '{quoted}' --open-project \"$@\"\n"
+            "#!/bin/sh\n# {SHIM_MARKER}\ncase \"${{1:-}}\" in -h|--help) exec '{quoted}' --heddle-help;; --pocket-console) exec '{quoted}' \"$@\";; esac\nexec '{quoted}' --open-project \"$@\"\n"
         );
     }
     #[cfg(windows)]
     {
         format!(
-            "@REM {SHIM_MARKER}\r\n@IF \"%~1\"==\"-h\" GOTO help\r\n@IF \"%~1\"==\"--help\" GOTO help\r\n@\"{}\" --open-project %*\r\n@EXIT /B %ERRORLEVEL%\r\n:help\r\n@\"{}\" --heddle-help\r\n",
-            exe.display(), exe.display()
+            "@REM {SHIM_MARKER}\r\n@IF \"%~1\"==\"-h\" GOTO help\r\n@IF \"%~1\"==\"--help\" GOTO help\r\n@IF \"%~1\"==\"--pocket-console\" GOTO pocket_console\r\n@\"{}\" --open-project %*\r\n@EXIT /B %ERRORLEVEL%\r\n:help\r\n@\"{}\" --heddle-help\r\n@EXIT /B %ERRORLEVEL%\r\n:pocket_console\r\n@\"{}\" %*\r\n@EXIT /B %ERRORLEVEL%\r\n",
+            exe.display(), exe.display(), exe.display()
         )
     }
 }
@@ -502,10 +502,11 @@ mod tests {
 
     #[cfg(feature = "gui")]
     #[test]
-    fn user_cli_forwards_one_quoted_project_path() {
+    fn regression_pr_96_pocket_console_shim_passes_through_arguments() {
         let rendered = render_user_cli(Path::new("/tmp/Heddle App/heddle"));
         assert!(rendered.contains(SHIM_MARKER));
         assert!(rendered.contains("--heddle-help"));
+        assert!(rendered.contains("--pocket-console"));
         assert!(rendered.contains("--open-project"));
         #[cfg(unix)]
         assert!(rendered.contains("\"$@\""));

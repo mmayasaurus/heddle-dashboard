@@ -28,6 +28,8 @@ mod host;
 mod models;
 mod procstat;
 mod pty;
+#[cfg(feature = "gui")]
+mod pocket;
 mod search;
 // GUI-only vela-server provisioning: R2 download, minisign verification, and cache.
 #[cfg(feature = "gui")]
@@ -254,6 +256,69 @@ pub fn run_refresh_provider_limits(args: &[String]) {
     }
 }
 
+/// Manage the opt-in, loopback-only phone PWA service without starting the desktop GUI.
+#[cfg(feature = "gui")]
+pub fn run_pocket_console(args: &[String]) {
+    match args.get(2).map(String::as_str) {
+        Some("mint-token") => match pocket::mint_token() {
+            Ok(token) => match pocket::load_config() {
+                Ok(config) => {
+                    println!("Pocket console token (shown once): {token}");
+                    println!("Loopback URL: http://127.0.0.1:{}", config.port);
+                    println!("Enable Tailscale HTTPS and MagicDNS in the admin console: DNS → Enable HTTPS + MagicDNS.");
+                    println!("Then run: tailscale serve --bg --https=443 127.0.0.1:{}", config.port);
+                    println!("Find your host with `tailscale status`/MagicDNS, then open on your phone:");
+                    println!("https://<your-mac>.<tailnet>.ts.net/#token={token}");
+                }
+                Err(error) => {
+                    eprintln!("heddle: pocket console token was minted but config could not be reloaded: {error}");
+                    std::process::exit(1);
+                }
+            },
+            Err(error) => {
+                eprintln!("heddle: could not mint pocket console token: {error}");
+                std::process::exit(1);
+            }
+        },
+        Some("status") => {
+            let config = pocket::load_config().ok();
+            let port = config.as_ref().map(|value| value.port).unwrap_or(pocket::DEFAULT_PORT);
+            println!("pocket console: {}", if config.is_some() { "enabled" } else { "not enabled" });
+            println!("port: {port}");
+            println!("loopback URL: http://127.0.0.1:{port}");
+            println!("tailscale serve: tailscale serve --bg --https=443 127.0.0.1:{port}");
+        }
+        Some("serve") => match pocket::load_config() {
+            Ok(config) => match pocket::server::start(config.port) {
+                Ok(_handle) => {
+                    println!(
+                        "pocket console: serving on http://127.0.0.1:{} (Ctrl-C to stop)",
+                        config.port
+                    );
+                    // The axum service runs on its own thread; park this one so the process stays alive.
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3600));
+                    }
+                }
+                Err(error) => {
+                    eprintln!("heddle: could not start pocket console: {error}");
+                    std::process::exit(1);
+                }
+            },
+            Err(error) => {
+                eprintln!(
+                    "heddle: pocket console is not enabled (run `heddle --pocket-console mint-token`): {error}"
+                );
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            eprintln!("usage: heddle --pocket-console <mint-token|status|serve>");
+            std::process::exit(2);
+        }
+    }
+}
+
 /// Build-time Git commit, or unknown, used by --version and SSH remote version pinning.
 pub const GIT_COMMIT: &str = match option_env!("VLX_GIT_COMMIT") {
     Some(c) => c,
@@ -437,6 +502,18 @@ fn run_with_builder(builder: tauri::Builder<tauri::Wry>, initial_open_project: O
             initial_open_project.map(|p| p.to_string_lossy().into_owned()),
         )))
         .setup(|app| {
+            if pocket::is_enabled() {
+                match pocket::load_config() {
+                    Ok(config) => match pocket::server::start(config.port) {
+                        Ok(_handle) => eprintln!("pocket console: listening on http://127.0.0.1:{} (tailnet via tailscale serve)", config.port),
+                        Err(error) => eprintln!("pocket console: failed to start: {error}"),
+                    },
+                    Err(error) => eprintln!("pocket console: could not load configuration: {error}"),
+                }
+            } else {
+                eprintln!("pocket console: not enabled (run `heddle --pocket-console mint-token`)");
+            }
+
             // Size the main window to 77% x 81% of the current monitor with caps, then center it.
             // This fits laptops and uses larger displays; fall back to configured dimensions if unavailable.
             if let Some(win) = app.get_webview_window("main") {

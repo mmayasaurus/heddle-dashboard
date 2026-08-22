@@ -33,6 +33,7 @@ gui = [
     # Fleet chatroom composer (HED-74c, comms::operator): GUI-only, like the other desktop-only
     # deps above — the minimal --no-default-features server has no composer to run.
     "dep:rmcp",
+    "dep:getrandom",
 ]
 
 [profile.release]
@@ -91,7 +92,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync",
 futures-util = "0.3"
 # Embed compressed ../dist assets in release binaries for offline use and transparent decompression, while
 # debug reads disk. Shared by vela-server and desktop --serve, substantially reducing frontend-heavy size.
-rust-embed = { version = "8", features = ["compression"] }
+rust-embed = { version = "8", features = ["compression", "interpolate-folder-path"] }
 # Salted SHA-256 login password hashing without plaintext persistence.
 sha2 = "0.10"
 # Enumerate LAN address candidates for remote access, ordering VPN/tunnel point-to-point interfaces last.
@@ -121,6 +122,9 @@ sysinfo = { version = "=0.33.1", default-features = false, features = ["system"]
 # transport only) for talking to the heddle-comms broker as the OPERATOR role. Never hand-roll
 # JSON-RPC for this — see comms/operator.rs for the security contract this crate is spawned under.
 rmcp = { version = "3", features = ["client", "transport-child-process"], optional = true }
+# Device-token entropy for the GUI-only pocket console. Keeping this optional preserves the minimal
+# vela-server dependency graph when built with --no-default-features.
+getrandom = { version = "0.2", optional = true }
 
 # Unix-only rlimit support raises open-file soft limits for inherited agent sessions, avoiding macOS's
 # default 256-descriptor failures. Windows has no equivalent.
