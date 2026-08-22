@@ -237,11 +237,16 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
   reset for the fleet to rotate onto. **Verified:** pinging a LIVE window does not move `resets_at`
   (`--verify acct2`, 2026-08-15) — the keeper only starts windows, never shifts them. `--dry-run`
   prints decisions. Never uses Fable/Opus.
-- **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd
-  `io.heddle.cursor-refresh`, every 5 min): runs `heddle --refresh-provider-limits cursor` to fetch
-  Cursor's usage snapshot and merge its block into `~/.heddle/usage/limits.json`. This keeps the
-  cursor block fresh independently of the FleetDrawer for out-of-app consumers such as the Bugbot
-  meter. Install with `bash scripts/install-cursor-refresh-launchd.sh` after building the release binary.
+- **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd `io.heddle.cursor-refresh`,
+  every 5 min): runs the dashboard's `--refresh-provider-limits cursor` subcommand to fetch Cursor's
+  usage snapshot and merge its block into `~/.heddle/usage/limits.json`, keeping the cursor block
+  fresh independently of the FleetDrawer for out-of-app consumers (e.g. the Bugbot meter). The plist
+  invokes a stable symlink `~/.local/bin/heddle-app` — a distinct name so it never shadows the JS
+  `heddle` CLI — that the installer points at the built binary; repoint it at
+  `Heddle.app/Contents/MacOS/heddle` when the dashboard ships as an app, no plist edit needed.
+  **Requires the dashboard built** (`cargo build --release`); if the binary is missing the launchd
+  run errors that poll (see `~/.heddle/cursor-refresh.launchd.err`) and consumers warn-stale until
+  the next build — no bad data is written. Install: `bash scripts/install-cursor-refresh-launchd.sh`.
 - Router (HED-68) picks the account with the most 5h headroom; the drawer shows all accounts under
   `claude` with the active one in the summary bar (W, `activeAccount`).
 

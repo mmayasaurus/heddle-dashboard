@@ -6,7 +6,7 @@
   <string>io.heddle.cursor-refresh</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/mayatobi/Developer/heddle-dashboard/src-tauri/target/release/heddle</string>
+    <string>/Users/mayatobi/.local/bin/heddle-app</string>
     <string>--refresh-provider-limits</string>
     <string>cursor</string>
   </array>
@@ -15,8 +15,8 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/mayatobi/.heddle/logs/cursor-refresh.log</string>
+  <string>/Users/mayatobi/.heddle/cursor-refresh.launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/mayatobi/.heddle/logs/cursor-refresh.log</string>
+  <string>/Users/mayatobi/.heddle/cursor-refresh.launchd.err</string>
 </dict>
 </plist>
