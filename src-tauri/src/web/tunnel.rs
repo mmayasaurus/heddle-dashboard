@@ -244,16 +244,33 @@ mod tests {
     /// Start the WebServer on an ephemeral port, retrying if another test claims the port between
     /// `free_port` releasing it and WebServer binding it on its background thread.
     ///
-    /// Known residual (HED-240 review): connectability proves *something* listens, not that OUR
-    /// server bound — a parallel test that grabs the port during our tokio/TLS-setup window and
-    /// keeps listening would still be connected to. Fully closing that needs `WebServer::start` to
-    /// accept a pre-bound `TcpListener` (a production change); it is far rarer than the
-    /// nothing-listening case this retry does close (the OS almost never reassigns a just-freed
-    /// ephemeral port to a concurrently-binding test), so it is left as a known residual.
+    /// The readiness probe verifies OUR server, not merely that *something* accepts TCP: a `LanTls`
+    /// server answers a plaintext request with the sniff `301` HTTPS redirect (the same signature the
+    /// direct-plaintext assertion below relies on), which a stray/non-heddle listener that grabbed a
+    /// recycled port will not produce. So a competing listener is rejected and the loop retries with a
+    /// fresh port instead of handing it back (HED-240 review: a bare TCP-accept probe would accept a
+    /// competing service and run the assertions against it).
     fn start_test_web_server(
         web: &crate::web::WebServer,
         host: &std::sync::Arc<crate::host::HeadlessHost>,
     ) -> u16 {
+        // Our LanTls server redirects a plaintext request to HTTPS with a 301; a bare TCP accept from
+        // a competing listener does not. Probe for that signature so we never return a thief's port.
+        fn heddle_server_ready(port: u16) -> bool {
+            let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+                return false;
+            };
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            if s.write_all(b"GET / HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n")
+                .is_err()
+            {
+                return false;
+            }
+            let mut resp = String::new();
+            let _ = s.read_to_string(&mut resp);
+            resp.starts_with("HTTP/1.1 301")
+        }
+
         let mut failures = Vec::new();
 
         for attempt in 1..=5 {
@@ -262,14 +279,14 @@ mod tests {
             match web.start(ctx, "pw", Some(port), crate::web::ServeMode::LanTls) {
                 Ok(_) => {
                     for _ in 0..50 {
-                        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                        if heddle_server_ready(port) {
                             return port;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
                     web.stop();
                     failures.push(format!(
-                        "attempt {attempt}: server did not bind to port {port} within 2.5 seconds"
+                        "attempt {attempt}: no heddle server (plaintext→301) on port {port} within 2.5 seconds"
                     ));
                 }
                 Err(error) => failures.push(format!(
