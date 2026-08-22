@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   existsSync,
@@ -41,7 +42,9 @@ describe("heddle usage tap", () => {
         env,
       });
     } catch (error) {
-      throw new Error(`heddle usage tap exited nonzero: ${error.message}`);
+      throw new Error(
+        `heddle usage tap exited nonzero: ${error.message}${error.stderr ? "\nstderr: " + error.stderr : ""}`,
+      );
     }
   }
 
@@ -110,8 +113,8 @@ describe("heddle usage tap", () => {
       expect(captured.model).toBe(model);
       expect(captured.rate_limits).toEqual(payload.rate_limits);
       expect(Number.isInteger(captured.capturedAt)).toBe(true);
-      expect(captured.capturedAt).toBeGreaterThanOrEqual(before - 2);
-      expect(captured.capturedAt).toBeLessThanOrEqual(after + 2);
+      expect(captured.capturedAt).toBeGreaterThanOrEqual(before);
+      expect(captured.capturedAt).toBeLessThanOrEqual(after);
     }
   });
 
@@ -129,30 +132,33 @@ describe("heddle usage tap", () => {
   it("writes both provider and per-account files for a matching config directory", () => {
     const heddleDir = join(tmpHome, ".heddle");
     mkdirSync(heddleDir, { recursive: true });
+    // A config dir under the per-test temp home, so the fixture is cross-platform (no hardcoded /tmp)
+    // and the accounts.json entry, the CLAUDE_CONFIG_DIR we pass, and the expected capture all match.
+    const acctCfgDir = join(tmpHome, "acct3-cfg");
     writeFileSync(
       join(heddleDir, "accounts.json"),
-      JSON.stringify({ claude: [{ id: "acct3", configDir: "/tmp/acct3-cfg" }] }),
+      JSON.stringify({ claude: [{ id: "acct3", configDir: acctCfgDir }] }),
     );
     const payload = payloadFor("claude-sonnet-4");
     const input = JSON.stringify(payload);
     const before = Math.floor(Date.now() / 1000);
 
-    expect(runTap(input, "/tmp/acct3-cfg")).toBe(input);
+    expect(runTap(input, acctCfgDir)).toBe(input);
     const after = Math.floor(Date.now() / 1000);
     const expectedCapture = {
       model: payload.model.id,
       rate_limits: payload.rate_limits,
       capturedAt: expect.any(Number),
       account: "acct3",
-      configDir: "/tmp/acct3-cfg",
+      configDir: acctCfgDir,
     };
 
     for (const fileName of ["claude.json", "claude-acct3.json"]) {
       const captured = readUsage(fileName);
       expect(captured).toEqual(expectedCapture);
       expect(Number.isInteger(captured.capturedAt)).toBe(true);
-      expect(captured.capturedAt).toBeGreaterThanOrEqual(before - 2);
-      expect(captured.capturedAt).toBeLessThanOrEqual(after + 2);
+      expect(captured.capturedAt).toBeGreaterThanOrEqual(before);
+      expect(captured.capturedAt).toBeLessThanOrEqual(after);
     }
   });
 

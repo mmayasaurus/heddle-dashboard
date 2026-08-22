@@ -8,3 +8,6 @@
 exclude_paths:
   - "src/**/*.test.ts"
   - "src/**/*.test.tsx"
+  # Same rationale as the src test excludes: this behavioral test spawns the real usage-tap script
+  # under a mkdtempSync temp HOME, so every fs call takes a computed path by design (HED-49).
+  - "scripts/**/*.test.mjs"
