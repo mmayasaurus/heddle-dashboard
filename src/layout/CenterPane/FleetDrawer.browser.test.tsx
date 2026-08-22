@@ -29,20 +29,28 @@ vi.mock("../../i18n", () => ({
     args.length ? `${key}:${args.join(",")}` : key,
 }));
 vi.mock("../../store/termStore", () => ({
-  useTermStore: (selector: (state: object) => unknown) => selector(termStoreState.value),
+  // Mirror zustand's signature: the hook may be called with or without a selector. The component
+  // only ever calls it WITH one (FleetDrawer.tsx:282), so the selector-less branch is defensive
+  // parity with the real store, not a path these tests exercise.
+  useTermStore: (selector?: (state: object) => unknown) =>
+    selector ? selector(termStoreState.value) : termStoreState.value,
 }));
 
 import { FleetDrawer } from "./FleetDrawer";
 
 afterEach(() => {
-  // Reset the parametric termStore mock so a case that overrides it (e.g. the scoped-roster test)
-  // cannot leak its project context into later tests — independent of file execution order.
+  // Full per-test isolation, order-independent: reset the parametric termStore mock (so the
+  // scoped-roster override can't leak), clear localStorage (the drawer open/scope keys), and clear
+  // the invoke mock's call history. (mockClear, not mockReset: legacy cases inherit the transport
+  // implementation set by their describe's beforeEach — resetting it would strip that implementation.)
   termStoreState.value = {
     activeSessionId: null,
     sessions: [],
     ephemeralSessions: {},
     projects: [],
   };
+  localStorage.clear();
+  invoke.mockClear();
 });
 
 const now = Math.floor(Date.now() / 1000);
@@ -1006,42 +1014,60 @@ describe("FleetDrawer recent dispatch visibility", () => {
   });
 
   it("shows the no-real-dispatches message when the recent list is empty", async () => {
-    invoke.mockImplementation((command: string) =>
-      command === "heddle_recent" ? Promise.resolve([]) : Promise.resolve([]),
-    );
+    invoke.mockImplementation((command: string) => {
+      // Co-loaded usage row (batched with `recent`) as the post-load synchronization marker.
+      if (command === "heddle_provider_usage") {
+        return Promise.resolve([
+          { provider: "load-sync", dispatches: 1, succeeded: 1, inputTokens: 1, outputTokens: 1 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
     render(<FleetDrawer />);
 
-    await screen.findByText("No real dispatches yet.");
+    await screen.findByText("load-sync");
+    expect(screen.getByText("No real dispatches yet.")).toBeTruthy();
   });
 
   it("shows the no-real-dispatches message when the ledger holds only TEST rows", async () => {
-    invoke.mockImplementation((command: string) =>
-      command === "heddle_recent"
-        ? Promise.resolve([
-            {
-              id: 1,
-              orchestrator: "TEST",
-              taskClass: "test",
-              provider: "claude",
-              model: "only-test-model",
-              ok: 1,
-              issue: "only-test-issue",
-              inputTokens: 1,
-              cachedInputTokens: null,
-              outputTokens: 1,
-              durationMs: 1_000,
-              fellBackFrom: null,
-              startedAt: "2026-08-22T00:00:00Z",
-              finishedAt: "2026-08-22T00:01:00Z",
-            },
-          ])
-        : Promise.resolve([]),
-    );
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_recent") {
+        return Promise.resolve([
+          {
+            id: 1,
+            orchestrator: "TEST",
+            taskClass: "test",
+            provider: "claude",
+            model: "only-test-model",
+            ok: 1,
+            issue: "only-test-issue",
+            inputTokens: 1,
+            cachedInputTokens: null,
+            outputTokens: 1,
+            durationMs: 1_000,
+            fellBackFrom: null,
+            startedAt: "2026-08-22T00:00:00Z",
+            finishedAt: "2026-08-22T00:01:00Z",
+          },
+        ]);
+      }
+      // A co-loaded usage row lands in the SAME batched render as `recent` (the drawer sets all four
+      // sources from one Promise.all), so awaiting it synchronizes PAST the load — the assertion then
+      // reflects the loaded all-TEST state, not the pre-fetch empty render.
+      if (command === "heddle_provider_usage") {
+        return Promise.resolve([
+          { provider: "load-sync", dispatches: 1, succeeded: 1, inputTokens: 1, outputTokens: 1 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
     render(<FleetDrawer />);
 
-    // shownRecent filters out TEST rows, so an all-TEST ledger must still show the empty message —
-    // this pins the empty branch to shownRecent.length, not the unfiltered recent.length.
-    await screen.findByText("No real dispatches yet.");
+    // Synchronize past the batched load, THEN assert: shownRecent filters out TEST rows, so an
+    // all-TEST ledger must still show the empty message — pinning the empty branch to
+    // shownRecent.length, not unfiltered recent.length (a broken filter would render the TEST row).
+    await screen.findByText("load-sync");
+    expect(screen.getByText("No real dispatches yet.")).toBeTruthy();
     expect(screen.queryByText("only-test-issue")).toBeNull();
   });
 });
@@ -1059,12 +1085,21 @@ describe("FleetDrawer empty data states", () => {
   });
 
   it("explains that caps are waiting for the statusline tap", async () => {
-    invoke.mockImplementation((command: string) =>
-      command === "heddle_provider_limits" ? Promise.resolve([]) : Promise.resolve([]),
-    );
+    invoke.mockImplementation((command: string) => {
+      // heddle_provider_limits stays [] (caps empty); a co-loaded usage row is the post-load marker.
+      if (command === "heddle_provider_usage") {
+        return Promise.resolve([
+          { provider: "load-sync", dispatches: 1, succeeded: 1, inputTokens: 1, outputTokens: 1 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
     render(<FleetDrawer />);
 
-    await screen.findByText((content) => content.includes("Waiting for the statusline tap to capture usage"));
+    await screen.findByText("load-sync");
+    expect(
+      screen.getByText((content) => content.includes("Waiting for the statusline tap to capture usage")),
+    ).toBeTruthy();
   });
 
   it("explains when all roster agents belong to another project", async () => {
