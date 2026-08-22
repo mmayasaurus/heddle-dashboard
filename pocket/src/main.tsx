@@ -44,7 +44,7 @@ function Denial({ state, retry }: { state: Connection; retry: () => void }) {
     localStorage.setItem(TOKEN_KEY, trimmed);
     retry();
   };
-  return <main className="gate"><section className="card"><p className="eyebrow">heddle</p><h1>{state === "offline" ? "Can’t reach this host" : "This pocket console needs its device token"}</h1><p>{state === "offline" ? "Check that the Mac host and Tailscale Serve are available, then try again." : "Paste the token from your onboarding link to continue."}</p><form onSubmit={submit}><label htmlFor="token">Device token</label><input id="token" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck="false" /><button type="submit">Connect</button></form></section></main>;
+  return <main className="gate"><section className="card"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div><h1>{state === "offline" ? "Can’t reach this host" : "This pocket console needs its device token"}</h1><p>{state === "offline" ? "Check that the Mac host and Tailscale Serve are available, then try again." : "Paste the token from your onboarding link to continue."}</p><form onSubmit={submit}><label htmlFor="token">Device token</label><input id="token" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" spellCheck="false" /><button type="submit">Connect</button></form></section></main>;
 }
 
 function App() {
@@ -62,7 +62,7 @@ function App() {
   useEffect(() => { if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined); }, []);
   if (connection !== "authenticated") return <Denial state={connection} retry={retry} />;
   const [name, empty] = tabs[activeTab] ?? tabs[0];
-  return <main className="app"><header><p className="eyebrow">heddle</p><h1>{name}</h1></header><section className="card empty"><p>{empty}</p></section><nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => setActiveTab(index)}>{tab}</button>)}</div></nav></main>;
+  return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div><header><h1>{name}</h1></header><section className="card empty"><p>{empty}</p></section><nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => setActiveTab(index)}>{tab}</button>)}</div></nav></main>;
 }
 
 const rootEl = document.getElementById("root");
