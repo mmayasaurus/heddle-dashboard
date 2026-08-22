@@ -315,8 +315,16 @@ fn stale_cache_reader_kicks_the_injected_helper() {
         r#"{"fetched_at": 1000, "mode": "lb", "payload": []}"#,
     )
     .unwrap();
+    let marker = dir.path().join("helper-ran");
     let helper = dir.path().join("refresh-helper");
-    std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+    // The helper records the args it was invoked with, so the test proves the INJECTED helper (not
+    // the real claudex-usage) actually ran with `--refresh lb`. LAST_KICK_AT alone is stored before
+    // the spawn, so it would pass even if the spawn used the wrong path or failed (HED-49 review).
+    std::fs::write(
+        &helper,
+        format!("#!/bin/sh\nprintf '%s' \"$*\" > \"{}\"\nexit 0\n", marker.display()),
+    )
+    .unwrap();
     let mut perms = std::fs::metadata(&helper).unwrap().permissions();
     perms.set_mode(0o700);
     std::fs::set_permissions(&helper, perms).unwrap();
@@ -324,6 +332,16 @@ fn stale_cache_reader_kicks_the_injected_helper() {
     let now = 1091;
     let _ = limit_from_cache_and_helper_path(&cache, &helper, now, true);
     assert_eq!(LAST_KICK_AT.load(Ordering::SeqCst), now);
+    // The kick spawns the helper and a reaper thread waits on it; poll briefly for its marker.
+    let mut ran = String::new();
+    for _ in 0..100 {
+        if let Ok(s) = std::fs::read_to_string(&marker) {
+            ran = s;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(ran, "--refresh lb", "the injected helper must run with --refresh lb");
 }
 
 #[test]

@@ -497,7 +497,10 @@ fn provider_limits_sync_with_paths(
     }
     let codex = match codex_cache_path {
         Some(path) => codex::limit_from_cache_path(path, now, ctx.is_some()),
-        None => codex::limit(now),
+        // A default-path codex read is a ctx-gated live source like claude/gemini/cursor: without a
+        // ctx we neither read nor refresh it (tests always inject a path instead) — HED-49 review.
+        None if ctx.is_some() => codex::limit(now),
+        None => None,
     };
     if let Some(c) = codex {
         out.push(c);
