@@ -1,6 +1,7 @@
 //! Unit tests for `codex.rs` (kept in a sibling file so the source file stays readable).
 
 use super::*;
+use std::sync::{Mutex, OnceLock};
 /// Two-account LB cache, shaped exactly like claudex-usage writes it (2026-08 provider state:
 /// 7d-only primary window, secondary null, one additional per-model bucket). Fake emails.
 const LB_2_ACCOUNTS: &str =
@@ -249,19 +250,28 @@ fn empty_or_malformed_payloads_yield_no_entry() {
 
 #[test]
 fn cache_file_reader_maps_windows_binds_the_max_and_marks_stale() {
-    let cache = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(cache.path(), LB_WITH_5H).unwrap();
+    let mut cache: Value = serde_json::from_str(LB_WITH_5H).unwrap();
+    let accounts = cache["payload"].as_array_mut().unwrap();
+    // Move both maxima off account 0, proving the binding view does not just select the first row.
+    accounts[0]["data"]["rate_limit"]["primary_window"]["used_percent"] = Value::from(1);
+    accounts[1]["data"]["rate_limit"]["primary_window"]["used_percent"] = Value::from(52);
+    accounts[1]["data"]["rate_limit"]["primary_window"]["reset_at"] = Value::from(1_787_555_555);
+    accounts[1]["data"]["rate_limit"]["secondary_window"] = serde_json::json!({
+        "used_percent": 48, "limit_window_seconds": 18_000, "reset_at": 1_786_850_000
+    });
+    let cache_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(cache_file.path(), cache.to_string()).unwrap();
 
     let now = 1_786_822_350 + STALE_AFTER_SECS + 1;
     let limit =
-        limit_from_cache_path(cache.path(), now, false).expect("fixture cache yields a limit");
+        limit_from_cache_path(cache_file.path(), now, false).expect("fixture cache yields a limit");
 
     // A 5h secondary window (< 100_000 seconds) and a 7d primary window map to their
     // respective slots; the binding keeps the max usage and its matching reset timestamp.
-    assert_eq!(limit.five_hour.used_percentage, Some(37.0));
-    assert_eq!(limit.five_hour.resets_at, Some(1_786_840_000));
-    assert_eq!(limit.seven_day.used_percentage, Some(5.0));
-    assert_eq!(limit.seven_day.resets_at, Some(1_787_343_662));
+    assert_eq!(limit.five_hour.used_percentage, Some(48.0));
+    assert_eq!(limit.five_hour.resets_at, Some(1_786_850_000));
+    assert_eq!(limit.seven_day.used_percentage, Some(52.0));
+    assert_eq!(limit.seven_day.resets_at, Some(1_787_555_555));
     assert_eq!(limit.stale, Some(true));
 }
 
@@ -281,6 +291,39 @@ fn cache_older_than_ninety_seconds_requests_a_refresh() {
     assert!(!needs_refresh(&cache, 1_090));
     assert!(needs_refresh(&cache, 1_091));
     assert!(!needs_refresh(&serde_json::json!({}), 1_091));
+}
+
+#[cfg(unix)]
+static REFRESH_TEST_SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(unix)]
+#[test]
+fn stale_cache_reader_kicks_the_injected_helper() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = REFRESH_TEST_SERIAL
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    REFRESHING.store(false, Ordering::SeqCst);
+    LAST_KICK_AT.store(0, Ordering::SeqCst);
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(
+        &cache,
+        r#"{"fetched_at": 1000, "mode": "lb", "payload": []}"#,
+    )
+    .unwrap();
+    let helper = dir.path().join("refresh-helper");
+    std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut perms = std::fs::metadata(&helper).unwrap().permissions();
+    perms.set_mode(0o700);
+    std::fs::set_permissions(&helper, perms).unwrap();
+
+    let now = 1091;
+    let _ = limit_from_cache_and_helper_path(&cache, &helper, now, true);
+    assert_eq!(LAST_KICK_AT.load(Ordering::SeqCst), now);
 }
 
 #[test]
@@ -313,6 +356,14 @@ fn window_length_boundary_maps_under_100k_to_five_hours_and_100k_to_seven_days()
             resets_at: Some(2_002)
         }
     );
+
+    let secondary_is_short = serde_json::json!({
+        "primary_window": {"used_percent": 33, "limit_window_seconds": 604_800, "reset_at": 3_001},
+        "secondary_window": {"used_percent": 44, "limit_window_seconds": 99_999, "reset_at": 3_002}
+    });
+    let (five_hour, seven_day) = windows_from_rate_limit(&secondary_is_short);
+    assert_eq!(five_hour.resets_at, Some(3_002));
+    assert_eq!(seven_day.resets_at, Some(3_001));
 }
 
 #[test]
