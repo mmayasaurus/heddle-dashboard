@@ -266,7 +266,7 @@ pub fn run_pocket_console(args: &[String]) {
                     println!("Pocket console token (shown once): {token}");
                     println!("Loopback URL: http://127.0.0.1:{}", config.port);
                     println!("Enable Tailscale HTTPS and MagicDNS in the admin console: DNS → Enable HTTPS + MagicDNS.");
-                    println!("Then run: tailscale serve --https=443 127.0.0.1:{}", config.port);
+                    println!("Then run: tailscale serve --bg --https=443 127.0.0.1:{}", config.port);
                     println!("Find your host with `tailscale status`/MagicDNS, then open on your phone:");
                     println!("https://<your-mac>.<tailnet>.ts.net/#token={token}");
                 }
@@ -286,7 +286,7 @@ pub fn run_pocket_console(args: &[String]) {
             println!("pocket console: {}", if config.is_some() { "enabled" } else { "not enabled" });
             println!("port: {port}");
             println!("loopback URL: http://127.0.0.1:{port}");
-            println!("tailscale serve: tailscale serve --https=443 127.0.0.1:{port}");
+            println!("tailscale serve: tailscale serve --bg --https=443 127.0.0.1:{port}");
         }
         Some("serve") => match pocket::load_config() {
             Ok(config) => match pocket::server::start(config.port) {

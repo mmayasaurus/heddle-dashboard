@@ -17,7 +17,7 @@ use super::config;
 
 /// Embedded pocket PWA output at `src-tauri/../pocket-dist`.
 #[derive(rust_embed::Embed)]
-#[folder = "../pocket-dist"]
+#[folder = "$CARGO_MANIFEST_DIR/../pocket-dist"]
 struct PocketAssets;
 
 #[derive(Clone, Copy)]
@@ -27,25 +27,36 @@ pub fn start(port: u16) -> Result<axum_server::Handle<std::net::SocketAddr>, Str
     // Keep heddle provably off every public/LAN interface. Tailnet reachability comes only from an
     // external `tailscale serve --https=443 127.0.0.1:<port>` proxy that terminates TLS.
     let addr = bind_addr(port);
-    drop(
-        std::net::TcpListener::bind(addr)
-            .map_err(|e| format!("pocket console port {port} is already in use: {e}"))?,
-    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("could not start pocket console Tokio runtime: {e}"))?;
+    let listener = std::net::TcpListener::bind(addr)
+        .map_err(|e| format!("pocket console port {port} is already in use: {e}"))?;
+    // `axum_server::from_tcp` adopts this listener into the tokio runtime, which rejects a blocking
+    // socket; std listeners are blocking by default, so make it non-blocking before handing it over.
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("could not set the pocket console listener non-blocking: {e}"))?;
 
     let handle = axum_server::Handle::new();
     let handle_clone = handle.clone();
     std::thread::Builder::new()
         .name("heddle-pocket".into())
         .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    eprintln!("pocket console: failed to start Tokio runtime: {error}");
-                    return;
-                }
-            };
             runtime.block_on(async move {
-                if let Err(error) = axum_server::bind(addr)
+                // The listener is already bound and listening (TcpListener::bind above), so `start`
+                // returns Ok only once the port is held. `axum_server::from_tcp` adopts that std
+                // listener into the async runtime here, where the reactor is active; its rare failure
+                // is logged rather than propagated so it can never crash the desktop app.
+                let server = match axum_server::from_tcp(listener) {
+                    Ok(server) => server,
+                    Err(error) => {
+                        eprintln!("pocket console: could not adopt the bound listener: {error}");
+                        return;
+                    }
+                };
+                if let Err(error) = server
                     .handle(handle_clone)
                     .serve(router().into_make_service())
                     .await
@@ -87,6 +98,9 @@ async fn me(State(_state): State<PocketState>, headers: HeaderMap) -> impl IntoR
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
+    if path.contains("..") || path.starts_with('/') || path.contains('\\') {
+        return (StatusCode::BAD_REQUEST, "Invalid path").into_response();
+    }
     if let Some(content) = PocketAssets::get(path) {
         return ([(header::CONTENT_TYPE, mime_for(path))], content.data.into_owned()).into_response();
     }

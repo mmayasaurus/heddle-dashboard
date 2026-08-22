@@ -14,7 +14,7 @@ The listener binds only `127.0.0.1`, never a public or LAN address. Tailscale Se
 
 1. In the Tailscale admin console, open DNS and enable HTTPS Certificates and MagicDNS.
 2. Run `heddle --pocket-console mint-token`.
-3. On the Mac, run `tailscale serve --https=443 127.0.0.1:8800` (one-time; it persists).
+3. On the Mac, run `tailscale serve --bg --https=443 127.0.0.1:8800` (one-time; it persists).
 4. On iPhone, open `https://<mac>.<tailnet>.ts.net/#token=<token>`, verify it loads, then use Add to Home Screen.
 
 ## CLI
@@ -27,7 +27,7 @@ When the desktop app launches it auto-starts the service on the configured port 
 
 ## Verifying "never a public listener"
 
-With the service running (`heddle --pocket-console serve`), confirm the socket is loopback-only:
+With the service running (`heddle --pocket-console serve`) and Tailscale Serve configured with `tailscale serve --bg --https=443 127.0.0.1:<port>`, confirm the socket is loopback-only:
 
 - `lsof -nP -iTCP -sTCP:LISTEN | grep <port>` shows `127.0.0.1:<port>` — never `*:<port>`, `0.0.0.0:<port>`, or a LAN address.
 - `curl -s http://127.0.0.1:<port>/api/health` returns `{"ok":true}`.
