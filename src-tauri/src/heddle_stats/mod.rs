@@ -535,6 +535,37 @@ fn refresh_provider_limits_sync(
     Ok(kicked)
 }
 
+/// Replace the Cursor entry in the out-of-process limits mirror while preserving every other
+/// provider entry. Missing or malformed existing mirrors are treated as an empty limits list.
+pub(crate) fn merge_cursor_into_limits(
+    existing: serde_json::Value,
+    fresh_cursor: Option<ProviderLimit>,
+    now: i64,
+) -> serde_json::Value {
+    let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
+    limits.retain(|limit| limit["provider"].as_str() != Some("cursor"));
+    if let Some(cursor) = fresh_cursor.and_then(|limit| serde_json::to_value(limit).ok()) {
+        limits.push(cursor);
+    }
+    serde_json::json!({ "writtenAt": now, "limits": limits })
+}
+
+/// Synchronously refresh Cursor and update only its entry in `limits.json`, without an AppCtx.
+/// Runs headless from the `--refresh-provider-limits cursor` launchd job so the mirror stays fresh
+/// for out-of-process consumers (e.g. the Bugbot-meter watcher) even when the drawer is not polling.
+pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
+    let fetched = cursor_fetch::fetch_and_write();
+    let now = now_secs();
+    let path = usage_dir().join("limits.json");
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let merged = merge_cursor_into_limits(existing, cursor::limit(now), now);
+    write_json_atomic(&path, &merged)?;
+    Ok(fetched)
+}
+
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
