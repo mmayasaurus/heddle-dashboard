@@ -23,6 +23,7 @@
 //! without a claudex session (one child at a time, reaped, at most once a minute), and flag the
 //! entry `stale` when it hasn't refreshed in 5 minutes (network down, expired login, helper missing).
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use serde_json::Value;
@@ -71,37 +72,64 @@ pub(super) const NO_DATA_NOTE: &str =
 static REFRESHING: AtomicBool = AtomicBool::new(false);
 static LAST_KICK_AT: AtomicI64 = AtomicI64::new(0);
 
-/// Read the cache, kick a refresh if it is getting old, and return the Codex entry.
+/// Read the real cache, kick a refresh if it is getting old, and return the Codex entry.
 /// `None` when there is no cache at all (claudex-usage never ran here).
 pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
-    let text = std::fs::read_to_string(home().join(CACHE_REL)).ok()?;
+    limit_from_cache_path(&home().join(CACHE_REL), now, true)
+}
+
+/// Read and parse a claudex cache at an injected path. Production enables the detached refresh;
+/// tests disable it so fixture reads never launch the user's helper.
+pub(super) fn limit_from_cache_path(
+    path: &Path,
+    now: i64,
+    refresh_if_old: bool,
+) -> Option<ProviderLimit> {
+    limit_from_cache_and_helper_path(path, &home().join(HELPER_REL), now, refresh_if_old)
+}
+
+/// Like [`limit_from_cache_path`], with the refresh helper path injected for deterministic tests.
+pub(super) fn limit_from_cache_and_helper_path(
+    path: &Path,
+    helper_path: &Path,
+    now: i64,
+    refresh_if_old: bool,
+) -> Option<ProviderLimit> {
+    let text = std::fs::read_to_string(path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
-    maybe_refresh(&v, now);
+    if refresh_if_old {
+        maybe_refresh_at(&v, now, helper_path);
+    }
     parse_cache(&v, now)
 }
 
 /// Self-refresh: if the cache is older than `REFRESH_AFTER_SECS`, run `claudex-usage --refresh lb`
 /// out-of-band so the NEXT poll reads fresh data. The dashboard never blocks on the network.
-fn maybe_refresh(v: &Value, now: i64) {
-    let Some(fetched) = v["fetched_at"].as_f64() else {
-        return;
-    };
-    if (now as f64) - fetched > REFRESH_AFTER_SECS {
-        kick_refresh(now, false);
+fn maybe_refresh_at(v: &Value, now: i64, helper_path: &Path) {
+    if needs_refresh(v, now) {
+        kick_refresh_at(now, false, helper_path);
     }
+}
+
+/// Whether a cache should trigger the out-of-band refresh. Kept pure so the 90-second threshold
+/// can be tested without spawning the external helper.
+fn needs_refresh(v: &Value, now: i64) -> bool {
+    v["fetched_at"]
+        .as_f64()
+        .is_some_and(|fetched| (now as f64) - fetched > REFRESH_AFTER_SECS)
 }
 
 /// Kick `claudex-usage --refresh lb` regardless of cache age. `true` when a helper child was
 /// started (not whether it succeeded — it writes the cache on its own; the next poll reads it).
 pub(super) fn force_refresh(now: i64) -> bool {
-    kick_refresh(now, true)
+    kick_refresh_at(now, true, &home().join(HELPER_REL))
 }
 
 /// Start ONE helper child (a reaper thread waits on it, so it never zombies), skipping when one is
 /// already in flight or — unless forced — when the last kick was under `KICK_COOLDOWN_SECS` ago.
 /// Always refreshes the LB (multi-account) mode, which is what heddle routes through; raine is
 /// legacy.
-fn kick_refresh(now: i64, force: bool) -> bool {
+fn kick_refresh_at(now: i64, force: bool, helper_path: &Path) -> bool {
     if !force && now - LAST_KICK_AT.load(Ordering::SeqCst) < KICK_COOLDOWN_SECS {
         return false;
     }
@@ -112,7 +140,7 @@ fn kick_refresh(now: i64, force: bool) -> bool {
         return false;
     }
     LAST_KICK_AT.store(now, Ordering::SeqCst);
-    let mut child = match std::process::Command::new(home().join(HELPER_REL))
+    let mut child = match std::process::Command::new(helper_path)
         .args(["--refresh", "lb"])
         .env("PATH", augmented_path())
         .stdin(std::process::Stdio::null())

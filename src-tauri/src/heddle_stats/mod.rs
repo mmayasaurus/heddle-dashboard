@@ -476,28 +476,49 @@ fn agy_bin(ctx: &crate::host::AppCtx) -> String {
 }
 
 fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>, String> {
-    let now = now_secs();
-    let mut out = tap_limits(&usage_dir(), now);
-    // Claude: the per-account view (registry + claude-<id>.json) replaces the plain tap entry.
-    if let Some(c) = claude::limit(now) {
-        out.retain(|l| l.provider != "claude");
+    provider_limits_sync_with_paths(Some(ctx), &usage_dir(), None, now_secs())
+}
+
+/// Assemble provider limits from injected tap and Codex-cache paths. `ctx` is absent in unit tests
+/// so they exercise the tap/Codex combine without reading or refreshing other live provider sources.
+fn provider_limits_sync_with_paths(
+    ctx: Option<&crate::host::AppCtx>,
+    tap_dir: &Path,
+    codex_cache_path: Option<&Path>,
+    now: i64,
+) -> Result<Vec<ProviderLimit>, String> {
+    let mut out = tap_limits(tap_dir, now);
+    if ctx.is_some() {
+        // Claude: the per-account view (registry + claude-<id>.json) replaces the plain tap entry.
+        if let Some(c) = claude::limit(now) {
+            out.retain(|l| l.provider != "claude");
+            out.push(c);
+        }
+    }
+    let codex = match codex_cache_path {
+        Some(path) => codex::limit_from_cache_path(path, now, ctx.is_some()),
+        // A default-path codex read is a ctx-gated live source like claude/gemini/cursor: without a
+        // ctx we neither read nor refresh it (tests always inject a path instead) — HED-49 review.
+        None if ctx.is_some() => codex::limit(now),
+        None => None,
+    };
+    if let Some(c) = codex {
         out.push(c);
     }
-    if let Some(c) = codex::limit(now) {
-        out.push(c);
-    }
-    if let Some(g) = gemini::limit(now, &agy_bin(ctx)) {
-        out.push(g);
-    }
-    if let Some(c) = cursor::limit(now) {
-        out.push(c);
+    if let Some(ctx) = ctx {
+        if let Some(g) = gemini::limit(now, &agy_bin(ctx)) {
+            out.push(g);
+        }
+        if let Some(c) = cursor::limit(now) {
+            out.push(c);
+        }
     }
     sort_limits(&mut out);
     // Mirror the exact contract for out-of-process consumers (heddle-core's cap-aware router):
     // `{writtenAt, limits: Vec<ProviderLimit>}`. Best-effort; a failed write never fails the poll.
     if let Ok(v) = serde_json::to_value(&out) {
         let _ = write_json_atomic(
-            &usage_dir().join("limits.json"),
+            &tap_dir.join("limits.json"),
             &serde_json::json!({ "writtenAt": now, "limits": v }),
         );
     }

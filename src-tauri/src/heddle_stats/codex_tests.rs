@@ -1,6 +1,7 @@
 //! Unit tests for `codex.rs` (kept in a sibling file so the source file stays readable).
 
 use super::*;
+use std::sync::{Mutex, OnceLock};
 /// Two-account LB cache, shaped exactly like claudex-usage writes it (2026-08 provider state:
 /// 7d-only primary window, secondary null, one additional per-model bucket). Fake emails.
 const LB_2_ACCOUNTS: &str =
@@ -245,6 +246,142 @@ fn empty_or_malformed_payloads_yield_no_entry() {
         let v: Value = serde_json::from_str(text).unwrap();
         assert!(parse_cache(&v, 2).is_none(), "{text}");
     }
+}
+
+#[test]
+fn cache_file_reader_maps_windows_binds_the_max_and_marks_stale() {
+    let mut cache: Value = serde_json::from_str(LB_WITH_5H).unwrap();
+    let accounts = cache["payload"].as_array_mut().unwrap();
+    // Move both maxima off account 0, proving the binding view does not just select the first row.
+    accounts[0]["data"]["rate_limit"]["primary_window"]["used_percent"] = Value::from(1);
+    accounts[1]["data"]["rate_limit"]["primary_window"]["used_percent"] = Value::from(52);
+    accounts[1]["data"]["rate_limit"]["primary_window"]["reset_at"] = Value::from(1_787_555_555);
+    accounts[1]["data"]["rate_limit"]["secondary_window"] = serde_json::json!({
+        "used_percent": 48, "limit_window_seconds": 18_000, "reset_at": 1_786_850_000
+    });
+    let cache_file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(cache_file.path(), cache.to_string()).unwrap();
+
+    let now = 1_786_822_350 + STALE_AFTER_SECS + 1;
+    let limit =
+        limit_from_cache_path(cache_file.path(), now, false).expect("fixture cache yields a limit");
+
+    // A 5h secondary window (< 100_000 seconds) and a 7d primary window map to their
+    // respective slots; the binding keeps the max usage and its matching reset timestamp.
+    assert_eq!(limit.five_hour.used_percentage, Some(48.0));
+    assert_eq!(limit.five_hour.resets_at, Some(1_786_850_000));
+    assert_eq!(limit.seven_day.used_percentage, Some(52.0));
+    assert_eq!(limit.seven_day.resets_at, Some(1_787_555_555));
+    assert_eq!(limit.stale, Some(true));
+}
+
+#[test]
+fn missing_or_malformed_cache_files_degrade_to_no_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(limit_from_cache_path(&dir.path().join("missing.json"), 1, false).is_none());
+
+    let malformed = dir.path().join("malformed.json");
+    std::fs::write(&malformed, "not json").unwrap();
+    assert!(limit_from_cache_path(&malformed, 1, false).is_none());
+}
+
+#[test]
+fn cache_older_than_ninety_seconds_requests_a_refresh() {
+    let cache = serde_json::json!({ "fetched_at": 1_000.0 });
+    assert!(!needs_refresh(&cache, 1_090));
+    assert!(needs_refresh(&cache, 1_091));
+    assert!(!needs_refresh(&serde_json::json!({}), 1_091));
+}
+
+#[cfg(unix)]
+static REFRESH_TEST_SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(unix)]
+#[test]
+fn stale_cache_reader_kicks_the_injected_helper() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _serial = REFRESH_TEST_SERIAL
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    REFRESHING.store(false, Ordering::SeqCst);
+    LAST_KICK_AT.store(0, Ordering::SeqCst);
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(
+        &cache,
+        r#"{"fetched_at": 1000, "mode": "lb", "payload": []}"#,
+    )
+    .unwrap();
+    let marker = dir.path().join("helper-ran");
+    let helper = dir.path().join("refresh-helper");
+    // The helper records the args it was invoked with, so the test proves the INJECTED helper (not
+    // the real claudex-usage) actually ran with `--refresh lb`. LAST_KICK_AT alone is stored before
+    // the spawn, so it would pass even if the spawn used the wrong path or failed (HED-49 review).
+    std::fs::write(
+        &helper,
+        format!("#!/bin/sh\nprintf '%s' \"$*\" > \"{}\"\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&helper).unwrap().permissions();
+    perms.set_mode(0o700);
+    std::fs::set_permissions(&helper, perms).unwrap();
+
+    let now = 1091;
+    let _ = limit_from_cache_and_helper_path(&cache, &helper, now, true);
+    assert_eq!(LAST_KICK_AT.load(Ordering::SeqCst), now);
+    // The kick spawns the helper and a reaper thread waits on it; poll briefly for its marker.
+    let mut ran = String::new();
+    for _ in 0..100 {
+        if let Ok(s) = std::fs::read_to_string(&marker) {
+            ran = s;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(ran, "--refresh lb", "the injected helper must run with --refresh lb");
+}
+
+#[test]
+fn window_length_boundary_maps_under_100k_to_five_hours_and_100k_to_seven_days() {
+    let rate_limit = serde_json::json!({
+        "primary_window": {
+            "used_percent": 11,
+            "limit_window_seconds": 99_999,
+            "reset_at": 2_001
+        },
+        "secondary_window": {
+            "used_percent": 22,
+            "limit_window_seconds": 100_000,
+            "reset_at": 2_002
+        }
+    });
+
+    let (five_hour, seven_day) = windows_from_rate_limit(&rate_limit);
+    assert_eq!(
+        five_hour,
+        LimitWindow {
+            used_percentage: Some(11.0),
+            resets_at: Some(2_001)
+        }
+    );
+    assert_eq!(
+        seven_day,
+        LimitWindow {
+            used_percentage: Some(22.0),
+            resets_at: Some(2_002)
+        }
+    );
+
+    let secondary_is_short = serde_json::json!({
+        "primary_window": {"used_percent": 33, "limit_window_seconds": 604_800, "reset_at": 3_001},
+        "secondary_window": {"used_percent": 44, "limit_window_seconds": 99_999, "reset_at": 3_002}
+    });
+    let (five_hour, seven_day) = windows_from_rate_limit(&secondary_is_short);
+    assert_eq!(five_hour.resets_at, Some(3_002));
+    assert_eq!(seven_day.resets_at, Some(3_001));
 }
 
 #[test]
