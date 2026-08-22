@@ -235,10 +235,53 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
 
-    /// Find a free port by binding zero then releasing it; the small race is acceptable in tests.
+    /// Find a free port by binding zero then releasing it.
     fn free_port() -> u16 {
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.local_addr().unwrap().port()
+    }
+
+    /// Start the WebServer on an ephemeral port, retrying if another test claims the port between
+    /// `free_port` releasing it and WebServer binding it on its background thread.
+    ///
+    /// Known residual (HED-240 review): connectability proves *something* listens, not that OUR
+    /// server bound — a parallel test that grabs the port during our tokio/TLS-setup window and
+    /// keeps listening would still be connected to. Fully closing that needs `WebServer::start` to
+    /// accept a pre-bound `TcpListener` (a production change); it is far rarer than the
+    /// nothing-listening case this retry does close (the OS almost never reassigns a just-freed
+    /// ephemeral port to a concurrently-binding test), so it is left as a known residual.
+    fn start_test_web_server(
+        web: &crate::web::WebServer,
+        host: &std::sync::Arc<crate::host::HeadlessHost>,
+    ) -> u16 {
+        let mut failures = Vec::new();
+
+        for attempt in 1..=5 {
+            let port = free_port();
+            let ctx = crate::host::AppCtx::Headless(std::sync::Arc::clone(host));
+            match web.start(ctx, "pw", Some(port), crate::web::ServeMode::LanTls) {
+                Ok(_) => {
+                    for _ in 0..50 {
+                        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                            return port;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    web.stop();
+                    failures.push(format!(
+                        "attempt {attempt}: server did not bind to port {port} within 2.5 seconds"
+                    ));
+                }
+                Err(error) => failures.push(format!(
+                    "attempt {attempt}: server could not start on port {port}: {error}"
+                )),
+            }
+        }
+
+        panic!(
+            "the web service should start after five fresh port attempts: {}",
+            failures.join("; ")
+        );
     }
 
     /// End-to-end test with a real self-signed headless WebServer: plaintext HTTP through the tunnel
@@ -250,20 +293,9 @@ mod tests {
         let db = crate::db::Db::open(&tmp.join("t.db")).unwrap();
         // `/api/me` does not access HookServer, so the host needs no hook initialization.
         let host = std::sync::Arc::new(crate::host::HeadlessHost::new(tmp.clone(), db));
-        let ctx = crate::host::AppCtx::Headless(host);
 
         let web = crate::web::WebServer::new();
-        let port = free_port();
-        web.start(ctx, "pw", Some(port), crate::web::ServeMode::LanTls)
-            .expect("the web service should start");
-
-        // Wait for the background service thread to finish binding after start's preflight.
-        for _ in 0..50 {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
+        let port = start_test_web_server(&web, &host);
 
         // 1. Tunnel: plaintext in, TLS out.
         let local = start("127.0.0.1".into(), port).expect("the tunnel should start");
