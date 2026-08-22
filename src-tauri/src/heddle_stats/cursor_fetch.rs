@@ -310,7 +310,7 @@ fn snapshot_error(no_sessions: bool, any_ok: bool, discovery_text: &[String]) ->
     (!discovery_text.is_empty()).then(|| discovery_text.join("; "))
 }
 
-pub(super) fn fetch_and_write() -> bool {
+pub(crate) fn fetch_and_write() -> bool {
     let now = now_secs();
     let path = snapshot_path();
     let previous = std::fs::read_to_string(&path)

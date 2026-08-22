@@ -237,6 +237,11 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
   reset for the fleet to rotate onto. **Verified:** pinging a LIVE window does not move `resets_at`
   (`--verify acct2`, 2026-08-15) — the keeper only starts windows, never shifts them. `--dry-run`
   prints decisions. Never uses Fable/Opus.
+- **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd
+  `io.heddle.cursor-refresh`, every 5 min): runs `heddle --refresh-provider-limits cursor` to fetch
+  Cursor's usage snapshot and merge its block into `~/.heddle/usage/limits.json`. This keeps the
+  cursor block fresh independently of the FleetDrawer for out-of-app consumers such as the Bugbot
+  meter. Install with `bash scripts/install-cursor-refresh-launchd.sh` after building the release binary.
 - Router (HED-68) picks the account with the most 5h headroom; the drawer shows all accounts under
   `claude` with the active one in the summary bar (W, `activeAccount`).
 

@@ -17,8 +17,7 @@ mod commands;
 // read-only contract this module enforces.
 #[cfg(feature = "gui")]
 mod comms;
-// heddle orchestration stats (Fleet drawer): ccusage caps + dispatch ledger, read-only.
-#[cfg(feature = "gui")]
+// heddle orchestration stats. The cursor limits refresher is also used by a headless launchd job.
 mod heddle_stats;
 mod db;
 mod files;
@@ -229,6 +228,26 @@ pub fn run_spawn(args: &[String]) -> ! {
 /// Hidden `--view <file|URL>` entry used by `vopen`; POST `/view` to open a center-pane tab, then exit.
 pub fn run_view(args: &[String]) -> ! {
     agent::cli_client::run_view(args)
+}
+
+/// Refresh Cursor's local usage snapshot and merge it into the limits mirror for launchd.
+pub fn run_refresh_provider_limits(args: &[String]) {
+    let provider = args.get(2).map(String::as_str).unwrap_or("cursor");
+    if provider != "cursor" {
+        eprintln!("heddle: unsupported provider {provider:?}; only cursor is available");
+        std::process::exit(2);
+    }
+    match heddle_stats::refresh_cursor_limits() {
+        Ok(true) => println!("heddle: refreshed cursor usage and limits.json"),
+        Ok(false) => {
+            eprintln!("heddle: cursor refresh did not produce a fresh usage snapshot");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("heddle: failed to update cursor limits: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Build-time Git commit, or unknown, used by --version and SSH remote version pinning.

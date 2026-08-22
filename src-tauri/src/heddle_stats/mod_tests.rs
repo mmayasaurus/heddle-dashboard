@@ -1,6 +1,62 @@
 //! Unit tests for `mod.rs` (contract shape, tap reader, ordering, golden file).
 
 use super::*;
+
+fn cursor_limit_for_merge_test() -> ProviderLimit {
+    ProviderLimit {
+        provider: "cursor".to_string(),
+        model: Some("Cursor Pro".to_string()),
+        captured_at: Some(123),
+        five_hour: LimitWindow::default(),
+        seven_day: LimitWindow::default(),
+        source: Some("cursor-usage-summary".to_string()),
+        stale: Some(false),
+        stale_after_secs: Some(900),
+        note: None,
+        note_codes: None,
+        accounts: None,
+        active_account: None,
+        windows: None,
+        fable_weekly_estimate_pct: None,
+        fable_weekly_samples: None,
+    }
+}
+
+#[test]
+fn merge_cursor_into_limits_replaces_an_existing_cursor_entry() {
+    let existing = serde_json::json!({
+        "writtenAt": 10,
+        "limits": [
+            {"provider": "claude", "model": "Claude"},
+            {"provider": "cursor", "model": "old Cursor"}
+        ]
+    });
+
+    let merged = merge_cursor_into_limits(existing, Some(cursor_limit_for_merge_test()), 456);
+
+    assert_eq!(merged["writtenAt"], 456);
+    assert_eq!(merged["limits"].as_array().unwrap().len(), 2);
+    assert_eq!(merged["limits"][0]["provider"], "claude");
+    assert_eq!(merged["limits"][1]["provider"], "cursor");
+    assert_eq!(merged["limits"][1]["model"], "Cursor Pro");
+}
+
+#[test]
+fn merge_cursor_into_limits_removes_cursor_when_no_fresh_limit_exists() {
+    let existing = serde_json::json!({
+        "writtenAt": 10,
+        "limits": [
+            {"provider": "cursor", "model": "old Cursor"},
+            {"provider": "codex", "model": "Codex"}
+        ]
+    });
+
+    let merged = merge_cursor_into_limits(existing, None, 456);
+
+    assert_eq!(merged["writtenAt"], 456);
+    assert_eq!(merged["limits"], serde_json::json!([{"provider": "codex", "model": "Codex"}]));
+}
+
 #[test]
 fn mask_email_keeps_first_char_and_domain() {
     assert_eq!(mask_email("alice@example.com"), "a…@example.com");
