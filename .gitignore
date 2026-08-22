@@ -5,6 +5,7 @@ node_modules/
 
 # ─── Frontend build output ───
 dist/
+pocket-dist/
 dist-ssr/
 *.local
 

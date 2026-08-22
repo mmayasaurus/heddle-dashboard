@@ -2465,6 +2465,7 @@ dependencies = [
  "crypto_box",
  "dirs",
  "futures-util",
+ "getrandom 0.2.17",
  "if-addrs",
  "keyring",
  "libc",

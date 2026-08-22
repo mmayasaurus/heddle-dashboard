@@ -50,6 +50,11 @@ fn main() {
             heddle_lib::run_refresh_provider_limits(&args);
             return;
         }
+        #[cfg(feature = "gui")]
+        Some("--pocket-console") => {
+            heddle_lib::run_pocket_console(&args);
+            return;
+        }
         _ => {}
     }
     // Raise the process's open-file soft limit on paths that can launch PTY sessions: --serve and the
