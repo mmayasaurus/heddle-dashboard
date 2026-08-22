@@ -45,6 +45,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("--spawn") => heddle_lib::run_spawn(&args),
         Some("--view") => heddle_lib::run_view(&args),
+        #[cfg(feature = "gui")]
         Some("--refresh-provider-limits") => {
             heddle_lib::run_refresh_provider_limits(&args);
             return;

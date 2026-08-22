@@ -17,7 +17,8 @@ mod commands;
 // read-only contract this module enforces.
 #[cfg(feature = "gui")]
 mod comms;
-// heddle orchestration stats. The cursor limits refresher is also used by a headless launchd job.
+// heddle orchestration stats (Fleet drawer): ccusage caps + dispatch ledger, read-only.
+#[cfg(feature = "gui")]
 mod heddle_stats;
 mod db;
 mod files;
@@ -230,7 +231,10 @@ pub fn run_view(args: &[String]) -> ! {
     agent::cli_client::run_view(args)
 }
 
-/// Refresh Cursor's local usage snapshot and merge it into the limits mirror for launchd.
+/// Refresh Cursor's local usage snapshot and merge it into the limits mirror for launchd. GUI-gated:
+/// the launchd job invokes the installed GUI release binary, so the minimal `--no-default-features`
+/// server build omits it (and `heddle_stats`) rather than compiling provider-usage fetching into it.
+#[cfg(feature = "gui")]
 pub fn run_refresh_provider_limits(args: &[String]) {
     let provider = args.get(2).map(String::as_str).unwrap_or("cursor");
     if provider != "cursor" {

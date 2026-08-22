@@ -21,25 +21,19 @@
 //! fields are `Option` — never rename/remove/retype an existing field.
 
 use std::path::{Path, PathBuf};
-#[cfg(feature = "gui")]
 use std::process::Command;
 
 use rusqlite::Connection;
 use serde::Serialize;
 
-#[cfg(feature = "gui")]
 mod claude;
-#[cfg(feature = "gui")]
 pub mod discipline;
-#[cfg(feature = "gui")]
 pub mod route_mix;
 mod codex;
 mod cursor;
 mod cursor_fetch;
-#[cfg(feature = "gui")]
 mod fable_attrib;
 mod gemini;
-#[cfg(feature = "gui")]
 pub mod roster;
 mod util;
 
@@ -56,7 +50,6 @@ fn home() -> PathBuf {
 
 /// Run `ccusage <args…> --json` and parse stdout. Best-effort: `Null` when ccusage is absent or
 /// errors, so the UI shows "usage unavailable" instead of failing the whole drawer.
-#[cfg(feature = "gui")]
 fn ccusage_json(args: &[&str]) -> serde_json::Value {
     let out = Command::new("ccusage")
         .args(args)
@@ -74,7 +67,6 @@ fn ccusage_json(args: &[&str]) -> serde_json::Value {
 /// The cap view: the active 5-hour block (burn rate + projection) plus weekly totals, returned as
 /// ccusage's own JSON so the frontend renders it directly. Runs on the blocking pool because
 /// ccusage scans every session log (seconds, not milliseconds) — the drawer should poll on a timer.
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_caps() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -158,7 +150,6 @@ fn map_dispatch(r: &rusqlite::Row) -> rusqlite::Result<Dispatch> {
 /// Run a blocking read on the blocking pool. Every command here touches the filesystem or SQLite,
 /// and synchronous Tauri commands run on the main thread (see README "Contributing"), so a slow
 /// disk or a busy ledger must never stall the UI.
-#[cfg(feature = "gui")]
 pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -168,7 +159,6 @@ pub(crate) async fn blocking<T: Send + 'static>(
 }
 
 /// Most recent dispatches, newest first (default 25, capped 200).
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_recent(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
     blocking(move || recent_sync(limit)).await
@@ -190,7 +180,6 @@ fn recent_sync(limit: Option<i64>) -> Result<Vec<Dispatch>, String> {
 }
 
 /// Dispatches that started but never finished — the drawer's "running now" strip.
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_in_flight() -> Result<Vec<Dispatch>, String> {
     blocking(in_flight_sync).await
@@ -211,7 +200,6 @@ fn in_flight_sync() -> Result<Vec<Dispatch>, String> {
 }
 
 /// Per-provider usage rollup for the "by provider" summary alongside the cap bars.
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_provider_usage() -> Result<Vec<ProviderUsage>, String> {
     blocking(provider_usage_sync).await
@@ -472,7 +460,6 @@ pub(crate) fn sort_limits(out: &mut [ProviderLimit]) {
 /// (claude), Codex from the claudex-usage cache, Gemini from the agy snapshot. Best-effort — absent
 /// sources simply yield fewer entries. Cheap (file reads only); slow sources refresh themselves
 /// out-of-band (detached, never blocking this call) when their snapshot is getting old.
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_provider_limits(app: tauri::AppHandle) -> Result<Vec<ProviderLimit>, String> {
     blocking(move || provider_limits_sync(&crate::host::AppCtx::Tauri(app))).await
@@ -482,14 +469,12 @@ pub async fn heddle_provider_limits(app: tauri::AppHandle) -> Result<Vec<Provide
 /// sessions (Settings → agent defaults), else a located install, else bare `agy` resolved on the
 /// augmented PATH — the same order session launches use, so the dashboard queries the SAME agy
 /// (and login) as the terminals.
-#[cfg(feature = "gui")]
 fn agy_bin(ctx: &crate::host::AppCtx) -> String {
     crate::pty::manager::agent_bin_path(ctx, crate::models::SessionKind::Antigravity)
         .or_else(|| crate::agent::install::locate_installed_bin("antigravity"))
         .unwrap_or_else(|| "agy".to_string())
 }
 
-#[cfg(feature = "gui")]
 fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>, String> {
     let now = now_secs();
     let mut out = tap_limits(&usage_dir(), now);
@@ -523,7 +508,6 @@ fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>,
 /// is `None`), ignoring the staleness thresholds. Returns the providers a refresh was kicked for.
 /// Non-blocking: re-poll `heddle_provider_limits` a few seconds later to read the result. Claude is
 /// tap-driven (a session must render its statusline), so it is never in the list.
-#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn heddle_refresh_provider_limits(
     app: tauri::AppHandle,
@@ -532,7 +516,6 @@ pub async fn heddle_refresh_provider_limits(
     blocking(move || refresh_provider_limits_sync(&crate::host::AppCtx::Tauri(app), provider)).await
 }
 
-#[cfg(feature = "gui")]
 fn refresh_provider_limits_sync(
     ctx: &crate::host::AppCtx,
     provider: Option<String>,
@@ -568,6 +551,8 @@ pub(crate) fn merge_cursor_into_limits(
 }
 
 /// Synchronously refresh Cursor and update only its entry in `limits.json`, without an AppCtx.
+/// Runs headless from the `--refresh-provider-limits cursor` launchd job so the mirror stays fresh
+/// for out-of-process consumers (e.g. the Bugbot-meter watcher) even when the drawer is not polling.
 pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
     let fetched = cursor_fetch::fetch_and_write();
     let now = now_secs();
