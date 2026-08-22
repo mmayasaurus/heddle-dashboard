@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
     // Work around Node 22+'s experimental global localStorage masking jsdom's implementation; see that file.
     setupFiles: ["./vitest.setup.ts"],
   },
