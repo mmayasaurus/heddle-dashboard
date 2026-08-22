@@ -2,9 +2,24 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+type TermStoreMockState = {
+  activeSessionId: string | null;
+  sessions: { id: string; projectId: string; cwd: string }[];
+  ephemeralSessions: Record<string, unknown>;
+  projects: { id: string; rootPath: string }[];
+};
 
 const invoke = vi.hoisted(() => vi.fn());
+const termStoreState = vi.hoisted(() => ({
+  value: {
+    activeSessionId: null,
+    sessions: [],
+    ephemeralSessions: {},
+    projects: [],
+  } as TermStoreMockState,
+}));
 
 vi.mock("../../ipc/transport", () => ({ invoke, isTauri: true }));
 vi.mock("../../i18n", () => ({
@@ -14,15 +29,21 @@ vi.mock("../../i18n", () => ({
     args.length ? `${key}:${args.join(",")}` : key,
 }));
 vi.mock("../../store/termStore", () => ({
-  useTermStore: (selector: (state: object) => unknown) => selector({
+  useTermStore: (selector: (state: object) => unknown) => selector(termStoreState.value),
+}));
+
+import { FleetDrawer } from "./FleetDrawer";
+
+afterEach(() => {
+  // Reset the parametric termStore mock so a case that overrides it (e.g. the scoped-roster test)
+  // cannot leak its project context into later tests — independent of file execution order.
+  termStoreState.value = {
     activeSessionId: null,
     sessions: [],
     ephemeralSessions: {},
     projects: [],
-  }),
-}));
-
-import { FleetDrawer } from "./FleetDrawer";
+  };
+});
 
 const now = Math.floor(Date.now() / 1000);
 const testFileUrl = new URL(import.meta.url);
@@ -890,5 +911,188 @@ describe("FleetDrawer provider-window regressions", () => {
     const fresh = document.querySelector('.fleet-provcap-provider[title="fresh-provider"]')?.closest(".fleet-provcap");
     expect(aged?.classList.contains("stale")).toBe(true);
     expect(fresh?.classList.contains("stale")).toBe(false);
+  });
+});
+
+describe("FleetDrawer dispatch and usage formatting", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_provider_usage") {
+        return Promise.resolve([
+          { provider: "negative", dispatches: 1, succeeded: 1, inputTokens: -1, outputTokens: 0 },
+          { provider: "thousands", dispatches: 1, succeeded: 1, inputTokens: 950, outputTokens: 1_500 },
+          { provider: "large", dispatches: 1, succeeded: 1, inputTokens: 2_300_000, outputTokens: 5_000_000_000 },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+  });
+
+  it("shows token values at zero, thousand, million, and billion boundaries", async () => {
+    render(<FleetDrawer />);
+
+    await screen.findByText("0 in · 0 out");
+    expect(screen.getByText("950 in · 1.5k out")).toBeTruthy();
+    expect(screen.getByText("2.3M in · 5.00B out")).toBeTruthy();
+  });
+
+  it("shows short and padded multi-minute dispatch durations", async () => {
+    const dispatches = [
+      { id: 1, durationMs: null },
+      { id: 2, durationMs: 0 },
+      { id: 3, durationMs: 45_000 },
+      { id: 4, durationMs: 90_000 },
+      { id: 5, durationMs: 65_000 },
+      { id: 6, durationMs: -1 },
+    ].map((dispatch) => ({
+      ...dispatch,
+      orchestrator: "R",
+      taskClass: "test",
+      provider: "claude",
+      model: `duration-${dispatch.id}`,
+      ok: 1,
+      issue: `duration-${dispatch.id}`,
+      inputTokens: 1,
+      cachedInputTokens: null,
+      outputTokens: 1,
+      fellBackFrom: null,
+      startedAt: "2026-08-22T00:00:00Z",
+      finishedAt: "2026-08-22T00:01:00Z",
+    }));
+    invoke.mockImplementation((command: string) =>
+      command === "heddle_recent" ? Promise.resolve(dispatches) : Promise.resolve([]),
+    );
+    render(<FleetDrawer />);
+
+    await screen.findByText("45s");
+    expect(screen.getAllByText("—")).toHaveLength(3);
+    expect(screen.getByText("1m30s")).toBeTruthy();
+    expect(screen.getByText("1m05s")).toBeTruthy();
+  });
+});
+
+describe("FleetDrawer recent dispatch visibility", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+  });
+
+  it("hides TEST-orchestrator dispatches while keeping real dispatches visible", async () => {
+    const dispatch = {
+      taskClass: "test",
+      provider: "claude",
+      ok: 1,
+      inputTokens: 1,
+      cachedInputTokens: null,
+      outputTokens: 1,
+      durationMs: 1_000,
+      fellBackFrom: null,
+      startedAt: "2026-08-22T00:00:00Z",
+      finishedAt: "2026-08-22T00:01:00Z",
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_recent") {
+        return Promise.resolve([
+          { ...dispatch, id: 1, orchestrator: "TEST", model: "hidden-model", issue: "test-hidden-issue" },
+          { ...dispatch, id: 2, orchestrator: "R", model: "visible-model", issue: "real-visible-issue" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await screen.findByText("real-visible-issue");
+    expect(screen.queryByText("test-hidden-issue")).toBeNull();
+  });
+
+  it("shows the no-real-dispatches message when the recent list is empty", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "heddle_recent" ? Promise.resolve([]) : Promise.resolve([]),
+    );
+    render(<FleetDrawer />);
+
+    await screen.findByText("No real dispatches yet.");
+  });
+
+  it("shows the no-real-dispatches message when the ledger holds only TEST rows", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "heddle_recent"
+        ? Promise.resolve([
+            {
+              id: 1,
+              orchestrator: "TEST",
+              taskClass: "test",
+              provider: "claude",
+              model: "only-test-model",
+              ok: 1,
+              issue: "only-test-issue",
+              inputTokens: 1,
+              cachedInputTokens: null,
+              outputTokens: 1,
+              durationMs: 1_000,
+              fellBackFrom: null,
+              startedAt: "2026-08-22T00:00:00Z",
+              finishedAt: "2026-08-22T00:01:00Z",
+            },
+          ])
+        : Promise.resolve([]),
+    );
+    render(<FleetDrawer />);
+
+    // shownRecent filters out TEST rows, so an all-TEST ledger must still show the empty message —
+    // this pins the empty branch to shownRecent.length, not the unfiltered recent.length.
+    await screen.findByText("No real dispatches yet.");
+    expect(screen.queryByText("only-test-issue")).toBeNull();
+  });
+});
+
+describe("FleetDrawer empty data states", () => {
+  beforeEach(() => {
+    localStorage.setItem("heddle-fleet-open", "1");
+    localStorage.setItem("heddle-fleet-roster-scope", "project");
+    termStoreState.value = {
+      activeSessionId: null,
+      sessions: [],
+      ephemeralSessions: {},
+      projects: [],
+    };
+  });
+
+  it("explains that caps are waiting for the statusline tap", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "heddle_provider_limits" ? Promise.resolve([]) : Promise.resolve([]),
+    );
+    render(<FleetDrawer />);
+
+    await screen.findByText((content) => content.includes("Waiting for the statusline tap to capture usage"));
+  });
+
+  it("explains when all roster agents belong to another project", async () => {
+    termStoreState.value = {
+      activeSessionId: "session-current",
+      sessions: [{ id: "session-current", projectId: "project-current", cwd: "/projects/current" }],
+      ephemeralSessions: {},
+      projects: [{ id: "project-current", rootPath: "/projects/current" }],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{
+          name: "outside-project",
+          model: "claude",
+          pid: 42,
+          sessionId: "outside-session",
+          cwd: "/projects/elsewhere",
+          status: "idle",
+          kind: "agent",
+          updatedAtMs: 0,
+          alive: true,
+          workers: [],
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await screen.findByText(/No agents in the current project/);
   });
 });
