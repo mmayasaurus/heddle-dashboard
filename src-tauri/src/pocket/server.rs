@@ -1,17 +1,72 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     #[test]
     fn pocket_bind_address_is_loopback() {
         assert!(bind_addr(8800).ip().is_loopback());
     }
+
+    #[tokio::test]
+    async fn regression_hed_345_data_routes_require_a_device_token() {
+        for path in [
+            "/api/me",
+            "/api/sessions",
+            "/api/sessions/missing/transcript",
+            "/api/sessions/missing/status",
+            "/api/fleet-chat",
+            "/api/unrecognized",
+        ] {
+            let response = router_with_verifier(test_token_verifier)
+                .oneshot(Request::builder().uri(path).body(axum::body::Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        }
+
+        for path in [
+            "/api/me",
+            "/api/sessions",
+            "/api/sessions/missing/transcript",
+            "/api/sessions/missing/status",
+            "/api/fleet-chat",
+        ] {
+            let response = router_with_verifier(test_token_verifier)
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::AUTHORIZATION, "Bearer test-token")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            if path == "/api/sessions" {
+                assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+                let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                assert!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["sessions"].is_array());
+            }
+        }
+    }
+
+    fn test_token_verifier(token: &str) -> bool {
+        token == "test-token"
+    }
 }
-use axum::extract::State;
+use std::path::Path;
+use std::process::Command;
+
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
+use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
+use serde::Deserialize;
 
 use super::config;
 
@@ -21,7 +76,14 @@ use super::config;
 struct PocketAssets;
 
 #[derive(Clone, Copy)]
-struct PocketState;
+struct PocketState {
+    token_verifier: fn(&str) -> bool,
+}
+
+#[derive(Deserialize)]
+struct TailQuery {
+    tail: Option<usize>,
+}
 
 pub fn start(port: u16) -> Result<axum_server::Handle<std::net::SocketAddr>, String> {
     // Keep heddle provably off every public/LAN interface. Tailnet reachability comes only from an
@@ -74,25 +136,190 @@ fn bind_addr(port: u16) -> std::net::SocketAddr {
 }
 
 fn router() -> Router {
+    router_with_verifier(config::verify_token)
+}
+
+fn router_with_verifier(token_verifier: fn(&str) -> bool) -> Router {
     // Static shell and health are public. `/api/me` and all future `/api/*` data routes require the
     // device token and return 401 when it is absent or wrong. Rate limiting is deliberately an S1
     // non-goal: the listener is loopback-only, exposure is tailnet-only, and tokens are high entropy.
+    let state = PocketState { token_verifier };
+    let protected = Router::new()
+        .route("/me", get(me))
+        .route("/sessions", get(sessions))
+        .route("/sessions/:id/transcript", get(session_transcript))
+        .route("/sessions/:id/status", get(session_status))
+        .route("/fleet-chat", get(fleet_chat));
     Router::new()
         .route("/api/health", get(health))
-        .route("/api/me", get(me))
+        .nest("/api", protected)
         .fallback(static_handler)
-        .with_state(PocketState)
+        .layer(middleware::from_fn_with_state(state, require_api_token))
+        .with_state(state)
 }
 
 async fn health() -> impl IntoResponse {
     axum::Json(serde_json::json!({ "ok": true }))
 }
 
-async fn me(State(_state): State<PocketState>, headers: HeaderMap) -> impl IntoResponse {
+async fn require_api_token(
+    State(state): State<PocketState>,
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: Next,
+) -> impl IntoResponse {
+    if request.uri().path() == "/api/health" || !request.uri().path().starts_with("/api/") {
+        return next.run(request).await;
+    }
     match token_from_headers(&headers) {
-        Some(token) if config::verify_token(&token) => StatusCode::OK.into_response(),
+        Some(token) if (state.token_verifier)(&token) => next.run(request).await,
         _ => StatusCode::UNAUTHORIZED.into_response(),
     }
+}
+
+async fn me() -> StatusCode {
+    StatusCode::OK
+}
+
+async fn sessions() -> axum::Json<serde_json::Value> {
+    let sessions = tokio::task::spawn_blocking(|| {
+        crate::heddle_stats::roster::fleet_roster()
+            .into_iter()
+            .map(session_card)
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    axum::Json(serde_json::json!({ "sessions": sessions }))
+}
+
+async fn session_transcript(
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<TailQuery>,
+) -> axum::Json<serde_json::Value> {
+    let tail = bounded_tail(query.tail);
+    let response = tokio::task::spawn_blocking(move || {
+        let Some(agent) = crate::heddle_stats::roster::fleet_roster()
+            .into_iter()
+            .find(|agent| agent.session_id == id)
+        else {
+            return serde_json::json!({ "kind": null, "messages": [], "unavailable": "Session not found" });
+        };
+        // The roster's session_id is the agent-native session id (e.g. the Claude session UUID);
+        // the tab "kind" ("interactive") is NOT the agent provider. Probe the providers that have
+        // parseable transcripts by which one's transcript file exists for this id, then read it.
+        use crate::models::SessionKind;
+        let resolved = [SessionKind::Claude, SessionKind::Codex, SessionKind::Grok]
+            .into_iter()
+            .find(|kind| crate::agent::transcript::source_path(*kind, &agent.session_id).is_some());
+        let Some(kind) = resolved else {
+            return serde_json::json!({ "kind": agent.kind, "messages": [], "unavailable": "No agent transcript for this session" });
+        };
+        let kind_label = match kind {
+            SessionKind::Codex => "codex",
+            SessionKind::Grok => "grok",
+            _ => "claude",
+        };
+        match crate::agent::transcript::read(kind, &agent.session_id) {
+            Ok(messages) => {
+                let start = messages.len().saturating_sub(tail);
+                serde_json::json!({ "kind": kind_label, "messages": messages[start..] })
+            }
+            Err(reason) => serde_json::json!({ "kind": kind_label, "messages": [], "unavailable": reason }),
+        }
+    })
+    .await
+    .unwrap_or_else(|error| serde_json::json!({ "kind": null, "messages": [], "unavailable": error.to_string() }));
+    axum::Json(response)
+}
+
+async fn session_status(AxumPath(id): AxumPath<String>) -> axum::Json<serde_json::Value> {
+    let response = tokio::task::spawn_blocking(move || {
+        let Some(agent) = crate::heddle_stats::roster::fleet_roster()
+            .into_iter()
+            .find(|agent| agent.session_id == id)
+        else {
+            return serde_json::json!({ "contextPct": null, "usage": null, "account": null, "mode": null, "repo": null, "filesEditing": null });
+        };
+        let account = account_for_pid(agent.pid);
+        let usage = account
+            .as_deref()
+            .and_then(crate::heddle_stats::mirrored_claude_account_usage);
+        let repo = Path::new(&agent.cwd)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string);
+        serde_json::json!({
+            "contextPct": null,
+            "usage": usage,
+            "account": account,
+            "mode": null,
+            "repo": repo,
+            "filesEditing": null,
+        })
+    })
+    .await
+    .unwrap_or_else(|_| serde_json::json!({ "contextPct": null, "usage": null, "account": null, "mode": null, "repo": null, "filesEditing": null }));
+    axum::Json(response)
+}
+
+async fn fleet_chat(Query(query): Query<TailQuery>) -> axum::Json<serde_json::Value> {
+    let tail = bounded_tail(query.tail) as i64;
+    let messages = tokio::task::spawn_blocking(move || {
+        crate::comms::reader::fleet_chat_tail(tail)
+            .into_iter()
+            .map(|message| serde_json::json!({ "sender": message.sender, "body": message.body, "ts": message.ts }))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    axum::Json(serde_json::json!({ "messages": messages }))
+}
+
+fn session_card(agent: crate::heddle_stats::roster::FleetAgent) -> serde_json::Value {
+    let account = account_for_pid(agent.pid);
+    serde_json::json!({
+        "name": agent.name,
+        "model": agent.model,
+        "pid": agent.pid,
+        "sessionId": agent.session_id,
+        "cwd": agent.cwd,
+        "status": agent.status,
+        "kind": agent.kind,
+        "updatedAtMs": agent.updated_at_ms,
+        "alive": agent.alive,
+        "workers": agent.workers,
+        "account": account,
+        "role": null,
+    })
+}
+
+fn bounded_tail(tail: Option<usize>) -> usize {
+    tail.unwrap_or(200).clamp(1, 1_000)
+}
+
+#[cfg(unix)]
+fn account_for_pid(pid: i64) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let output = Command::new("ps")
+        .args(["eww", "-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8(output.stdout).ok()?;
+    let config_dir = command
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("CLAUDE_CONFIG_DIR="))?;
+    crate::heddle_stats::claude::account_id_for_config_dir(Path::new(config_dir))
+}
+
+#[cfg(not(unix))]
+fn account_for_pid(_pid: i64) -> Option<String> {
+    None
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

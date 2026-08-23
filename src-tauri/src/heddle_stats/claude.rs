@@ -174,6 +174,24 @@ pub(super) fn active_account<'a>(
         .or_else(|| registry.first())
 }
 
+/// The registered account whose non-default config directory exactly matches a running Claude
+/// process. Unlike `active_account`, this never falls back to a default or first account: a pocket
+/// client must not attribute a process when its environment was absent or not registered.
+pub(crate) fn account_id_for_config_dir(config_dir: &Path) -> Option<String> {
+    let registry = read_registry(&home().join(REGISTRY_REL));
+    let want = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+    registry
+        .into_iter()
+        .find(|account| {
+            account
+                .config_dir
+                .as_deref()
+                .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()) == want)
+                .unwrap_or(false)
+        })
+        .map(|account| account.id)
+}
+
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }

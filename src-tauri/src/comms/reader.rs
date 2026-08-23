@@ -99,13 +99,13 @@ pub struct Transcript {
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptMessage {
     id: i64,
-    ts: String,
-    sender: String,
+    pub(crate) ts: String,
+    pub(crate) sender: String,
     target: String,
     kind: String,
     tier: String,
     verified: bool,
-    body: String,
+    pub(crate) body: String,
     reply_to: Option<i64>,
     dispatch_id: Option<i64>,
     /// `meta`'s `fromName` when present — a CLAIM, surfaced separately. NEVER merged into `sender`.
@@ -114,6 +114,17 @@ pub struct TranscriptMessage {
     sender_kind: Option<String>,
     /// Aggregated per message from `deliveries`; `null` when the message has no delivery rows.
     deliveries: Option<DeliveryCounts>,
+}
+
+/// Tail of the fleet room for the read-only pocket host. It shares the dashboard transcript path,
+/// including its read-only connection and bounded tail behavior.
+pub(crate) fn fleet_chat_tail(limit: i64) -> Vec<TranscriptMessage> {
+    match comms_db_path() {
+        Some(path) => transcript_at(&path, "#fleet", None, Some(limit))
+            .map(|transcript| transcript.messages)
+            .unwrap_or_default(),
+        None => vec![],
+    }
 }
 
 #[derive(Serialize, Debug, Clone, Default, PartialEq)]
