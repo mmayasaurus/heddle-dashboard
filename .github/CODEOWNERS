@@ -1,0 +1,6 @@
+# CI security surface — changes to workflows/scripts require code-owner review (HED-281).
+# NOTE: ENFORCED only once `require_code_owner_reviews` is enabled on the "Protect main"
+# ruleset (a repo-admin action, pending Maya). Until then this records intended ownership.
+/.github/workflows/  @mmayasaurus
+/.github/scripts/    @mmayasaurus
+/.github/CODEOWNERS  @mmayasaurus
