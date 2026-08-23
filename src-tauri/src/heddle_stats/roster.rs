@@ -10,7 +10,7 @@ use serde::Serialize;
 use super::{home, ledger};
 
 /// One in-flight heddle worker, grouped under its live fleet orchestrator for the Fleet drawer.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Worker {
     id: i64,
@@ -24,7 +24,7 @@ pub struct Worker {
 }
 
 /// A live Claude Code fleet orchestrator and the heddle workers it currently owns.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FleetAgent {
     pub(crate) name: String,
@@ -660,5 +660,5 @@ pub(crate) fn fleet_roster() -> Vec<FleetAgent> {
 pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
     Ok(tauri::async_runtime::spawn_blocking(fleet_roster)
     .await
-    .unwrap_or_default())
+    .map_err(|e| format!("failed to compute fleet roster: {e}"))?)
 }

@@ -94,7 +94,7 @@ function usePoller(active: boolean, everyMs: number, request: (signal: AbortSign
       current = new AbortController();
       running = true;
       void request(current.signal).catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) return;
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }).finally(() => { running = false; });
     };
     const resume = () => { if (!document.hidden) poll(); };
@@ -117,7 +117,7 @@ function basename(path: string): string {
 function statusTone(session: Pick<Session, "status" | "alive">): StatusTone {
   if (!session.alive) return "deaf-down";
   const status = session.status.toLowerCase();
-  if (/(wait|ask|need|block)/.test(status)) return "waiting-on-you";
+  if (/(ask|need|block|confirm|error)/.test(status)) return "waiting-on-you";
   if (/(work|busy|run|active|think|tool)/.test(status)) return "working";
   return "idle";
 }
@@ -136,9 +136,10 @@ function formatReset(value: string | number | null): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function formatUsage(window: UsageWindow | undefined): string {
-  if (!window || window.usedPercentage === null) return "—";
-  return `${window.usedPercentage}% · ${formatReset(window.resetsAt)}`;
+function formatUsage(usageWindow: UsageWindow | undefined): string {
+  if (!usageWindow) return "—";
+  if (usageWindow.usedPercentage === null) return formatReset(usageWindow.resetsAt);
+  return `${usageWindow.usedPercentage}% · ${formatReset(usageWindow.resetsAt)}`;
 }
 
 function Denial({ state, retry }: { state: Connection; retry: () => void }) {
@@ -228,29 +229,31 @@ function SessionChat({ session, deny, goBack }: { session: Session; deny: () => 
   const [transcript, setTranscript] = useState<TranscriptMessage[] | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [status, setStatus] = useState<SessionStatus | null>(null);
-  const [error, setError] = useState(false);
+  const [transcriptError, setTranscriptError] = useState(false);
+  const [statusError, setStatusError] = useState(false);
   const encodedId = encodeURIComponent(session.sessionId);
   const loadTranscript = useCallback(async (signal: AbortSignal) => {
     try {
       const result = await getJson<{ messages: TranscriptMessage[]; unavailable?: string }>(`/api/sessions/${encodedId}/transcript?tail=200`, signal, deny);
       setTranscript(result.messages);
       setUnavailable(Boolean(result.unavailable));
-      setError(false);
+      setTranscriptError(false);
     } catch (fetchError) {
-      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setError(true);
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setTranscriptError(true);
     }
   }, [deny, encodedId]);
   const loadStatus = useCallback(async (signal: AbortSignal) => {
     try {
       setStatus(await getJson<SessionStatus>(`/api/sessions/${encodedId}/status`, signal, deny));
+      setStatusError(false);
     } catch (fetchError) {
-      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setError(true);
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setStatusError(true);
     }
   }, [deny, encodedId]);
   usePoller(true, 3000, loadTranscript);
   usePoller(true, 5000, loadStatus);
   const updateKey = transcript?.map((message) => `${message.timestamp}:${message.text.length}`).join("|") ?? "loading";
-  return <section className="chat-view"><button className="back-button" onClick={goBack}>‹ Sessions</button><header className="chat-header"><div className="session-identity"><h1>{session.name}</h1>{session.account && <Chip>{session.account}</Chip>}</div><p>{basename(session.cwd)}</p></header><StatusStrip status={status} />{error && <InlineError>Can’t reach host — updates will resume automatically.</InlineError>}{unavailable ? <section className="card transcript-note"><p>No transcript for this session</p></section> : <ScrollFeed updateKey={updateKey}>{transcript?.map((message, index) => <article className={`message-bubble ${message.role === "user" ? "user" : "agent"}`} key={`${message.timestamp ?? ""}-${index}`}><TranscriptText text={message.text} /><ToolRows tools={message.tools} /></article>)}</ScrollFeed>}</section>;
+  return <section className="chat-view"><button className="back-button" onClick={goBack}>‹ Sessions</button><header className="chat-header"><div className="session-identity"><h1>{session.name}</h1>{session.account && <Chip>{session.account}</Chip>}</div><p>{basename(session.cwd)}</p></header><StatusStrip status={status} />{statusError && <InlineError>Can’t reach host — status updates will resume automatically.</InlineError>}{transcriptError && <InlineError>Can’t reach host — transcript updates will resume automatically.</InlineError>}{unavailable ? <section className="card transcript-note"><p>No transcript for this session</p></section> : <ScrollFeed updateKey={updateKey}>{transcript?.map((message, index) => <article className={`message-bubble ${message.role === "user" ? "user" : "agent"}`} key={`${message.timestamp ?? ""}-${index}`}><TranscriptText text={message.text} /><ToolRows tools={message.tools} /></article>)}</ScrollFeed>}</section>;
 }
 
 function FleetChat({ deny, goBack }: { deny: () => void; goBack: () => void }) {

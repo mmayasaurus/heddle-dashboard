@@ -10,6 +10,23 @@ mod tests {
         assert!(bind_addr(8800).ip().is_loopback());
     }
 
+    #[test]
+    fn regression_pr_99_blank_session_ids_are_not_actionable() {
+        assert!(blank_session_id(""));
+        assert!(blank_session_id("  \t\n"));
+        assert!(!blank_session_id("session-123"));
+    }
+
+    #[test]
+    fn regression_pr_99_config_dir_parser_keeps_spaces() {
+        assert_eq!(
+            claude_config_dir_from_command(
+                "claude CLAUDE_CONFIG_DIR=/Users/maya/Library/Application Support/Claude HOME=/Users/maya",
+            ),
+            Some("/Users/maya/Library/Application Support/Claude")
+        );
+    }
+
     #[tokio::test]
     async fn regression_hed_345_data_routes_require_a_device_token() {
         for path in [
@@ -59,6 +76,8 @@ mod tests {
 }
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
@@ -183,8 +202,9 @@ async fn me() -> StatusCode {
 
 async fn sessions() -> axum::Json<serde_json::Value> {
     let sessions = tokio::task::spawn_blocking(|| {
-        crate::heddle_stats::roster::fleet_roster()
+        cached_roster()
             .into_iter()
+            .filter(|agent| !blank_session_id(&agent.session_id))
             .map(session_card)
             .collect::<Vec<_>>()
     })
@@ -197,9 +217,12 @@ async fn session_transcript(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<TailQuery>,
 ) -> axum::Json<serde_json::Value> {
+    if blank_session_id(&id) {
+        return axum::Json(serde_json::json!({ "kind": null, "messages": [], "unavailable": "Session not found" }));
+    }
     let tail = bounded_tail(query.tail);
     let response = tokio::task::spawn_blocking(move || {
-        let Some(agent) = crate::heddle_stats::roster::fleet_roster()
+        let Some(agent) = cached_roster()
             .into_iter()
             .find(|agent| agent.session_id == id)
         else {
@@ -234,8 +257,11 @@ async fn session_transcript(
 }
 
 async fn session_status(AxumPath(id): AxumPath<String>) -> axum::Json<serde_json::Value> {
+    if blank_session_id(&id) {
+        return axum::Json(serde_json::json!({ "contextPct": null, "usage": null, "account": null, "mode": null, "repo": null, "filesEditing": null }));
+    }
     let response = tokio::task::spawn_blocking(move || {
-        let Some(agent) = crate::heddle_stats::roster::fleet_roster()
+        let Some(agent) = cached_roster()
             .into_iter()
             .find(|agent| agent.session_id == id)
         else {
@@ -277,7 +303,7 @@ async fn fleet_chat(Query(query): Query<TailQuery>) -> axum::Json<serde_json::Va
 }
 
 fn session_card(agent: crate::heddle_stats::roster::FleetAgent) -> serde_json::Value {
-    let account = account_for_pid(agent.pid);
+    let account = agent.alive.then(|| account_for_pid(agent.pid)).flatten();
     serde_json::json!({
         "name": agent.name,
         "model": agent.model,
@@ -288,10 +314,30 @@ fn session_card(agent: crate::heddle_stats::roster::FleetAgent) -> serde_json::V
         "kind": agent.kind,
         "updatedAtMs": agent.updated_at_ms,
         "alive": agent.alive,
-        "workers": agent.workers,
+        "workers": agent.workers.len(),
         "account": account,
         "role": null,
     })
+}
+
+const ROSTER_CACHE_TTL: Duration = Duration::from_secs(2);
+static ROSTER_CACHE: OnceLock<Mutex<Option<(Instant, Vec<crate::heddle_stats::roster::FleetAgent>)>>> = OnceLock::new();
+
+fn cached_roster() -> Vec<crate::heddle_stats::roster::FleetAgent> {
+    let cache = ROSTER_CACHE.get_or_init(|| Mutex::new(None));
+    let mut cached = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((computed_at, roster)) = cached.as_ref() {
+        if computed_at.elapsed() < ROSTER_CACHE_TTL {
+            return roster.clone();
+        }
+    }
+    let roster = crate::heddle_stats::roster::fleet_roster();
+    *cached = Some((Instant::now(), roster.clone()));
+    roster
+}
+
+fn blank_session_id(id: &str) -> bool {
+    id.trim().is_empty()
 }
 
 fn bounded_tail(tail: Option<usize>) -> usize {
@@ -311,10 +357,28 @@ fn account_for_pid(pid: i64) -> Option<String> {
         return None;
     }
     let command = String::from_utf8(output.stdout).ok()?;
-    let config_dir = command
-        .split_whitespace()
-        .find_map(|field| field.strip_prefix("CLAUDE_CONFIG_DIR="))?;
+    let config_dir = claude_config_dir_from_command(&command)?;
     crate::heddle_stats::claude::account_id_for_config_dir(Path::new(config_dir))
+}
+
+#[cfg(unix)]
+fn claude_config_dir_from_command(command: &str) -> Option<&str> {
+    let value = command.split_once("CLAUDE_CONFIG_DIR=")?.1;
+    // `ps eww` flattens the environment onto one line, so split at the next ` KEY=` boundary
+    // rather than whitespace: config directories commonly include spaces.
+    let end = value
+        .char_indices()
+        .find_map(|(index, character)| {
+            (character == ' ' && value[index + 1..]
+                .split_once('=')
+                .is_some_and(|(key, _)| {
+                    key.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+                        && key.chars().all(|character| character.is_ascii_alphanumeric() || character == '_')
+                }))
+            .then_some(index)
+        })
+        .unwrap_or(value.len());
+    (!value[..end].is_empty()).then_some(&value[..end])
 }
 
 #[cfg(not(unix))]
