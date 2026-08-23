@@ -572,15 +572,26 @@ pub(crate) fn merge_cursor_into_limits(
 }
 
 /// Replace the Claude entry in the out-of-process limits mirror while preserving every other
-/// provider entry. When no fresh Claude rebuild is available, retain its existing stale-marked
-/// entry rather than erasing the last useful data.
+/// provider entry. A rebuild is replace-worthy only when it actually carries capture data:
+/// `claude::build` returns `Some(empty)` when the registry exists but no per-account captures do,
+/// and replacing on that (or on `None`) would erase a still-useful stale-marked block for an empty
+/// one — so with no captures anywhere the existing Claude entry is retained (HED-348, qodo/codeant).
 pub(crate) fn merge_claude_into_limits(
     existing: serde_json::Value,
     fresh_claude: Option<ProviderLimit>,
     now: i64,
 ) -> serde_json::Value {
     let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
-    if let Some(claude) = fresh_claude.and_then(|limit| serde_json::to_value(limit).ok()) {
+    let has_capture = |l: &ProviderLimit| {
+        l.captured_at.is_some()
+            || l.accounts
+                .as_ref()
+                .is_some_and(|rows| rows.iter().any(|r| r.captured_at.is_some()))
+    };
+    if let Some(claude) = fresh_claude
+        .filter(has_capture)
+        .and_then(|limit| serde_json::to_value(limit).ok())
+    {
         limits.retain(|limit| limit["provider"].as_str() != Some("claude"));
         limits.push(claude);
     }

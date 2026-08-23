@@ -44,20 +44,24 @@ fn claude_tap_for_merge_test(account: &str, five_hour: f64, captured_at: i64) ->
     .to_string()
 }
 
+/// Shared setup for the HED-348 merge/rebuild tests: a temp usage dir seeded with `claude-<id>.json`
+/// tap captures, one per `(id, five_hour_pct, captured_at)` entry.
+fn dir_with_claude_taps(entries: &[(&str, f64, i64)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    for (id, five_hour, captured_at) in entries {
+        std::fs::write(
+            dir.path().join(format!("claude-{id}.json")),
+            claude_tap_for_merge_test(id, *five_hour, *captured_at),
+        )
+        .unwrap();
+    }
+    dir
+}
+
 #[test]
 fn regression_pr_348_merging_fresh_claude_rebuild_replaces_mirrors_frozen_freshness() {
     let now = 2_000;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("claude-default.json"),
-        claude_tap_for_merge_test("default", 11.0, now - 700),
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("claude-acct2.json"),
-        claude_tap_for_merge_test("acct2", 77.0, now - 30),
-    )
-    .unwrap();
+    let dir = dir_with_claude_taps(&[("default", 11.0, now - 700), ("acct2", 77.0, now - 30)]);
     let fresh = claude::build_preserving_active(
         dir.path(),
         &claude_registry_for_merge_tests(),
@@ -85,17 +89,7 @@ fn regression_pr_348_merging_fresh_claude_rebuild_replaces_mirrors_frozen_freshn
 #[test]
 fn regression_pr_348_rebuild_preserves_a_nondefault_mirror_active_account() {
     let now = 2_000;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("claude-default.json"),
-        claude_tap_for_merge_test("default", 11.0, now - 30),
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("claude-acct2.json"),
-        claude_tap_for_merge_test("acct2", 77.0, now - 30),
-    )
-    .unwrap();
+    let dir = dir_with_claude_taps(&[("default", 11.0, now - 30), ("acct2", 77.0, now - 30)]);
 
     let fresh = claude::build_preserving_active(
         dir.path(),
@@ -121,12 +115,7 @@ fn regression_pr_348_rebuild_preserves_a_nondefault_mirror_active_account() {
 #[test]
 fn regression_pr_348_rebuild_preserves_the_default_mirror_active_account() {
     let now = 2_000;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("claude-default.json"),
-        claude_tap_for_merge_test("default", 11.0, now - 30),
-    )
-    .unwrap();
+    let dir = dir_with_claude_taps(&[("default", 11.0, now - 30)]);
 
     let fresh = claude::build_preserving_active(
         dir.path(),
@@ -162,12 +151,7 @@ fn regression_pr_348_absent_or_unknown_active_id_falls_back_to_a_rebuild_not_non
     // env/default resolution `limit` uses), never short-circuit to None — otherwise the keeper would
     // write no Claude entry at all and carry a stale block forward on a deregistered account.
     let now = 2_000;
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("claude-default.json"),
-        claude_tap_for_merge_test("default", 11.0, now - 30),
-    )
-    .unwrap();
+    let dir = dir_with_claude_taps(&[("default", 11.0, now - 30)]);
     let registry = claude_registry_for_merge_tests();
 
     let absent = claude::build_preserving_active(dir.path(), &registry, None, now);
@@ -182,6 +166,41 @@ fn regression_pr_348_absent_or_unknown_active_id_falls_back_to_a_rebuild_not_non
         unknown.is_some(),
         "unknown active id must rebuild, not return None"
     );
+}
+
+#[test]
+fn regression_pr_348_capture_less_rebuild_keeps_the_existing_claude_block() {
+    // `claude::build` returns Some(empty) when the registry exists but no captures do; that must
+    // NOT overwrite a still-useful stale-marked entry with blanks (qodo/codeant).
+    let now = 2_000;
+    let dir = dir_with_claude_taps(&[]); // registered accounts, but no tap captures on disk
+    let empty = claude::build_preserving_active(
+        dir.path(),
+        &claude_registry_for_merge_tests(),
+        Some("acct2"),
+        now,
+    );
+    assert!(
+        empty.is_some(),
+        "build returns Some(empty) for a registry with no captures"
+    );
+    assert!(
+        empty.as_ref().unwrap().captured_at.is_none(),
+        "the empty rebuild carries no capture timestamp"
+    );
+
+    let existing = serde_json::json!({
+        "writtenAt": 1_000,
+        "limits": [{
+            "provider": "claude", "capturedAt": 1_500, "stale": false,
+            "fiveHour": {"usedPercentage": 42.0, "resetsAt": 9_999}
+        }]
+    });
+    let merged = merge_claude_into_limits(existing, empty, now);
+    // the useful existing block survives; the empty rebuild does not replace it with blanks
+    assert_eq!(merged["limits"][0]["capturedAt"], 1_500);
+    assert_eq!(merged["limits"][0]["fiveHour"]["usedPercentage"], 42.0);
+    assert_eq!(merged["writtenAt"], now);
 }
 
 #[test]
