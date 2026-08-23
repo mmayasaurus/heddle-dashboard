@@ -66,6 +66,42 @@ pnpm/Node, the frontend build that `tauri-build` needs for `../dist`, `rustup` s
   The edit concurrency slot has cancellation disabled, so an echo cannot cancel an in-flight build or
   scan. A skipped public scanner check is not an accepted noop.
 
+## Review-tamper threat model — why the scanner scripts run from the PR checkout is accepted (HED-281)
+
+**Execution model.** `deterministic-review.yml` is a `pull_request` workflow, not
+`pull_request_target`: on a PR it checks out and executes the workflow YAML and both scanner scripts
+from the PR's merge commit (`sh .github/scripts/semgrep-scan.sh` and
+`sh .github/scripts/gitleaks-range-scan.sh`). A malicious PR can therefore alter both a `run:` line
+and the script it invokes. This is the narrow residual identified in the codex review of PR #84 /
+**HED-253**; HED-113's gitleaks-script extraction made the script boundary explicit, not trusted.
+
+**No incremental script fix.** Loading only the scanner scripts from the trusted base ref does not
+close the residual: a base-ref pin would bind a *script-only* PR, but the workflow YAML that invokes
+the scripts is equally PR-controlled — and the same author can edit that YAML (its `run:` / `if:` /
+skip logic) in the same PR at no extra privilege. Every `pull_request` check here — including required
+`gate` — is PR-controllable by design.
+
+**Accepted controls.** This posture relies on three existing controls, rather than pretending a green
+PR scan is tamper-proof:
+
+- **Least privilege.** See [Rules baked into the workflows](#rules-baked-into-the-workflows-dont-undo-them-casually):
+  the workflow/job permission split, non-persisted checkout credentials, and fork-token constraints
+  limit what PR code can affect.
+- **Visible-diff review.** Edits to the CI surface — workflows, scanner scripts, and the shared
+  `tauri-rust-setup` composite action — are conspicuous in the PR diff and are owned by
+  [`.github/CODEOWNERS`](../.github/CODEOWNERS); enforcement follows when Maya enables required
+  code-owner reviews on the `Protect main` ruleset.
+- **Push-to-`main` coverage backstop.** semgrep re-runs full-tree on push to `main` (its job runs on
+  `push`), catching diff-aware misses and non-persistent PR-only skip tricks; secrets on `main` are
+  covered by GitHub's native secret scanning + push protection (the gitleaks job is PR-only). This
+  backstops scan *coverage*, not scanner *tampering* — a push to `main` still runs the landed commit's
+  own YAML + scripts, so tampering is caught by the review control above, not by a trusted re-scan.
+
+**Deliberately not redesigned.** `pull_request_target` plus a base-ref checkout is the real
+code-level tamper-proofing, but it is a security foot-gun redesign outside this PR (R + Maya territory,
+tracked separately). The review-sweep and self-merge discipline below remains required: review the
+latest diff, complete both sweeps, and merge only through the protected PR path.
+
 ## GitHub required-status-check semantics — observed (HED-142)
 
 GitHub resolves a required status check from the newest check-run of the required name **in the newest
