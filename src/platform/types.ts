@@ -74,7 +74,11 @@ export interface OpenerCapability {
 
 /** Dock/taskbar badge capability. */
 export interface BadgeCapability {
-  /** Set the badge count; zero/undefined clears it. Browsers have no badge, so they silently no-op. */
+  /**
+   * Set the badge count; zero/undefined clears it — except macOS dev builds, which show a persistent
+   * "DEV" Dock label (unread folded in) instead of clearing (HED-159). Browsers have no badge, so they
+   * silently no-op.
+   */
   setCount(count: number | undefined): Promise<void>;
 }
 
