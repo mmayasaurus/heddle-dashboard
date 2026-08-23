@@ -22,6 +22,168 @@ fn cursor_limit_for_merge_test() -> ProviderLimit {
     }
 }
 
+fn claude_registry_for_merge_tests() -> Vec<claude::Account> {
+    claude::parse_registry(&serde_json::json!({
+        "claude": [
+            {"id": "default", "configDir": null, "email": "default@example.com", "loggedIn": true},
+            {"id": "acct2", "configDir": "/tmp/heddle-merge-acct2", "email": "two@example.com", "loggedIn": true}
+        ]
+    }))
+}
+
+fn claude_tap_for_merge_test(account: &str, five_hour: f64, captured_at: i64) -> String {
+    serde_json::json!({
+        "model": "claude-test",
+        "rate_limits": {
+            "five_hour": {"used_percentage": five_hour, "resets_at": 3_000},
+            "seven_day": {"used_percentage": five_hour / 2.0, "resets_at": 4_000}
+        },
+        "capturedAt": captured_at,
+        "account": account
+    })
+    .to_string()
+}
+
+#[test]
+fn regression_pr_348_merging_fresh_claude_rebuild_replaces_mirrors_frozen_freshness() {
+    let now = 2_000;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("claude-default.json"),
+        claude_tap_for_merge_test("default", 11.0, now - 700),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("claude-acct2.json"),
+        claude_tap_for_merge_test("acct2", 77.0, now - 30),
+    )
+    .unwrap();
+    let fresh = claude::build_preserving_active(
+        dir.path(),
+        &claude_registry_for_merge_tests(),
+        Some("acct2"),
+        now,
+    );
+    let existing = serde_json::json!({
+        "writtenAt": 1_900,
+        "limits": [{
+            "provider": "claude", "capturedAt": 1_000, "stale": false,
+            "fiveHour": {"usedPercentage": 1.0, "resetsAt": 1_100},
+            "activeAccount": "acct2"
+        }]
+    });
+
+    let merged = merge_claude_into_limits(existing, fresh, now);
+    let claude = &merged["limits"][0];
+    assert_eq!(claude["capturedAt"], now - 30);
+    assert_eq!(claude["stale"], false);
+    assert_eq!(claude["fiveHour"]["usedPercentage"], 77.0);
+    assert_eq!(claude["accounts"][0]["capturedAt"], now - 700);
+    assert_eq!(claude["accounts"][0]["stale"], true);
+}
+
+#[test]
+fn regression_pr_348_rebuild_preserves_a_nondefault_mirror_active_account() {
+    let now = 2_000;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("claude-default.json"),
+        claude_tap_for_merge_test("default", 11.0, now - 30),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("claude-acct2.json"),
+        claude_tap_for_merge_test("acct2", 77.0, now - 30),
+    )
+    .unwrap();
+
+    let fresh = claude::build_preserving_active(
+        dir.path(),
+        &claude_registry_for_merge_tests(),
+        Some("acct2"),
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(fresh.active_account.as_deref(), Some("acct2"));
+    assert_eq!(fresh.five_hour.used_percentage, Some(77.0));
+    assert_eq!(fresh.seven_day.used_percentage, Some(38.5));
+    assert_eq!(
+        fresh.accounts.as_ref().unwrap()[1].five_hour.used_percentage,
+        Some(77.0)
+    );
+    assert_eq!(
+        fresh.accounts.as_ref().unwrap()[1].seven_day.used_percentage,
+        Some(38.5)
+    );
+}
+
+#[test]
+fn regression_pr_348_rebuild_preserves_the_default_mirror_active_account() {
+    let now = 2_000;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("claude-default.json"),
+        claude_tap_for_merge_test("default", 11.0, now - 30),
+    )
+    .unwrap();
+
+    let fresh = claude::build_preserving_active(
+        dir.path(),
+        &claude_registry_for_merge_tests(),
+        Some("default"),
+        now,
+    )
+    .unwrap();
+
+    assert_eq!(fresh.active_account.as_deref(), Some("default"));
+    assert_eq!(fresh.five_hour.used_percentage, Some(11.0));
+}
+
+#[test]
+fn regression_pr_348_no_fresh_claude_keeps_the_existing_stale_block() {
+    let existing = serde_json::json!({
+        "writtenAt": 10,
+        "limits": [{"provider": "claude", "capturedAt": 1, "stale": true}]
+    });
+
+    let merged = merge_claude_into_limits(existing, None, 456);
+
+    assert_eq!(merged["writtenAt"], 456);
+    assert_eq!(merged["limits"], serde_json::json!([
+        {"provider": "claude", "capturedAt": 1, "stale": true}
+    ]));
+}
+
+#[test]
+fn regression_pr_348_absent_or_unknown_active_id_falls_back_to_a_rebuild_not_none() {
+    // The keeper passes the mirror's existing activeAccount, which is absent on a first-run mirror;
+    // a deregistered id is likewise unresolvable. Both must fall back to a full rebuild (the same
+    // env/default resolution `limit` uses), never short-circuit to None — otherwise the keeper would
+    // write no Claude entry at all and carry a stale block forward on a deregistered account.
+    let now = 2_000;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("claude-default.json"),
+        claude_tap_for_merge_test("default", 11.0, now - 30),
+    )
+    .unwrap();
+    let registry = claude_registry_for_merge_tests();
+
+    let absent = claude::build_preserving_active(dir.path(), &registry, None, now);
+    assert!(absent.is_some(), "absent active id must rebuild, not return None");
+    assert!(
+        absent.unwrap().accounts.is_some(),
+        "the fallback must be a real per-account rebuild"
+    );
+
+    let unknown = claude::build_preserving_active(dir.path(), &registry, Some("ghost"), now);
+    assert!(
+        unknown.is_some(),
+        "unknown active id must rebuild, not return None"
+    );
+}
+
 #[test]
 fn merge_cursor_into_limits_replaces_an_existing_cursor_entry() {
     let existing = serde_json::json!({

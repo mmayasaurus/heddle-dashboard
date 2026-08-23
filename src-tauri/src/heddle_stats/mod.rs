@@ -571,9 +571,27 @@ pub(crate) fn merge_cursor_into_limits(
     serde_json::json!({ "writtenAt": now, "limits": limits })
 }
 
+/// Replace the Claude entry in the out-of-process limits mirror while preserving every other
+/// provider entry. When no fresh Claude rebuild is available, retain its existing stale-marked
+/// entry rather than erasing the last useful data.
+pub(crate) fn merge_claude_into_limits(
+    existing: serde_json::Value,
+    fresh_claude: Option<ProviderLimit>,
+    now: i64,
+) -> serde_json::Value {
+    let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
+    if let Some(claude) = fresh_claude.and_then(|limit| serde_json::to_value(limit).ok()) {
+        limits.retain(|limit| limit["provider"].as_str() != Some("claude"));
+        limits.push(claude);
+    }
+    serde_json::json!({ "writtenAt": now, "limits": limits })
+}
+
 /// Synchronously refresh Cursor and update only its entry in `limits.json`, without an AppCtx.
 /// Runs headless from the `--refresh-provider-limits cursor` launchd job so the mirror stays fresh
 /// for out-of-process consumers (e.g. the Bugbot-meter watcher) even when the drawer is not polling.
+/// It also re-derives Claude from its fresh per-account captures so a rewritten mirror timestamp
+/// cannot carry a stale Claude block forward as current data (HED-348).
 pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
     let fetched = cursor_fetch::fetch_and_write();
     let now = now_secs();
@@ -582,7 +600,21 @@ pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or(serde_json::Value::Null);
+    let active = existing["limits"]
+        .as_array()
+        .and_then(|limits| {
+            limits
+                .iter()
+                .find(|limit| limit["provider"].as_str() == Some("claude"))
+        })
+        .and_then(|claude| claude["activeAccount"].as_str())
+        .map(str::to_string);
     let merged = merge_cursor_into_limits(existing, cursor::limit(now), now);
+    let merged = merge_claude_into_limits(
+        merged,
+        claude::limit_preserving_active(active.as_deref(), now),
+        now,
+    );
     write_json_atomic(&path, &merged)?;
     Ok(fetched)
 }

@@ -121,6 +121,57 @@ pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
     build(&usage_dir(), &registry, active_env.as_deref(), now)
 }
 
+/// Rebuild Claude from its per-account captures while retaining the active-account identity
+/// already selected in the out-of-process limits mirror. The headless Cursor launchd keeper has
+/// no `CLAUDE_CONFIG_DIR`, so its normal default-account resolution would otherwise overwrite a
+/// still-current non-default selection with the wrong top-level account.
+pub(super) fn limit_preserving_active(
+    active_id: Option<&str>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let registry = read_registry(&home().join(REGISTRY_REL));
+    build_preserving_active(&usage_dir(), &registry, active_id, now)
+}
+
+/// Path-injectable implementation of `limit_preserving_active` for tests. A known active id is
+/// resolved through the registry; absent or unknown ids use the same environment/default
+/// resolution as `limit`.
+pub(super) fn build_preserving_active(
+    dir: &Path,
+    registry: &[Account],
+    active_id: Option<&str>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let active = active_id.and_then(|id| registry.iter().find(|account| account.id == id));
+    let mut limit = if let Some(account) = active {
+        build(dir, registry, account.config_dir.as_deref(), now)?
+    } else {
+        let active_env = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+        build(dir, registry, active_env.as_deref(), now)?
+    };
+    // A resolvable active id pins the top-level to that account's fresh row; an absent or unknown
+    // id falls through to the env/default limit built above (the same resolution `limit` uses) —
+    // never `None`, so the keeper still populates Claude on a first-run mirror with no activeAccount.
+    if let Some(active) = active {
+        let row = limit
+            .accounts
+            .as_ref()
+            .and_then(|rows| rows.iter().find(|row| row.id == active.id));
+
+        limit.active_account = Some(active.id.clone());
+        if let Some(row) = row {
+            limit.captured_at = row.captured_at;
+            limit.stale = row.stale;
+            limit.five_hour = row.five_hour.clone();
+            limit.seven_day = row.seven_day.clone();
+            limit.windows = Some(row.windows.clone());
+            limit.fable_weekly_estimate_pct = row.fable_weekly_estimate_pct;
+            limit.fable_weekly_samples = row.fable_weekly_samples;
+        }
+    }
+    Some(limit)
+}
+
 /// Parse `accounts.json` → `claude[]`. Missing/invalid file → empty registry.
 pub(super) fn read_registry(path: &Path) -> Vec<Account> {
     let Ok(text) = std::fs::read_to_string(path) else {
