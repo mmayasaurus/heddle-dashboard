@@ -23,6 +23,7 @@ import {
   requestEffectiveNotifyPermission,
   requestNotifyPermission,
 } from "../notify";
+import { dockBadgeAction } from "./devBadge";
 import { env } from "./env";
 import type {
   BadgeCapability,
@@ -79,7 +80,20 @@ const badge: BadgeCapability = {
     // Only Tauri desktop has Dock badges; remote windows and browsers skip them.
     if (!env.isTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setBadgeCount(count || undefined);
+    const win = getCurrentWindow();
+    // HED-159: on macOS dev builds, show a persistent "DEV" Dock badge (the unread count folds in) so
+    // a running dev instance is distinguishable from the installed app. The Dock badge is one shared
+    // slot also driven by this hook, so the "DEV" decision must live HERE — a startup-only native
+    // stamp is wiped by the setCount(0) this hook fires on mount. setBadgeLabel is macOS-only (a no-op
+    // elsewhere and its own ACL, core:window:allow-set-badge-label), so gate on env.isMac; every other
+    // case keeps the numeric unread badge. Errors are not swallowed — a denied ACL / IPC failure must
+    // surface, not masquerade as "unsupported platform" (which would silently clear the badge).
+    const action = dockBadgeAction(count, env.isMac, env.isDev);
+    if (action.kind === "label") {
+      await win.setBadgeLabel(action.label);
+    } else {
+      await win.setBadgeCount(action.count);
+    }
   },
 };
 
