@@ -34,5 +34,9 @@ export function dockBadgeAction(
   isDev: boolean,
 ): DockBadgeAction {
   const label = isMac ? devDockBadgeLabel(count, isDev) : null;
-  return label !== null ? { kind: "label", label } : { kind: "count", count: count || undefined };
+  if (label !== null) return { kind: "label", label };
+  // Numeric badge: a count of 0 (or undefined) means "no badge", so clear it. Explicit check rather
+  // than `count || undefined` so the intentional clearing at 0 is obvious, not a falsy-coercion
+  // accident (corgea/codacy). count is always >= 0 (unread total).
+  return { kind: "count", count: count === undefined || count === 0 ? undefined : count };
 }

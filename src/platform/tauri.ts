@@ -23,6 +23,7 @@ import {
   requestEffectiveNotifyPermission,
   requestNotifyPermission,
 } from "../notify";
+import { dlog } from "../debug";
 import { dockBadgeAction } from "./devBadge";
 import { env } from "./env";
 import type {
@@ -89,10 +90,19 @@ const badge: BadgeCapability = {
     // case keeps the numeric unread badge. Errors are not swallowed — a denied ACL / IPC failure must
     // surface, not masquerade as "unsupported platform" (which would silently clear the badge).
     const action = dockBadgeAction(count, env.isMac, env.isDev);
-    if (action.kind === "label") {
-      await win.setBadgeLabel(action.label);
-    } else {
-      await win.setBadgeCount(action.count);
+    try {
+      if (action.kind === "label") {
+        await win.setBadgeLabel(action.label);
+      } else {
+        await win.setBadgeCount(action.count);
+      }
+    } catch (err) {
+      // Best-effort Dock badge: an API unsupported on the platform (e.g. Windows setBadgeCount) or a
+      // denied ACL rejects here. The caller fires this as `void ...setCount(...)`, so an unhandled
+      // rejection would reach the global unhandledrejection handler (main.tsx) and surface a fatal
+      // overlay (qodo/codeant). Log it — surfaced, not masked — but do NOT fall through to a different
+      // badge state (that fallthrough was the earlier ACL-masking bug); leave the badge as-is.
+      dlog("[HED-159] Dock badge update failed:", err);
     }
   },
 };
