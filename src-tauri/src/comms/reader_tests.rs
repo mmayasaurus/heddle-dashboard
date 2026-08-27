@@ -261,6 +261,29 @@ fn needs_maya_keeps_two_valid_rows_when_a_malformed_row_is_present() {
     assert_eq!(rows.iter().map(|row| row.issue.as_str()).collect::<Vec<_>>(), ["HED-1", "HED-2"]);
 }
 
+#[test]
+fn needs_maya_drops_rows_with_an_unparseable_timestamp() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("needs-maya.json");
+    fs::write(
+        &path,
+        r#"[
+          {"issue":"HED-1","agent":"T","ts":"2026-08-16T15:00:00Z","ask_preview":"valid"},
+          {"issue":"HED-2","agent":"W","ts":"not-a-date","ask_preview":"garbage ts"},
+          {"issue":"HED-3","agent":"S","ts":"2026-08-16","ask_preview":"date only, no time or Z"}
+        ]"#,
+    )
+    .unwrap();
+
+    let (rows, error) = read_needs_maya_at(&path);
+
+    // A non-empty but non-ISO-8601-UTC ts is dropped like any other malformed row: it would sort
+    // lexically wrong against real timestamps and the UI cannot compute its age. The valid row
+    // survives and the queue is still reported ok (individual bad rows are not a queue failure).
+    assert_eq!(error, None);
+    assert_eq!(rows.iter().map(|row| row.issue.as_str()).collect::<Vec<_>>(), ["HED-1"]);
+}
+
 // ─────────────────────────────────────── test 1 ───────────────────────────────────────
 
 #[test]

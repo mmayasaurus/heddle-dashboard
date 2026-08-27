@@ -47,7 +47,7 @@ export function NeedsMayaStrip({ rows, error }: { rows: NeedsMayaRow[]; error: s
       moreText={(count) => t("fleet.comms.needsMayaMore", count)}
       onRowClick={(visualRow) => {
         const row = rows.find((candidate) => candidate.issue === visualRow.id);
-        if (row) void platform.opener.openExternal(row.linearUrl).catch(() => {});
+        if (row) void platform.opener.openExternal(row.linearUrl).catch(() => { /* best-effort: a failed external open is non-critical */ });
       }}
     />
   );

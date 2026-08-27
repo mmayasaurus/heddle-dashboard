@@ -46,12 +46,13 @@ const OPEN_KEY = "heddle.comms.open";
 interface CollapsedStripProps {
   needsHuman: CommsNeedsHumanRow[];
   needsMaya: NeedsMayaRow[];
+  needsMayaError: string | null;
   recentRefusals: number;
   onToggle: () => void;
 }
 
 /** Default-collapsed state: a single-line strip with the needs-human badge and refusals chip. */
-function CollapsedStrip({ needsHuman, needsMaya, recentRefusals, onToggle }: CollapsedStripProps) {
+function CollapsedStrip({ needsHuman, needsMaya, needsMayaError, recentRefusals, onToggle }: CollapsedStripProps) {
   const t = useT();
   return (
     <div
@@ -80,6 +81,11 @@ function CollapsedStrip({ needsHuman, needsMaya, recentRefusals, onToggle }: Col
       {needsMaya.length > 0 && (
         <span className="comms-badge comms-badge-alert" data-testid="comms-strip-needs-maya-badge">
           🟡 {t("fleet.comms.needsMaya")} {needsMaya.length}
+        </span>
+      )}
+      {needsMayaError && needsMaya.length === 0 && (
+        <span className="comms-badge comms-badge-alert" data-testid="comms-strip-needs-maya-error" title={needsMayaError}>
+          🟡 {t("fleet.comms.needsMaya")} !
         </span>
       )}
       {recentRefusals > 0 && (
@@ -230,18 +236,29 @@ function OverlayBody({ poll, activeTarget, highlightId, opStatus, replyTo, onCle
   const t = useT();
   const { loaded, schemaOk, schemaVersion, rooms, unreadByTarget, roster } = poll;
   if (!loaded) return <div className="comms-loading" data-testid="comms-loading" aria-hidden="true" />;
+  // needs-maya comes from a fleet file independent of comms.db, so surface it even when the rooms
+  // schema is unsupported or the db is absent (schemaVersion 0) — otherwise the collapsed badge
+  // advertises decisions the expanded pane can neither show nor open. The normal path below renders
+  // it inside ChatColumn (alongside needs-human).
+  const needsMayaSurface = <NeedsMayaStrip rows={poll.needsMaya} error={poll.needsMayaError} />;
   if (!schemaOk) {
     return (
-      <div className="comms-schema-banner" data-testid="comms-schema-banner">
-        {t("fleet.comms.schemaUnsupported", schemaVersion)}
-      </div>
+      <>
+        {needsMayaSurface}
+        <div className="comms-schema-banner" data-testid="comms-schema-banner">
+          {t("fleet.comms.schemaUnsupported", schemaVersion)}
+        </div>
+      </>
     );
   }
   if (schemaVersion === 0) {
     return (
-      <div className="comms-empty-state" data-testid="comms-empty-state">
-        {t("fleet.comms.emptyState")}
-      </div>
+      <>
+        {needsMayaSurface}
+        <div className="comms-empty-state" data-testid="comms-empty-state">
+          {t("fleet.comms.emptyState")}
+        </div>
+      </>
     );
   }
   return (
@@ -389,7 +406,7 @@ export function ChatroomPane() {
   const { toggle, selectRoom, handleNeedsHumanRowClick } = bindChatroomActions(setOpen, setActiveTarget, setHighlightId, setPinned, setReplyTo);
 
   if (!open) {
-    return <CollapsedStrip needsHuman={poll.needsHuman} needsMaya={poll.needsMaya} recentRefusals={poll.recentRefusals} onToggle={toggle} />;
+    return <CollapsedStrip needsHuman={poll.needsHuman} needsMaya={poll.needsMaya} needsMayaError={poll.needsMayaError} recentRefusals={poll.recentRefusals} onToggle={toggle} />;
   }
 
   return (

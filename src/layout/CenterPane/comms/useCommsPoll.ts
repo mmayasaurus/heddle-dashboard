@@ -55,8 +55,10 @@ interface RoomsSnapshot {
   schemaVersion: number;
   rooms: CommsRoom[];
   needsHuman: CommsNeedsHumanRow[];
-  needsMaya: NeedsMayaSnapshotRow[];
-  needsMayaError: string | null;
+  // Optional on the raw payload: a defensive read tolerates a backend that predates or omits these,
+  // and the `?? []` / `?? null` below normalize them into the always-present public result fields.
+  needsMaya?: NeedsMayaSnapshotRow[];
+  needsMayaError?: string | null;
   recentRefusals: number;
 }
 
