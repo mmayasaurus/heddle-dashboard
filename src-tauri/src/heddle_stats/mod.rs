@@ -26,7 +26,7 @@ use std::process::Command;
 use rusqlite::Connection;
 use serde::Serialize;
 
-mod claude;
+pub(crate) mod claude;
 pub mod discipline;
 pub mod route_mix;
 mod codex;
@@ -585,6 +585,24 @@ pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
     let merged = merge_cursor_into_limits(existing, cursor::limit(now), now);
     write_json_atomic(&path, &merged)?;
     Ok(fetched)
+}
+
+/// Reads the last mirrored Claude account caps without refreshing or writing any provider state.
+/// The pocket host uses this out-of-process contract because its handlers must remain read-only.
+pub(crate) fn mirrored_claude_account_usage(account_id: &str) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(usage_dir().join("limits.json")).ok()?;
+    let limits: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let account = limits["limits"]
+        .as_array()?
+        .iter()
+        .find(|limit| limit["provider"].as_str() == Some("claude"))?["accounts"]
+        .as_array()?
+        .iter()
+        .find(|account| account["id"].as_str() == Some(account_id))?;
+    Some(serde_json::json!({
+        "fiveHour": account["fiveHour"],
+        "sevenDay": account["sevenDay"],
+    }))
 }
 
 #[cfg(test)]
