@@ -33,11 +33,30 @@ export interface CommsNeedsHumanRow {
   body: string;
 }
 
+interface NeedsMayaSnapshotRow {
+  issue: string;
+  agent: string;
+  ts: string;
+  askPreview: string;
+}
+
+/** Client-owned row for the read-only Linear decision queue. It deliberately remains separate
+ * from CommsNeedsHumanRow: its identifier is a Linear issue key, not a numeric comms message id. */
+export interface NeedsMayaRow {
+  issue: string;
+  agent: string;
+  ask: string;
+  ts: string;
+  linearUrl: string;
+}
+
 interface RoomsSnapshot {
   schemaOk: boolean;
   schemaVersion: number;
   rooms: CommsRoom[];
   needsHuman: CommsNeedsHumanRow[];
+  needsMaya: NeedsMayaSnapshotRow[];
+  needsMayaError: string | null;
   recentRefusals: number;
 }
 
@@ -165,6 +184,8 @@ export interface UseCommsPollResult {
   schemaVersion: number;
   rooms: CommsRoom[];
   needsHuman: CommsNeedsHumanRow[];
+  needsMaya: NeedsMayaRow[];
+  needsMayaError: string | null;
   recentRefusals: number;
   roomsError: string | null;
   /** Messages for the active room only (already replace/append-resolved). */
@@ -196,6 +217,8 @@ export function useCommsPoll(
   const [schemaVersion, setSchemaVersion] = useState(1);
   const [rooms, setRooms] = useState<CommsRoom[]>([]);
   const [needsHuman, setNeedsHuman] = useState<CommsNeedsHumanRow[]>([]);
+  const [needsMaya, setNeedsMaya] = useState<NeedsMayaRow[]>([]);
+  const [needsMayaError, setNeedsMayaError] = useState<string | null>(null);
   const [recentRefusals, setRecentRefusals] = useState(0);
   const [roomsError, setRoomsError] = useState<string | null>(null);
 
@@ -232,6 +255,16 @@ export function useCommsPoll(
         setSchemaVersion(snap.schemaVersion);
         setRooms(snap.rooms);
         setNeedsHuman(snap.needsHuman);
+        setNeedsMaya(
+          (snap.needsMaya ?? []).map((row) => ({
+            issue: row.issue,
+            agent: row.agent,
+            ask: row.askPreview,
+            ts: row.ts,
+            linearUrl: `https://linear.app/spinventory/issue/${row.issue}`,
+          })),
+        );
+        setNeedsMayaError(snap.needsMayaError ?? null);
         setRecentRefusals(snap.recentRefusals);
         setRoomsError(null);
       } catch (e) {
@@ -416,6 +449,8 @@ export function useCommsPoll(
     schemaVersion,
     rooms,
     needsHuman,
+    needsMaya,
+    needsMayaError,
     recentRefusals,
     roomsError,
     messages: activeTarget ? (messagesByRoom.get(activeTarget) ?? []) : [],

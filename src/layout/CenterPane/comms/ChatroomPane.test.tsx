@@ -8,9 +8,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "../../../ipc/transport";
 import { ChatroomPane } from "./ChatroomPane";
-import type { CommsMessage, CommsNeedsHumanRow, CommsRoom } from "./useCommsPoll";
+import type { CommsMessage, CommsNeedsHumanRow, CommsRoom, NeedsMayaRow } from "./useCommsPoll";
 
 vi.mock("../../../ipc/transport", () => ({ invoke: vi.fn(), isTauri: true }));
+// NeedsMayaStrip (rendered by ChatroomPane) imports the platform adapter for its opener; stub it so the
+// heavy platform → transport chain is never pulled into this shell test.
+vi.mock("../../../platform", () => ({ platform: { opener: { openExternal: vi.fn() } } }));
 
 const mockInvoke = vi.mocked(invoke);
 const OPEN_KEY = "heddle.comms.open";
@@ -38,12 +41,17 @@ function mkMsg(id: number, target: string): CommsMessage {
 function mkNeedsHumanRow(id: number, overrides: Partial<CommsNeedsHumanRow> = {}): CommsNeedsHumanRow {
   return { id, ts: "2026-08-16T17:00:00Z", sender: "U", target: "#fleet", kind: "needs-human", body: `row ${id}`, ...overrides };
 }
+function mkNeedsMayaRow(issue: string): NeedsMayaRow {
+  return { issue, agent: "W", ask: `Decision needed for ${issue}`, ts: "2026-08-16T17:00:00Z", linearUrl: `https://linear.app/spinventory/issue/${issue}` };
+}
 
 let roomsResponse: {
   schemaOk: boolean;
   schemaVersion: number;
   rooms: CommsRoom[];
   needsHuman: CommsNeedsHumanRow[];
+  needsMaya?: NeedsMayaRow[];
+  needsMayaError?: string | null;
   recentRefusals: number;
 };
 let transcriptStore: Map<string, CommsMessage[]>;
@@ -72,7 +80,7 @@ function installDefaultMock() {
 
 beforeEach(() => {
   localStorage.clear();
-  roomsResponse = { schemaOk: true, schemaVersion: 1, rooms: [mkRoom({ target: "#fleet", latestId: 0 })], needsHuman: [], recentRefusals: 0 };
+  roomsResponse = { schemaOk: true, schemaVersion: 1, rooms: [mkRoom({ target: "#fleet", latestId: 0 })], needsHuman: [], needsMaya: [], needsMayaError: null, recentRefusals: 0 };
   transcriptStore = new Map();
   operatorStatusResponse = { available: true, revoked: false, reason: null };
   mockInvoke.mockReset();
@@ -101,6 +109,13 @@ describe("ChatroomPane shell", () => {
 
     expect((await screen.findByTestId("comms-strip-needs-badge")).textContent).toBe("3");
     expect(screen.getByTestId("comms-strip-refusals-chip").textContent).toBe("4");
+  });
+
+  it("shows the needs-maya badge count when decisions are queued", async () => {
+    roomsResponse.needsMaya = [mkNeedsMayaRow("HED-1"), mkNeedsMayaRow("HED-2")];
+    render(<ChatroomPane />);
+
+    expect((await screen.findByTestId("comms-strip-needs-maya-badge")).textContent).toBe("🟡 needs-maya 2");
   });
 
   it("clicking the strip expands the overlay and persists the open state; the close button collapses it again", async () => {

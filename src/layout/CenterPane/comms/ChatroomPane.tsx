@@ -17,7 +17,8 @@ import { useT } from "../../../i18n";
 import "./comms.css";
 import { Composer } from "./Composer";
 import { FloorBanner } from "./FloorBanner";
-import { NeedsHumanStrip } from "./NeedsHumanStrip";
+import { NeedsHumanStrip, NEEDS_HUMAN_CAP } from "./NeedsHumanStrip";
+import { NeedsMayaStrip } from "./NeedsMayaStrip";
 import { RoomCreateModal } from "./RoomCreateModal";
 import { RoomsRail } from "./RoomsRail";
 import { Transcript } from "./Transcript";
@@ -28,6 +29,7 @@ import {
   useCommsPoll,
   type CommsNeedsHumanRow,
   type CommsRoom,
+  type NeedsMayaRow,
   type UseCommsPollResult,
 } from "./useCommsPoll";
 import {
@@ -43,12 +45,13 @@ const OPEN_KEY = "heddle.comms.open";
 
 interface CollapsedStripProps {
   needsHuman: CommsNeedsHumanRow[];
+  needsMaya: NeedsMayaRow[];
   recentRefusals: number;
   onToggle: () => void;
 }
 
 /** Default-collapsed state: a single-line strip with the needs-human badge and refusals chip. */
-function CollapsedStrip({ needsHuman, recentRefusals, onToggle }: CollapsedStripProps) {
+function CollapsedStrip({ needsHuman, needsMaya, recentRefusals, onToggle }: CollapsedStripProps) {
   const t = useT();
   return (
     <div
@@ -72,6 +75,11 @@ function CollapsedStrip({ needsHuman, recentRefusals, onToggle }: CollapsedStrip
       {needsHuman.length > 0 && (
         <span className="comms-badge comms-badge-alert" data-testid="comms-strip-needs-badge">
           {formatNeedsHumanCount(needsHuman.length)}
+        </span>
+      )}
+      {needsMaya.length > 0 && (
+        <span className="comms-badge comms-badge-alert" data-testid="comms-strip-needs-maya-badge">
+          🟡 {t("fleet.comms.needsMaya")} {needsMaya.length}
         </span>
       )}
       {recentRefusals > 0 && (
@@ -171,7 +179,7 @@ interface ChatColumnProps {
  *  needs-human strip, floor banner, poll-error line, transcript, and the composer. */
 export function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo, onClearReplyTo, onNeedsHumanRowClick }: ChatColumnProps) {
   const t = useT();
-  const { needsHuman, floor, roomsError, transcriptError, rosterError, messages, rooms, refresh } = poll;
+  const { needsHuman, needsMaya, needsMayaError, floor, roomsError, transcriptError, rosterError, messages, rooms, refresh } = poll;
   const activeRoom = rooms.find((r) => r.target === activeTarget);
   const hint = operatorHint(t, opStatus.reason);
   return (
@@ -184,7 +192,8 @@ export function ChatColumn({ poll, activeTarget, highlightId, opStatus, replyTo,
           <RoomMemberControls key={activeRoom.target} room={activeRoom.target} opDisabled={!opStatus.available} hint={hint} />
         )}
       </div>
-      <NeedsHumanStrip rows={needsHuman} onRowClick={onNeedsHumanRowClick} />
+      <NeedsHumanStrip rows={needsHuman} onRowClick={onNeedsHumanRowClick} capAt={NEEDS_HUMAN_CAP} />
+      <NeedsMayaStrip rows={needsMaya} error={needsMayaError} />
       <FloorBanner floor={floor} />
       {(roomsError ?? transcriptError ?? rosterError) && (
         <div className="comms-err" data-testid="comms-error">
@@ -380,7 +389,7 @@ export function ChatroomPane() {
   const { toggle, selectRoom, handleNeedsHumanRowClick } = bindChatroomActions(setOpen, setActiveTarget, setHighlightId, setPinned, setReplyTo);
 
   if (!open) {
-    return <CollapsedStrip needsHuman={poll.needsHuman} recentRefusals={poll.recentRefusals} onToggle={toggle} />;
+    return <CollapsedStrip needsHuman={poll.needsHuman} needsMaya={poll.needsMaya} recentRefusals={poll.recentRefusals} onToggle={toggle} />;
   }
 
   return (

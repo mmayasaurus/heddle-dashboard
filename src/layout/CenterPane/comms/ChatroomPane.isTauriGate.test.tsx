@@ -9,6 +9,9 @@ import { invoke } from "../../../ipc/transport";
 import { ChatroomPane } from "./ChatroomPane";
 
 vi.mock("../../../ipc/transport", () => ({ invoke: vi.fn(), isTauri: false }));
+// NeedsMayaStrip (rendered by ChatroomPane) imports the platform adapter for its opener; stub it so the
+// heavy platform → transport chain is never pulled into this gate test.
+vi.mock("../../../platform", () => ({ platform: { opener: { openExternal: vi.fn() } } }));
 
 const mockInvoke = vi.mocked(invoke);
 
