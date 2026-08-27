@@ -121,6 +121,37 @@ pub(super) fn limit(now: i64) -> Option<ProviderLimit> {
     build(&usage_dir(), &registry, active_env.as_deref(), now)
 }
 
+/// Rebuild Claude from its per-account captures, pinning the active-account selection to the id the
+/// out-of-process limits mirror already carries. The headless Cursor keeper runs with no
+/// `CLAUDE_CONFIG_DIR`, so resolving the active account from the environment would flip the mirror's
+/// top-level to the default account; routing the mirror's own account through `build` keeps it.
+/// This is exactly `build`'s active-account semantics — the top level shows the pinned account when
+/// it has a capture, and otherwise falls back to the legacy last-seen file named by ITS account (not
+/// the pinned one), so the label never disagrees with the numbers.
+pub(super) fn limit_preserving_active(active_id: Option<&str>, now: i64) -> Option<ProviderLimit> {
+    let registry = read_registry(&home().join(REGISTRY_REL));
+    build_preserving_active(&usage_dir(), &registry, active_id, now)
+}
+
+/// Path-injectable implementation of [`limit_preserving_active`] for tests. A known active id
+/// selects that account through `build` (via its `configDir`, or `None` for the null-configDir
+/// default account); an absent or unknown id uses the same environment/default resolution as
+/// [`limit`], never short-circuiting to `None`.
+pub(super) fn build_preserving_active(
+    dir: &Path,
+    registry: &[Account],
+    active_id: Option<&str>,
+    now: i64,
+) -> Option<ProviderLimit> {
+    match active_id.and_then(|id| registry.iter().find(|account| account.id == id)) {
+        Some(account) => build(dir, registry, account.config_dir.as_deref(), now),
+        None => {
+            let active_env = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+            build(dir, registry, active_env.as_deref(), now)
+        }
+    }
+}
+
 /// Parse `accounts.json` → `claude[]`. Missing/invalid file → empty registry.
 pub(super) fn read_registry(path: &Path) -> Vec<Account> {
     let Ok(text) = std::fs::read_to_string(path) else {
