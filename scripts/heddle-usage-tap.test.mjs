@@ -239,7 +239,7 @@ describe("heddle usage tap", () => {
         projectDir: "/repo",
         model: "Claude Sonnet 4",
         modelId: "claude-sonnet-4",
-        contextPct: 42.5,
+        contextPct: 43,
         contextWindowSize: 200000,
         transcriptPath: "/tmp/transcript.jsonl",
         version: "1.0.0",
@@ -266,6 +266,15 @@ describe("heddle usage tap", () => {
 
       expect(readSession("fallback.json").contextPct).toBe(50);
       expect(readSession("unavailable.json")).not.toHaveProperty("contextPct");
+    });
+
+    it("rounds a direct context percentage to an integer", () => {
+      runTap(JSON.stringify({
+        session_id: "direct-rounded",
+        context_window: { used_percentage: 42.5 },
+      }));
+
+      expect(readSession("direct-rounded.json").contextPct).toBe(43);
     });
 
     it("clamps direct context percentage and omits empty model values", () => {
@@ -305,6 +314,28 @@ describe("heddle usage tap", () => {
       const documentedKeys = new Set(["sessionId", "cwd", "projectDir", "model", "modelId", "contextPct", "contextWindowSize", "transcriptPath", "version", "capturedAt"]);
       expect(Object.keys(captured).every((key) => documentedKeys.has(key))).toBe(true);
       expect(Object.entries(captured).filter(([key, value]) => key !== "cwd" && value === null)).toEqual([]);
+    });
+
+    it("omits wrong-typed optional fields while retaining typed context percentage", () => {
+      runTap(JSON.stringify({
+        session_id: "wrong-typed-optionals",
+        cwd: {},
+        version: 42,
+        transcript_path: ["/a"],
+        workspace: { project_dir: {} },
+        context_window: { context_window_size: "200000", used_percentage: 10 },
+      }));
+      runTap(JSON.stringify({
+        session_id: "zero-context-window",
+        context_window: { context_window_size: 0 },
+      }));
+
+      const captured = readSession("wrong-typed-optionals.json");
+      for (const key of ["version", "transcriptPath", "projectDir", "contextWindowSize"]) {
+        expect(captured).not.toHaveProperty(key);
+      }
+      expect(captured).toMatchObject({ cwd: null, contextPct: 10 });
+      expect(readSession("zero-context-window.json")).not.toHaveProperty("contextWindowSize");
     });
 
     it("writes no session file without a session id while rate-limit capture keeps its own rule", () => {
@@ -362,11 +393,30 @@ describe("heddle usage tap", () => {
       expect(usage).not.toHaveProperty("sessionId");
     });
 
+    it("captures the session when rate-limit capture setup fails", () => {
+      const heddleDir = join(tmpHome, ".heddle");
+      mkdirSync(heddleDir, { recursive: true });
+      writeFileSync(join(heddleDir, "usage"), "x");
+      const payload = { ...payloadFor("claude-sonnet-4"), session_id: "s1" };
+      const input = JSON.stringify(payload);
+
+      expect(runTap(input)).toBe(input);
+      expect(readSession("s1.json").sessionId).toBe("s1");
+    });
+
     it("leaves only the final JSON file after an atomic session write", () => {
       runTap(JSON.stringify({ session_id: "atomic" }));
 
       expect(sessionFiles()).toEqual(["atomic.json"]);
       expect(readdirSync(sessionsDir())).toEqual(["atomic.json"]);
+      expect(readdirSync(sessionsDir()).some((entry) => /\.tmp-/.test(entry))).toBe(false);
+    });
+
+    it("cleans up the temporary file when atomic rename encounters a directory", () => {
+      mkdirSync(join(sessionsDir(), "atomic.json"), { recursive: true });
+      const input = JSON.stringify({ session_id: "atomic" });
+
+      expect(runTap(input)).toBe(input);
       expect(readdirSync(sessionsDir()).some((entry) => /\.tmp-/.test(entry))).toBe(false);
     });
 

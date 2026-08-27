@@ -342,7 +342,7 @@ rate-limit capture and never blocks or changes the statusline passthrough.
 | `projectDir` | string? | `workspace.project_dir` | source absent |
 | `model` | string? | `model.display_name`, falling back to `model.id` | both sources absent |
 | `modelId` | string? | `model.id` | source absent |
-| `contextPct` | number? | `context_window.used_percentage`, else rounded/clamped `total_input_tokens / context_window_size × 100` | neither value is derivable |
+| `contextPct` | integer? | rounded/clamped `context_window.used_percentage`, else rounded/clamped `total_input_tokens / context_window_size × 100` | neither value is derivable |
 | `contextWindowSize` | number? | `context_window.context_window_size` | source absent |
 | `transcriptPath` | string? | `transcript_path` | source absent |
 | `version` | string? | `version` | source absent |
@@ -352,3 +352,5 @@ Writes are atomic (temporary file then rename) and the session's file is overwri
 The format is additive-only: readers, including HED-382's roster reader, ignore unknown keys. A
 capture whose `capturedAt` is older than the reader's freshness budget is stale and must never be
 shown as fresh.
+`~/.heddle/sessions/` is not self-pruned; the reader (HED-382) is responsible for ignoring/pruning
+captures whose `capturedAt` is older than its freshness budget (a dedicated reaper is a follow-up).
