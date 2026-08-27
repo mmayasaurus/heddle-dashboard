@@ -326,3 +326,28 @@ deps with `CARGO_TARGET_DIR=<main checkout>/src-tauri/target`.
 Contract changes: keep them additive, then regenerate the golden with
 `cargo test --lib heddle_stats::tests::write_golden -- --ignored` and tell the consumers (Agent R's
 drawer, heddle-core's router) — `contract_json_matches_the_golden_file` fails otherwise.
+
+## Per-session capture (HED-381)
+
+Alongside the rate-limit capture, the tap best-effort records one statusline snapshot per active
+session at `~/.heddle/sessions/<session_id>.json`. The filename uses a filesystem-safe form of the
+session id; `sessionId` in the JSON remains the original value. It is independent of rate-limit
+capture and never blocks or changes the statusline passthrough.
+
+| field | type | source | when omitted |
+|---|---|---|---|
+| `sessionId` | string | `session_id` | never; no file is written without a non-empty string session id |
+| `cwd` | string \| null | `cwd`, falling back to `workspace.current_dir` | never; `null` if neither is present |
+| `projectDir` | string? | `workspace.project_dir` | source absent |
+| `model` | string? | `model.display_name`, falling back to `model.id` | both sources absent |
+| `modelId` | string? | `model.id` | source absent |
+| `contextPct` | number? | `context_window.used_percentage`, else rounded/clamped `total_input_tokens / context_window_size × 100` | neither value is derivable |
+| `contextWindowSize` | number? | `context_window.context_window_size` | source absent |
+| `transcriptPath` | string? | `transcript_path` | source absent |
+| `version` | string? | `version` | source absent |
+| `capturedAt` | epoch s | tap clock at capture | never |
+
+Writes are atomic (temporary file then rename) and the session's file is overwritten on each render.
+The format is additive-only: readers, including HED-382's roster reader, ignore unknown keys. A
+capture whose `capturedAt` is older than the reader's freshness budget is stale and must never be
+shown as fresh.

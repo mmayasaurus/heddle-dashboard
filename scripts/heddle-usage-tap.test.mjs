@@ -177,4 +177,121 @@ describe("heddle usage tap", () => {
 
     expect(runTap(input)).toBe(input);
   });
+
+  describe("per-session capture", () => {
+    function sessionsDir() {
+      return join(tmpHome, ".heddle", "sessions");
+    }
+
+    function sessionFiles() {
+      return existsSync(sessionsDir()) ? readdirSync(sessionsDir()).sort() : [];
+    }
+
+    function readSession(fileName) {
+      return JSON.parse(readFileSync(join(sessionsDir(), fileName), "utf8"));
+    }
+
+    it("preserves byte-identical passthrough when a session id is present", () => {
+      const payload = {
+        session_id: "session-byte-identical",
+        cwd: "/repo",
+        model: { id: "claude-sonnet-4", display_name: "Claude Sonnet 4" },
+        context_window: { used_percentage: 42, context_window_size: 200000 },
+      };
+      const input = JSON.stringify(payload);
+
+      expect(runTap(input)).toBe(input);
+    });
+
+    it("writes the documented session fields with a sanitized filename", () => {
+      const sessionId = "session/alpha";
+      const payload = {
+        session_id: sessionId,
+        cwd: "/repo/current",
+        workspace: { project_dir: "/repo" },
+        model: { id: "claude-sonnet-4", display_name: "Claude Sonnet 4" },
+        context_window: { used_percentage: 42.5, context_window_size: 200000 },
+        transcript_path: "/tmp/transcript.jsonl",
+        version: "1.0.0",
+      };
+
+      expect(runTap(JSON.stringify(payload))).toBe(JSON.stringify(payload));
+      expect(sessionFiles()).toEqual(["session_alpha.json"]);
+      const captured = readSession("session_alpha.json");
+      expect(captured).toEqual({
+        sessionId,
+        cwd: "/repo/current",
+        projectDir: "/repo",
+        model: "Claude Sonnet 4",
+        modelId: "claude-sonnet-4",
+        contextPct: 42.5,
+        contextWindowSize: 200000,
+        transcriptPath: "/tmp/transcript.jsonl",
+        version: "1.0.0",
+        capturedAt: expect.any(Number),
+      });
+      expect(Object.keys(captured).sort()).toEqual([
+        "capturedAt", "contextPct", "contextWindowSize", "cwd", "model", "modelId",
+        "projectDir", "sessionId", "transcriptPath", "version",
+      ]);
+    });
+
+    it("derives or omits context percentage as appropriate", () => {
+      const fallback = {
+        session_id: "fallback",
+        context_window: { total_input_tokens: 100001, context_window_size: 200000 },
+      };
+      const unavailable = { session_id: "unavailable", context_window: { context_window_size: 0 } };
+
+      runTap(JSON.stringify(fallback));
+      runTap(JSON.stringify(unavailable));
+
+      expect(readSession("fallback.json").contextPct).toBe(50);
+      expect(readSession("unavailable.json")).not.toHaveProperty("contextPct");
+    });
+
+    it("writes no session file without a session id while rate-limit capture keeps its own rule", () => {
+      const rateLimitPayload = payloadFor("claude-sonnet-4");
+      const withLimits = JSON.stringify(rateLimitPayload);
+      const withoutLimits = JSON.stringify({ model: { id: "claude-sonnet-4" } });
+
+      expect(runTap(withLimits)).toBe(withLimits);
+      expect(sessionFiles()).toEqual([]);
+      expect(readUsage("claude.json").rate_limits).toEqual(rateLimitPayload.rate_limits);
+      rmSync(usageDir(), { recursive: true, force: true });
+      expect(runTap(withoutLimits)).toBe(withoutLimits);
+      expect(sessionFiles()).toEqual([]);
+      expectNoUsageFiles();
+    });
+
+    it("keeps raw unsafe session ids in JSON while containing the file in sessions", () => {
+      const sessionId = "../nested/session";
+      runTap(JSON.stringify({ session_id: sessionId }));
+
+      expect(sessionFiles()).toEqual([".._nested_session.json"]);
+      expect(readSession(".._nested_session.json").sessionId).toBe(sessionId);
+    });
+
+    it("passes malformed JSON through without a session file", () => {
+      const input = "not json{{";
+
+      expect(runTap(input)).toBe(input);
+      expect(sessionFiles()).toEqual([]);
+    });
+
+    it("coexists with rate-limit capture", () => {
+      const payload = { ...payloadFor("claude-sonnet-4"), session_id: "both" };
+      const input = JSON.stringify(payload);
+
+      expect(runTap(input)).toBe(input);
+      expect(readdirSync(usageDir())).toEqual(["claude.json"]);
+      expect(sessionFiles()).toEqual(["both.json"]);
+    });
+
+    it("leaves only the final JSON file after an atomic session write", () => {
+      runTap(JSON.stringify({ session_id: "atomic" }));
+
+      expect(sessionFiles()).toEqual(["atomic.json"]);
+    });
+  });
 });

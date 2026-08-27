@@ -10,7 +10,7 @@
 //   1. Passthrough is written FIRST and always; the capture is wrapped so it can never fail the HUD.
 //   2. Zero mutation of the payload. claude-hud behavior is identical with or without this tap.
 //   3. resets_at is epoch SECONDS (matches Claude Code + claude-hud's `new Date(v*1000)`).
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -24,6 +24,10 @@ function resolvedConfigDir(path) {
 
 function safeAccountSegment(account) {
   return String(account).replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function safeSessionSegment(session) {
+  return String(session).replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 let raw = "";
@@ -68,6 +72,35 @@ process.stdin.on("end", () => {
       });
       writeFileSync(join(dir, `${provider}.json`), payload);
       if (acct) writeFileSync(join(dir, `${provider}-${safeAccountSegment(acct)}.json`), payload);
+    }
+
+    // Per-session HUD capture for the fleet roster (HED-381/HED-57). This is best-effort and
+    // independent of rate-limit capture; HED-382's roster.rs reader consumes it additively and
+    // treats aged captures as stale.
+    if (typeof p?.session_id === "string" && p.session_id.length > 0) {
+      const sessionId = p.session_id;
+      const session = { sessionId, capturedAt: Math.floor(Date.now() / 1000) };
+      session.cwd = p.cwd ?? p.workspace?.current_dir ?? null;
+      if (p.workspace?.project_dir !== undefined) session.projectDir = p.workspace.project_dir;
+      const sessionModel = p.model?.display_name ?? p.model?.id;
+      if (sessionModel !== undefined) session.model = sessionModel;
+      if (p.model?.id !== undefined) session.modelId = p.model.id;
+      const context = p.context_window;
+      if (Number.isFinite(context?.used_percentage)) {
+        session.contextPct = context.used_percentage;
+      } else if (context?.context_window_size > 0 && Number.isFinite(context?.total_input_tokens)) {
+        session.contextPct = Math.round(Math.min(100, Math.max(0, 100 * context.total_input_tokens / context.context_window_size)));
+      }
+      if (context?.context_window_size !== undefined) session.contextWindowSize = context.context_window_size;
+      if (p.transcript_path !== undefined) session.transcriptPath = p.transcript_path;
+      if (p.version !== undefined) session.version = p.version;
+
+      const dir = join(homedir(), ".heddle", "sessions");
+      const file = join(dir, `${safeSessionSegment(sessionId)}.json`);
+      const tempFile = `${file}.tmp-${process.pid}`;
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(tempFile, JSON.stringify(session));
+      renameSync(tempFile, file);
     }
   } catch {
     /* never fail the statusline */
