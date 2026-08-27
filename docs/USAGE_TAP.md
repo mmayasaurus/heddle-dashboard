@@ -330,9 +330,10 @@ drawer, heddle-core's router) — `contract_json_matches_the_golden_file` fails 
 ## Per-session capture (HED-381)
 
 Alongside the rate-limit capture, the tap best-effort records one statusline snapshot per active
-session at `~/.heddle/sessions/<session_id>.json`. The filename uses a filesystem-safe form of the
-session id; `sessionId` in the JSON remains the original value. It is independent of rate-limit
-capture and never blocks or changes the statusline passthrough.
+session at `~/.heddle/sessions/<file>.json`, where `<file>` is a filesystem-safe form of the session
+id (with a short hash suffix when sanitization changed it); `sessionId` in the JSON remains the raw
+value. HED-382's reader globs `*.json`, so a stray `.tmp-*` is ignored. It is independent of
+rate-limit capture and never blocks or changes the statusline passthrough.
 
 | field | type | source | when omitted |
 |---|---|---|---|

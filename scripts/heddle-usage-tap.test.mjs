@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "heddle-usage-tap.mjs");
 
@@ -191,6 +192,14 @@ describe("heddle usage tap", () => {
       return JSON.parse(readFileSync(join(sessionsDir(), fileName), "utf8"));
     }
 
+    function sessionFileName(sessionId) {
+      const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+      const base = safe === sessionId
+        ? safe
+        : `${safe}-${createHash("sha256").update(sessionId).digest("hex").slice(0, 8)}`;
+      return `${base}.json`;
+    }
+
     it("preserves byte-identical passthrough when a session id is present", () => {
       const payload = {
         session_id: "session-byte-identical",
@@ -201,6 +210,8 @@ describe("heddle usage tap", () => {
       const input = JSON.stringify(payload);
 
       expect(runTap(input)).toBe(input);
+      expect(sessionFiles()).toEqual(["session-byte-identical.json"]);
+      expect(readSession("session-byte-identical.json").sessionId).toBe(payload.session_id);
     });
 
     it("writes the documented session fields with a sanitized filename", () => {
@@ -215,9 +226,13 @@ describe("heddle usage tap", () => {
         version: "1.0.0",
       };
 
-      expect(runTap(JSON.stringify(payload))).toBe(JSON.stringify(payload));
-      expect(sessionFiles()).toEqual(["session_alpha.json"]);
-      const captured = readSession("session_alpha.json");
+      const input = JSON.stringify(payload);
+      const before = Math.floor(Date.now() / 1000);
+      expect(runTap(input)).toBe(input);
+      const after = Math.floor(Date.now() / 1000);
+      const fileName = sessionFileName(sessionId);
+      expect(sessionFiles()).toEqual([fileName]);
+      const captured = readSession(fileName);
       expect(captured).toEqual({
         sessionId,
         cwd: "/repo/current",
@@ -230,6 +245,9 @@ describe("heddle usage tap", () => {
         version: "1.0.0",
         capturedAt: expect.any(Number),
       });
+      expect(Number.isInteger(captured.capturedAt)).toBe(true);
+      expect(captured.capturedAt).toBeGreaterThanOrEqual(before);
+      expect(captured.capturedAt).toBeLessThanOrEqual(after);
       expect(Object.keys(captured).sort()).toEqual([
         "capturedAt", "contextPct", "contextWindowSize", "cwd", "model", "modelId",
         "projectDir", "sessionId", "transcriptPath", "version",
@@ -250,6 +268,45 @@ describe("heddle usage tap", () => {
       expect(readSession("unavailable.json")).not.toHaveProperty("contextPct");
     });
 
+    it("clamps direct context percentage and omits empty model values", () => {
+      runTap(JSON.stringify({
+        session_id: "clamped-high",
+        model: { id: "", display_name: "  " },
+        context_window: { used_percentage: 101 },
+      }));
+      runTap(JSON.stringify({
+        session_id: "clamped-low",
+        model: { id: "model-id", display_name: "" },
+        context_window: { used_percentage: -1 },
+      }));
+
+      expect(readSession("clamped-high.json")).toMatchObject({ contextPct: 100 });
+      expect(readSession("clamped-high.json")).not.toHaveProperty("model");
+      expect(readSession("clamped-high.json")).not.toHaveProperty("modelId");
+      expect(readSession("clamped-low.json")).toMatchObject({ contextPct: 0, model: "model-id", modelId: "model-id" });
+    });
+
+    it("omits null optional sources while retaining a null cwd", () => {
+      const input = JSON.stringify({
+        session_id: "null-optional-sources",
+        workspace: { project_dir: null },
+        model: { id: null, display_name: null },
+        transcript_path: null,
+        version: null,
+        context_window: { context_window_size: null },
+      });
+
+      expect(runTap(input)).toBe(input);
+      const captured = readSession("null-optional-sources.json");
+      for (const key of ["projectDir", "model", "modelId", "transcriptPath", "version", "contextWindowSize"]) {
+        expect(key in captured).toBe(false);
+      }
+      expect(captured.cwd).toBeNull();
+      const documentedKeys = new Set(["sessionId", "cwd", "projectDir", "model", "modelId", "contextPct", "contextWindowSize", "transcriptPath", "version", "capturedAt"]);
+      expect(Object.keys(captured).every((key) => documentedKeys.has(key))).toBe(true);
+      expect(Object.entries(captured).filter(([key, value]) => key !== "cwd" && value === null)).toEqual([]);
+    });
+
     it("writes no session file without a session id while rate-limit capture keeps its own rule", () => {
       const rateLimitPayload = payloadFor("claude-sonnet-4");
       const withLimits = JSON.stringify(rateLimitPayload);
@@ -268,8 +325,9 @@ describe("heddle usage tap", () => {
       const sessionId = "../nested/session";
       runTap(JSON.stringify({ session_id: sessionId }));
 
-      expect(sessionFiles()).toEqual([".._nested_session.json"]);
-      expect(readSession(".._nested_session.json").sessionId).toBe(sessionId);
+      const fileName = sessionFileName(sessionId);
+      expect(sessionFiles()).toEqual([fileName]);
+      expect(readSession(fileName).sessionId).toBe(sessionId);
     });
 
     it("passes malformed JSON through without a session file", () => {
@@ -279,6 +337,19 @@ describe("heddle usage tap", () => {
       expect(sessionFiles()).toEqual([]);
     });
 
+    it("passes non-object JSON and invalid session ids through without a session file", () => {
+      for (const input of [
+        JSON.stringify({ session_id: "" }),
+        JSON.stringify({ session_id: 123 }),
+        JSON.stringify({ session_id: ["x"] }),
+        "null",
+        "[]",
+      ]) {
+        expect(runTap(input)).toBe(input);
+        expect(sessionFiles()).toEqual([]);
+      }
+    });
+
     it("coexists with rate-limit capture", () => {
       const payload = { ...payloadFor("claude-sonnet-4"), session_id: "both" };
       const input = JSON.stringify(payload);
@@ -286,12 +357,28 @@ describe("heddle usage tap", () => {
       expect(runTap(input)).toBe(input);
       expect(readdirSync(usageDir())).toEqual(["claude.json"]);
       expect(sessionFiles()).toEqual(["both.json"]);
+      const usage = readUsage("claude.json");
+      expect(usage.rate_limits).toEqual(payload.rate_limits);
+      expect(usage).not.toHaveProperty("sessionId");
     });
 
     it("leaves only the final JSON file after an atomic session write", () => {
       runTap(JSON.stringify({ session_id: "atomic" }));
 
       expect(sessionFiles()).toEqual(["atomic.json"]);
+      expect(readdirSync(sessionsDir())).toEqual(["atomic.json"]);
+      expect(readdirSync(sessionsDir()).some((entry) => /\.tmp-/.test(entry))).toBe(false);
+    });
+
+    it("writes distinct filenames for distinct ids that sanitize to the same segment", () => {
+      const sessionIds = ["a/b", "a_b"];
+      for (const sessionId of sessionIds) runTap(JSON.stringify({ session_id: sessionId }));
+
+      const files = sessionFiles();
+      expect(files).toHaveLength(2);
+      expect(files).toContain(sessionFileName("a/b"));
+      expect(files).toContain(sessionFileName("a_b"));
+      expect(files.map((fileName) => readSession(fileName).sessionId).sort()).toEqual(sessionIds.sort());
     });
   });
 });

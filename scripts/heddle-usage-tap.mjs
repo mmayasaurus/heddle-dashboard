@@ -10,7 +10,8 @@
 //   1. Passthrough is written FIRST and always; the capture is wrapped so it can never fail the HUD.
 //   2. Zero mutation of the payload. claude-hud behavior is identical with or without this tap.
 //   3. resets_at is epoch SECONDS (matches Claude Code + claude-hud's `new Date(v*1000)`).
-import { mkdirSync, writeFileSync, readFileSync, renameSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -28,6 +29,10 @@ function safeAccountSegment(account) {
 
 function safeSessionSegment(session) {
   return String(session).replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function shortHash(value) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 8);
 }
 
 let raw = "";
@@ -81,26 +86,36 @@ process.stdin.on("end", () => {
       const sessionId = p.session_id;
       const session = { sessionId, capturedAt: Math.floor(Date.now() / 1000) };
       session.cwd = p.cwd ?? p.workspace?.current_dir ?? null;
-      if (p.workspace?.project_dir !== undefined) session.projectDir = p.workspace.project_dir;
-      const sessionModel = p.model?.display_name ?? p.model?.id;
-      if (sessionModel !== undefined) session.model = sessionModel;
-      if (p.model?.id !== undefined) session.modelId = p.model.id;
+      if (p.workspace?.project_dir != null) session.projectDir = p.workspace.project_dir;
+      const displayName = typeof p.model?.display_name === "string" && p.model.display_name.trim()
+        ? p.model.display_name
+        : null;
+      const modelId = typeof p.model?.id === "string" && p.model.id.trim() ? p.model.id : null;
+      const sessionModel = displayName ?? modelId;
+      if (sessionModel != null) session.model = sessionModel;
+      if (modelId != null) session.modelId = modelId;
       const context = p.context_window;
       if (Number.isFinite(context?.used_percentage)) {
-        session.contextPct = context.used_percentage;
+        session.contextPct = Math.min(100, Math.max(0, context.used_percentage));
       } else if (context?.context_window_size > 0 && Number.isFinite(context?.total_input_tokens)) {
         session.contextPct = Math.round(Math.min(100, Math.max(0, 100 * context.total_input_tokens / context.context_window_size)));
       }
-      if (context?.context_window_size !== undefined) session.contextWindowSize = context.context_window_size;
-      if (p.transcript_path !== undefined) session.transcriptPath = p.transcript_path;
-      if (p.version !== undefined) session.version = p.version;
+      if (context?.context_window_size != null) session.contextWindowSize = context.context_window_size;
+      if (p.transcript_path != null) session.transcriptPath = p.transcript_path;
+      if (p.version != null) session.version = p.version;
 
       const dir = join(homedir(), ".heddle", "sessions");
-      const file = join(dir, `${safeSessionSegment(sessionId)}.json`);
+      const safe = safeSessionSegment(sessionId);
+      const base = safe === sessionId ? safe : `${safe}-${shortHash(sessionId)}`;
+      const file = join(dir, `${base}.json`);
       const tempFile = `${file}.tmp-${process.pid}`;
       mkdirSync(dir, { recursive: true });
-      writeFileSync(tempFile, JSON.stringify(session));
-      renameSync(tempFile, file);
+      try {
+        writeFileSync(tempFile, JSON.stringify(session));
+        renameSync(tempFile, file);
+      } catch {
+        try { unlinkSync(tempFile); } catch { /* best-effort cleanup */ }
+      }
     }
   } catch {
     /* never fail the statusline */
