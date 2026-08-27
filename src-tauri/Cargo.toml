@@ -46,6 +46,7 @@ tauri-build = { version = "2", features = [] }
 [dev-dependencies]
 # Unique, auto-cleaned temp dirs for tests (already in the lockfile transitively).
 tempfile = "3"
+tower = "0.5"
 
 [dependencies]
 # The built-in browser needs unstable Window::add_child multi-WebView APIs. Their signatures may change,

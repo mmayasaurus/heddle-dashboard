@@ -104,7 +104,8 @@ export function useNotifications(): void {
   }, [windowFocused, activeSessionId, notifications, clearNotification]);
 
   // Dock badge count equals unread sessions plus pending spawn confirmations. It decreases after
-  // viewing a session or resolving a spawn and disappears at zero. Non-desktop platforms ignore it.
+  // viewing a session or resolving a spawn and disappears at zero (macOS dev builds instead keep a
+  // persistent "DEV" label with the count folded in — HED-159). Non-desktop platforms ignore it.
   const pendingSpawnCount = useTermStore((s) => s.pendingSpawns.length);
   const badgeCount = Object.keys(notifications).length + pendingSpawnCount;
   useEffect(() => {

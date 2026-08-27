@@ -10,7 +10,7 @@ use serde::Serialize;
 use super::{home, ledger};
 
 /// One in-flight heddle worker, grouped under its live fleet orchestrator for the Fleet drawer.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Worker {
     id: i64,
@@ -24,21 +24,21 @@ pub struct Worker {
 }
 
 /// A live Claude Code fleet orchestrator and the heddle workers it currently owns.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FleetAgent {
-    name: String,
+    pub(crate) name: String,
     /// The agent's own `claude --model <id>` argv, when its process is live and the flag is
     /// present. Never guessed: absent flag, dead process, or an unreadable ps call all yield `None`.
-    model: Option<String>,
-    pid: i64,
-    session_id: String,
-    cwd: String,
-    status: String,
-    kind: String,
-    updated_at_ms: i64,
-    alive: bool,
-    workers: Vec<Worker>,
+    pub(crate) model: Option<String>,
+    pub(crate) pid: i64,
+    pub(crate) session_id: String,
+    pub(crate) cwd: String,
+    pub(crate) status: String,
+    pub(crate) kind: String,
+    pub(crate) updated_at_ms: i64,
+    pub(crate) alive: bool,
+    pub(crate) workers: Vec<Worker>,
 }
 
 fn process_alive(pid: i32) -> bool {
@@ -629,34 +629,36 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 }
 
 /// Live Claude Code fleet agents plus their in-flight heddle workers. Both sources are optional:
-/// inaccessible sessions or ledger data simply produce a partial roster rather than failing the drawer.
+/// inaccessible sessions or ledger data simply produce a partial roster rather than failing callers.
+pub(crate) fn fleet_roster() -> Vec<FleetAgent> {
+    let mut agents = live_fleet_agents();
+    let orphaned = attach_in_flight_workers(&mut agents);
+    agents.sort_by(|a, b| {
+        b.alive
+            .cmp(&a.alive)
+            .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
+            .then(a.name.cmp(&b.name))
+    });
+    if !orphaned.is_empty() {
+        agents.push(FleetAgent {
+            name: "(orphaned)".to_string(),
+            model: None,
+            pid: 0,
+            session_id: String::new(),
+            cwd: String::new(),
+            status: String::new(),
+            kind: String::new(),
+            updated_at_ms: 0,
+            alive: false,
+            workers: orphaned,
+        });
+    }
+    agents
+}
+
 #[tauri::command]
 pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
-    Ok(tauri::async_runtime::spawn_blocking(|| {
-        let mut agents = live_fleet_agents();
-        let orphaned = attach_in_flight_workers(&mut agents);
-        agents.sort_by(|a, b| {
-            b.alive
-                .cmp(&a.alive)
-                .then((!a.cwd.contains("heddle")).cmp(&(!b.cwd.contains("heddle"))))
-                .then(a.name.cmp(&b.name))
-        });
-        if !orphaned.is_empty() {
-            agents.push(FleetAgent {
-                name: "(orphaned)".to_string(),
-                model: None,
-                pid: 0,
-                session_id: String::new(),
-                cwd: String::new(),
-                status: String::new(),
-                kind: String::new(),
-                updated_at_ms: 0,
-                alive: false,
-                workers: orphaned,
-            });
-        }
-        agents
-    })
+    Ok(tauri::async_runtime::spawn_blocking(fleet_roster)
     .await
-    .unwrap_or_default())
+    .map_err(|e| format!("failed to compute fleet roster: {e}"))?)
 }
