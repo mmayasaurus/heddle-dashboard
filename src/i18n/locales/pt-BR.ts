@@ -926,8 +926,10 @@ const ptBR: typeof en = {
   "fleet.comms.emptyState": "No chatroom activity yet — it appears once the fleet starts talking.", // TODO translate
   "fleet.comms.targetUnavailable": "O destino do chat não está disponível.",
   "fleet.comms.needsHumanMore": (n) => `+${n} more`, // TODO translate
+  "fleet.comms.needsMayaMore": (n) => `+${n} more`, // TODO translate
   "fleet.comms.floorHolds": (holder) => `${holder} holds the floor`, // TODO translate
   "fleet.comms.needsHuman": "Needs human", // TODO translate
+  "fleet.comms.needsMaya": "needs-maya", // TODO translate
   "fleet.comms.operatorSeal": "operator", // TODO translate
   "fleet.comms.directiveChip": (target) => `DIRECTIVE → ${target}`, // TODO translate
   "fleet.comms.fleetPresence": "Fleet", // TODO translate

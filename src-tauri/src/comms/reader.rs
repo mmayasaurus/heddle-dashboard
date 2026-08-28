@@ -52,6 +52,8 @@ pub struct RoomsSnapshot {
     schema_version: i64,
     rooms: Vec<RoomSummary>,
     needs_human: Vec<NeedsHumanRow>,
+    needs_maya: Vec<NeedsMayaRow>,
+    needs_maya_error: Option<String>,
     recent_refusals: i64,
 }
 
@@ -84,6 +86,17 @@ pub struct NeedsHumanRow {
     target: String,
     kind: String,
     body: String,
+}
+
+/// One actionable decision request from the fleet-owned needs-Maya queue. This reader is
+/// deliberately read-only: the dashboard never resolves, removes, or otherwise writes this file.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct NeedsMayaRow {
+    issue: String,
+    agent: String,
+    ts: String,
+    ask_preview: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -188,6 +201,12 @@ pub struct Participant {
 /// ever touching a cwd-relative path.
 fn comms_db_path() -> Option<PathBuf> {
     Some(dirs::home_dir()?.join(".heddle").join("comms.db"))
+}
+
+/// The fleet owns this queue. Keep it separate from the comms database path because it remains
+/// useful even before a comms database exists on a fresh dashboard install.
+fn needs_maya_path() -> Option<PathBuf> {
+    Some(dirs::home_dir()?.join(".claude").join("spinventory-fleet").join("needs-maya.json"))
 }
 
 /// Open read-only: `SQLITE_OPEN_READ_ONLY` is the hard guarantee (SQLite refuses any write on
@@ -369,9 +388,24 @@ fn room_members_at(path: &Path, room: &str) -> Result<BTreeSet<String>, String> 
 /// chatroom panel; a missing or version-mismatched db yields a typed empty state, never an error.
 #[tauri::command]
 pub async fn heddle_comms_rooms() -> Result<RoomsSnapshot, String> {
-    blocking(|| match comms_db_path() {
-        Some(p) => rooms_at(&p),
-        None => Ok(empty_rooms_snapshot(0, true)),
+    blocking(|| {
+        let (needs_maya, needs_maya_error) = match needs_maya_path() {
+            Some(path) => read_needs_maya_at(&path),
+            None => (vec![], Some("needs-maya queue unavailable".to_string())),
+        };
+        // needs-maya is read independently of comms.db, so a comms.db failure (locked / unreadable /
+        // query error) must NOT discard it: fall back to an empty rooms snapshot that still carries
+        // the queue, rather than propagating the error and dropping the pending decisions.
+        let mut snapshot = match comms_db_path() {
+            Some(p) => rooms_at(&p).unwrap_or_else(|err| {
+                eprintln!("[comms] rooms_at failed, serving needs-maya only: {err}");
+                empty_rooms_snapshot(0, true)
+            }),
+            None => empty_rooms_snapshot(0, true),
+        };
+        snapshot.needs_maya = needs_maya;
+        snapshot.needs_maya_error = needs_maya_error;
+        Ok(snapshot)
     })
     .await
 }
@@ -390,6 +424,8 @@ fn rooms_at(path: &Path) -> Result<RoomsSnapshot, String> {
         schema_version: version,
         rooms: query_rooms(&conn)?,
         needs_human: query_needs_human(&conn)?,
+        needs_maya: vec![],
+        needs_maya_error: None,
         recent_refusals: query_recent_refusals(&conn)?,
     })
 }
@@ -400,8 +436,77 @@ fn empty_rooms_snapshot(version: i64, ok: bool) -> RoomsSnapshot {
         schema_version: version,
         rooms: vec![],
         needs_human: vec![],
+        needs_maya: vec![],
+        needs_maya_error: None,
         recent_refusals: 0,
     }
+}
+
+/// Minimal ISO-8601 UTC validation without a datetime dependency: `YYYY-MM-DDTHH:MM:SS[...]Z`.
+/// The queue is written by lin.sh in this exact shape; rejecting anything else keeps a malformed
+/// timestamp (e.g. `"not-a-date"`) from taking a visible slot, misordering the lexical stale-first
+/// sort, or defeating the frontend's age computation.
+fn is_iso8601_utc(ts: &str) -> bool {
+    let bytes = ts.as_bytes();
+    if bytes.len() < 20 || !ts.ends_with('Z') {
+        return false;
+    }
+    let digit = |i: usize| matches!(bytes.get(i), Some(b) if b.is_ascii_digit());
+    let sep = |i: usize, c: u8| bytes.get(i) == Some(&c);
+    digit(0) && digit(1) && digit(2) && digit(3) && sep(4, b'-')
+        && digit(5) && digit(6) && sep(7, b'-') && digit(8) && digit(9)
+        && sep(10, b'T') && digit(11) && digit(12) && sep(13, b':')
+        && digit(14) && digit(15) && sep(16, b':') && digit(17) && digit(18)
+}
+
+/// Best-effort, read-only parser for `~/.claude/spinventory-fleet/needs-maya.json`. A missing,
+/// unreadable, malformed, or non-array queue is a hard-unavailable state; individual malformed
+/// entries are skipped without poisoning valid work behind them.
+fn read_needs_maya_at(path: &Path) -> (Vec<NeedsMayaRow>, Option<String>) {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return (vec![], Some("needs-maya queue unavailable".to_string())),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => return (vec![], Some("needs-maya queue unavailable".to_string())),
+    };
+    let Some(entries) = value.as_array() else {
+        return (vec![], Some("needs-maya queue unavailable".to_string()));
+    };
+
+    let mut rows = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let row = entry.as_object().and_then(|entry| {
+            let field = |name| {
+                entry
+                    .get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            };
+            let ts = field("ts")?;
+            if !is_iso8601_utc(ts) {
+                return None;
+            }
+            Some(NeedsMayaRow {
+                issue: field("issue")?.to_string(),
+                agent: field("agent")?.to_string(),
+                ts: ts.to_string(),
+                ask_preview: field("ask_preview")?.to_string(),
+            })
+        });
+        match row {
+            Some(row) => rows.push(row),
+            None => eprintln!("[needs-maya] dropping malformed row"),
+        }
+    }
+
+    // ISO-8601 UTC timestamps compare chronologically as strings. Sorting first means retain()
+    // keeps the oldest request for a duplicate issue, as the queue contract requires.
+    rows.sort_by(|left, right| left.ts.cmp(&right.ts));
+    let mut issues = HashSet::new();
+    rows.retain(|row| issues.insert(row.issue.clone()));
+    (rows, None)
 }
 
 // ───────────────────────────────── heddle_comms_participants ─────────────────────────────────

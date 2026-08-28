@@ -9,6 +9,7 @@ use super::*;
 use crate::db::{repo, schema};
 use rusqlite::Connection;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
 /// Verbatim broker schema (pragmas, tables, indexes, append-only/lineage triggers) from
@@ -189,6 +190,98 @@ fn seeded_db(path: &Path) {
     empty_schema_db(path);
     let conn = Connection::open(path).unwrap();
     conn.execute_batch(BASE_FIXTURE_SQL).unwrap();
+}
+
+#[test]
+fn needs_maya_missing_file_returns_an_empty_queue_and_unavailable_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, error) = read_needs_maya_at(&dir.path().join("needs-maya.json"));
+
+    assert!(rows.is_empty());
+    assert_eq!(error.as_deref(), Some("needs-maya queue unavailable"));
+}
+
+#[test]
+fn needs_maya_corrupt_or_non_array_queue_returns_an_empty_queue_and_unavailable_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("needs-maya.json");
+
+    fs::write(&path, "not json").unwrap();
+    let (rows, error) = read_needs_maya_at(&path);
+    assert!(rows.is_empty());
+    assert_eq!(error.as_deref(), Some("needs-maya queue unavailable"));
+
+    fs::write(&path, r#"{"issue":"HED-243"}"#).unwrap();
+    let (rows, error) = read_needs_maya_at(&path);
+    assert!(rows.is_empty());
+    assert_eq!(error.as_deref(), Some("needs-maya queue unavailable"));
+}
+
+#[test]
+fn needs_maya_drops_malformed_rows_and_orders_deduped_valid_rows_stalest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("needs-maya.json");
+    fs::write(
+        &path,
+        r#"[
+          {"issue":"HED-2","agent":"W","ts":"2026-08-16T17:00:00Z","ask_preview":"newer duplicate"},
+          {"issue":"HED-1","agent":"T","ts":"2026-08-16T15:00:00Z","ask_preview":"oldest"},
+          {"issue":"HED-2","agent":"W","ts":"2026-08-16T16:00:00Z","ask_preview":"oldest duplicate"},
+          {"issue":"HED-3","agent":"S","ts":"2026-08-16T18:00:00Z"}
+        ]"#,
+    )
+    .unwrap();
+
+    let (rows, error) = read_needs_maya_at(&path);
+
+    assert_eq!(error, None);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].issue, "HED-1");
+    assert_eq!(rows[1].issue, "HED-2");
+    assert_eq!(rows[1].ask_preview, "oldest duplicate");
+}
+
+#[test]
+fn needs_maya_keeps_two_valid_rows_when_a_malformed_row_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("needs-maya.json");
+    fs::write(
+        &path,
+        r#"[
+          {"issue":"HED-1","agent":"T","ts":"2026-08-16T15:00:00Z","ask_preview":"first"},
+          {"issue":"HED-2","agent":"W","ts":"2026-08-16T16:00:00Z","ask_preview":"second"},
+          {"issue":"HED-3","agent":"S","ts":"2026-08-16T18:00:00Z"}
+        ]"#,
+    )
+    .unwrap();
+
+    let (rows, error) = read_needs_maya_at(&path);
+
+    assert_eq!(error, None);
+    assert_eq!(rows.iter().map(|row| row.issue.as_str()).collect::<Vec<_>>(), ["HED-1", "HED-2"]);
+}
+
+#[test]
+fn needs_maya_drops_rows_with_an_unparseable_timestamp() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("needs-maya.json");
+    fs::write(
+        &path,
+        r#"[
+          {"issue":"HED-1","agent":"T","ts":"2026-08-16T15:00:00Z","ask_preview":"valid"},
+          {"issue":"HED-2","agent":"W","ts":"not-a-date","ask_preview":"garbage ts"},
+          {"issue":"HED-3","agent":"S","ts":"2026-08-16","ask_preview":"date only, no time or Z"}
+        ]"#,
+    )
+    .unwrap();
+
+    let (rows, error) = read_needs_maya_at(&path);
+
+    // A non-empty but non-ISO-8601-UTC ts is dropped like any other malformed row: it would sort
+    // lexically wrong against real timestamps and the UI cannot compute its age. The valid row
+    // survives and the queue is still reported ok (individual bad rows are not a queue failure).
+    assert_eq!(error, None);
+    assert_eq!(rows.iter().map(|row| row.issue.as_str()).collect::<Vec<_>>(), ["HED-1"]);
 }
 
 // ─────────────────────────────────────── test 1 ───────────────────────────────────────
