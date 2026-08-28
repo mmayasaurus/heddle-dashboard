@@ -881,7 +881,7 @@ describe("FleetDrawer roster HUD", () => {
     let hud = {
       model: "claude-opus-4-8",
       contextPct: 42,
-      capturedAt: now,
+      capturedAt: now - 960,
       stale: false,
       gitBranch: "feature/hud",
       gitDirty: true,
@@ -896,9 +896,17 @@ describe("FleetDrawer roster HUD", () => {
     render(<FleetDrawer />);
 
     await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudModel:claude-opus-4-8"));
-    expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudGit:feature/hud,true");
-    expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudContext:42");
-    expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudResources:2,3,4");
+    const initialHudLine = document.querySelector<HTMLElement>(".fleet-agent-hud");
+    const initialHudText = initialHudLine?.textContent ?? "";
+    expect(initialHudText).toMatch(/fleet\.hudAge:\d+m/);
+    expect(initialHudText).toContain("fleet.hudGit:feature/hud,true");
+    expect(initialHudText).toContain("fleet.hudContext:42");
+    expect(initialHudText).toContain("fleet.hudResources:2,3,4");
+    expect(initialHudText.indexOf("fleet.hudAge")).toBeLessThan(initialHudText.indexOf("fleet.hudModel"));
+    expect(initialHudText.indexOf("fleet.hudModel")).toBeLessThan(initialHudText.indexOf("fleet.hudGit"));
+    expect(initialHudText.indexOf("fleet.hudGit")).toBeLessThan(initialHudText.indexOf("fleet.hudContext"));
+    expect(initialHudText.indexOf("fleet.hudContext")).toBeLessThan(initialHudText.indexOf("fleet.hudResources"));
+    expect(initialHudLine?.getAttribute("title")).toBe(initialHudText);
 
     hud = { ...hud, model: "claude-sonnet-4-5", contextPct: 73, gitBranch: "fix/hud", gitDirty: false, mcpCount: 5 };
     fireEvent.click(screen.getByRole("button", { name: "fleet.refresh" }));
@@ -930,9 +938,41 @@ describe("FleetDrawer roster HUD", () => {
     });
     render(<FleetDrawer />);
 
-    await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudAge:16m"));
+    await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toMatch(/fleet\.hudAge:\d+m/));
     const hudLine = document.querySelector(".fleet-agent-hud");
-    expect(hudLine?.classList.contains("fleet-dim")).toBe(true);
+    expect(hudLine?.classList.contains("stale")).toBe(true);
+  });
+
+  it("preserves zero HUD values while omitting null optional chunks", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{
+          ...baseAgent,
+          name: "sparse-hud-agent",
+          hud: {
+            model: null,
+            contextPct: 0,
+            gitBranch: null,
+            gitDirty: false,
+            capturedAt: now,
+            stale: false,
+            claudeMdCount: 1,
+            rulesCount: 0,
+            mcpCount: 0,
+          },
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudContext:0"));
+    const hudLine = document.querySelector<HTMLElement>(".fleet-agent-hud");
+    expect(hudLine?.textContent).not.toContain("fleet.hudModel");
+    expect(hudLine?.textContent).not.toContain("fleet.hudGit");
+    expect(hudLine?.textContent).toContain("fleet.hudResources:1,0,0");
+    expect(hudLine?.classList.contains("stale")).toBe(false);
+    expect(hudLine?.textContent).not.toContain("fleet.hudAge");
   });
 
   it("keeps the pre-HUD roster shape when a capture is absent", async () => {

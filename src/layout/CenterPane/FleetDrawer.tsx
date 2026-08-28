@@ -1059,26 +1059,28 @@ function shortModel(id: string): string {
   return truncateModelChip(id.split("-").slice(-2).join("-"));
 }
 
-/**
- * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
- * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
- */
+/** Compact, live-updating statusline capture for one fleet agent. */
 function AgentHudLine({ hud }: { hud: Hud }) {
   const t = useT();
   return <LiveClock render={(now) => {
+    // Mirrors heddle_stats/roster.rs HUD_STALE_SECS; shipping staleAfterSecs in Hud is tracked in HED-431.
     const stale = isStaleByAge(hud.capturedAt, 900, hud.stale, now);
+    // Caps await an account field on the capture (HED-431 follow-up).
     const chunks = [
+      stale ? t("fleet.hudAge", fmtAgo(hud.capturedAt * 1_000, now)) : null,
       hud.model ? t("fleet.hudModel", hud.model) : null,
       hud.gitBranch ? t("fleet.hudGit", hud.gitBranch, hud.gitDirty) : null,
       hud.contextPct != null ? t("fleet.hudContext", hud.contextPct) : null,
       t("fleet.hudResources", hud.claudeMdCount, hud.rulesCount, hud.mcpCount),
-      stale ? t("fleet.hudAge", fmtAgo(hud.capturedAt * 1_000, now)) : null,
     ].filter((chunk): chunk is string => chunk != null);
-    // Caps await an account field on the capture (#106 follow-up).
-    return <div className={"fleet-agent-hud" + (stale ? " fleet-dim stale" : "")}>{chunks.join(t("fleet.hudSeparator"))}</div>;
+    return <div className={"fleet-agent-hud" + (stale ? " stale" : "")} title={chunks.join(t("fleet.hudSeparator"))}>{chunks.join(t("fleet.hudSeparator"))}</div>;
   }} />;
 }
 
+/**
+ * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
+ * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
+ */
 function AgentRow({ a }: { a: FleetAgent }) {
   const [openRow, setOpenRow] = useState(false);
   const liveWorkers = a.workers.filter((w) => !w.stale);
