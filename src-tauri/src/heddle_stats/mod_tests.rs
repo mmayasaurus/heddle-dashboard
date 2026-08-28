@@ -239,6 +239,97 @@ fn merge_cursor_into_limits_removes_cursor_when_no_fresh_limit_exists() {
 }
 
 #[test]
+fn headless_limits_merges_a_fresh_codex_cache_without_touching_other_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("claudex-cache.json");
+    std::fs::write(
+        &cache,
+        include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json"),
+    )
+    .unwrap();
+    let existing = serde_json::json!({"writtenAt": 1, "limits": [
+        {"provider": "cursor", "marker": "cursor"},
+        {"provider": "claude", "marker": "claude"},
+        {"provider": "codex", "marker": "old-codex"},
+        {"provider": "gemini", "marker": "gemini"}
+    ]});
+
+    let merged = refresh_headless_limits_with_paths(
+        existing,
+        Some(cursor_limit_for_merge_test()),
+        None,
+        &cache,
+        &dir.path().join("missing-helper"),
+        &dir.path().join("gemini.json"),
+        false,
+        &dir.path().join("missing-agy"),
+        dir.path(),
+        1_786_822_400,
+    );
+
+    let limits = merged.expect("fresh cache must merge")["limits"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let codex = limits.iter().find(|l| l["provider"] == "codex").unwrap();
+    assert_eq!(codex["capturedAt"], 1_786_822_350);
+    assert!(codex["accounts"].as_array().is_some_and(|a| !a.is_empty()));
+    assert_eq!(
+        limits.iter().find(|l| l["provider"] == "cursor").unwrap()["model"],
+        "Cursor Pro"
+    );
+    assert_eq!(
+        limits.iter().find(|l| l["provider"] == "claude").unwrap()["marker"],
+        "claude"
+    );
+    assert_eq!(
+        limits.iter().find(|l| l["provider"] == "gemini").unwrap()["marker"],
+        "gemini"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_limits_runs_a_due_codex_helper_and_merges_its_fresh_cache() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("claudex-cache.json");
+    let stale = include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")
+        .replace("1786822350.4144561", "1");
+    std::fs::write(&cache, stale).unwrap();
+    let fresh = include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")
+        .replace('"', "\\\"");
+    let helper = dir.path().join("claudex-usage");
+    std::fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\nprintf '%s' \"{fresh}\" > '{}'\n",
+            cache.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits": [{"provider": "codex", "marker": "old"}]}),
+        None,
+        None,
+        &cache,
+        &helper,
+        &dir.path().join("gemini.json"),
+        false,
+        &dir.path().join("missing-agy"),
+        dir.path(),
+        1_786_824_000,
+    )
+    .expect("helper refresh must merge in this pass");
+
+    assert_eq!(merged["limits"][0]["provider"], "codex");
+    assert_eq!(merged["limits"][0]["capturedAt"], 1_786_822_350);
+}
+
+#[test]
 fn mask_email_keeps_first_char_and_domain() {
     assert_eq!(mask_email("alice@example.com"), "a…@example.com");
     assert_eq!(

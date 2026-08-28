@@ -84,7 +84,7 @@ static GATE: RefreshGate = RefreshGate::new();
 /// `agy` keeps its profile in `$HOME/.gemini/antigravity-cli` (it CREATES that directory as part of
 /// first-run sign-in). Its presence is our proof that a login already happened in the HOME this
 /// process would hand to the child — absence means a refresh would start an OAuth flow.
-fn agy_profile_exists() -> bool {
+pub(super) fn agy_profile_exists() -> bool {
     home().join(".gemini").join("antigravity-cli").is_dir()
 }
 
@@ -185,9 +185,7 @@ fn snapshot_path() -> std::path::PathBuf {
 /// located install, else bare `agy` on the augmented PATH). `None` only when there is no snapshot
 /// yet — the very first poll after install.
 pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
-    let snap = std::fs::read_to_string(snapshot_path())
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    let snap = read_snapshot(&snapshot_path());
     let captured_at = snap.as_ref().and_then(|v| v["capturedAt"].as_i64());
     let due = captured_at
         .map(|t| now - t > REFRESH_AFTER_SECS)
@@ -197,11 +195,60 @@ pub(super) fn limit(now: i64, agy_bin: &str) -> Option<ProviderLimit> {
     if due && blocked.is_none() {
         maybe_spawn_refresh(now, false, agy_bin);
     }
+    entry_from_snapshot(snap.as_ref(), now, blocked)
+}
+
+/// Headless launchd refresh: make at most one foreground attempt, then read the resulting snapshot
+/// in this pass. `profile_exists` and every path are injected so tests never inspect a real HOME.
+pub(super) fn refresh_and_limit_with_paths(
+    snapshot: &std::path::Path,
+    profile_exists: bool,
+    agy_bin: &str,
+    work_dir: &std::path::Path,
+    now: i64,
+) -> Result<Option<ProviderLimit>, String> {
+    let before = read_snapshot(snapshot);
+    let due = before
+        .as_ref()
+        .and_then(|v| v["capturedAt"].as_i64())
+        .map(|t| now - t > REFRESH_AFTER_SECS)
+        .unwrap_or(true);
+    if due && refresh_blocked_reason(before.as_ref(), profile_exists, false).is_none() {
+        fetch_and_write_at(agy_bin, snapshot, work_dir, now)?;
+    }
+    let after = read_snapshot(snapshot);
+    let blocked = refresh_blocked_reason(after.as_ref(), profile_exists, false);
+    Ok(entry_from_snapshot(after.as_ref(), now, blocked))
+}
+
+/// Read an injected snapshot with the same blocked-refresh note processing as the GUI reader.
+pub(super) fn limit_from_snapshot_path(
+    snapshot: &std::path::Path,
+    profile_exists: bool,
+    now: i64,
+) -> Option<ProviderLimit> {
+    let snap = read_snapshot(snapshot);
+    let blocked = refresh_blocked_reason(snap.as_ref(), profile_exists, false);
+    entry_from_snapshot(snap.as_ref(), now, blocked)
+}
+
+fn read_snapshot(path: &std::path::Path) -> Option<Value> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+}
+
+/// Apply the same post-processing used by the GUI reader, including blocked-refresh notes.
+fn entry_from_snapshot(
+    snap: Option<&Value>,
+    now: i64,
+    blocked: Option<(&'static str, String)>,
+) -> Option<ProviderLimit> {
     // The blocked-and-no-snapshot case is the FIRST-RUN incident itself: nothing was ever written
     // because we refuse to spawn. Returning None there would delete the whole Gemini row from the
     // drawer — the operator would see a provider silently missing instead of the sentence telling
     // them how to fix it. Synthesize an empty entry so the guidance always has somewhere to land.
-    let parsed = snap.as_ref().and_then(|v| parse_snapshot(v, now));
+    let parsed = snap.and_then(|v| parse_snapshot(v, now));
     let mut l = match (parsed, &blocked) {
         (Some(l), _) => l,
         (None, Some(_)) => empty_entry(),
@@ -267,9 +314,16 @@ fn maybe_spawn_refresh(now: i64, force: bool, agy_bin: &str) -> bool {
 /// Run agy, build the snapshot, write it. On failure, keep whatever snapshot exists (its data and
 /// `capturedAt` stay honest) but record `lastError` / `lastAttemptAt` so the reader can say why.
 fn fetch_and_write(agy_bin: &str) -> Result<(), String> {
-    let now = now_secs();
-    let path = snapshot_path();
-    match run_agy_quota(agy_bin) {
+    fetch_and_write_at(agy_bin, &snapshot_path(), &usage_dir(), now_secs())
+}
+
+fn fetch_and_write_at(
+    agy_bin: &str,
+    path: &std::path::Path,
+    work_dir: &std::path::Path,
+    now: i64,
+) -> Result<(), String> {
+    match run_agy_quota_at(agy_bin, work_dir) {
         Ok(data) => {
             // A success proves no human is needed right now: clear any sticky block.
             let snap = snapshot_from_agy(&data, now);
@@ -347,10 +401,13 @@ const NULL_LOG: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 /// `agy -p "/quota" --output-format json --log-file <null>` → `command.data`. Runs from the usage
 /// dir (created first) so agy never picks up a project's config from the app's own cwd.
 fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
-    let dir = usage_dir();
+    run_agy_quota_at(agy_bin, &usage_dir())
+}
+
+fn run_agy_quota_at(agy_bin: &str, dir: &std::path::Path) -> Result<Value, String> {
     // The usage dir is the isolated cwd for agy (never a project dir); if it can't exist, stop
     // rather than silently running agy somewhere it could read a project's config.
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let mut cmd = std::process::Command::new(agy_bin);
     cmd.args([
         "-p",
@@ -361,7 +418,7 @@ fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
         NULL_LOG,
     ])
     .env("PATH", augmented_path())
-    .current_dir(&dir);
+    .current_dir(dir);
     let (ok, stdout, stderr) = run_with_timeout(cmd, AGY_TIMEOUT)?;
     if !ok {
         let tail: String = stderr

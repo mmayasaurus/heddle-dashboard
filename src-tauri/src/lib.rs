@@ -233,7 +233,9 @@ pub fn run_view(args: &[String]) -> ! {
     agent::cli_client::run_view(args)
 }
 
-/// Refresh Cursor's local usage snapshot and merge it into the limits mirror for launchd. GUI-gated:
+/// Refresh Cursor's local usage snapshot and synchronously refresh the Codex/Gemini mirror entries
+/// for launchd, because launchd kills detached children with the CLI job's process group on exit.
+/// GUI-gated:
 /// the launchd job invokes the installed GUI release binary, so the minimal `--no-default-features`
 /// server build omits it (and `heddle_stats`) rather than compiling provider-usage fetching into it.
 #[cfg(feature = "gui")]

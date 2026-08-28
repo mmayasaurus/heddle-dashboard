@@ -27,14 +27,14 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 pub(crate) mod claude;
-pub mod discipline;
-pub mod route_mix;
 mod codex;
 mod cursor;
 mod cursor_fetch;
+pub mod discipline;
 mod fable_attrib;
 mod gemini;
 pub mod roster;
+pub mod route_mix;
 mod util;
 
 pub(crate) use util::{
@@ -471,8 +471,12 @@ pub async fn heddle_provider_limits(app: tauri::AppHandle) -> Result<Vec<Provide
 /// (and login) as the terminals.
 fn agy_bin(ctx: &crate::host::AppCtx) -> String {
     crate::pty::manager::agent_bin_path(ctx, crate::models::SessionKind::Antigravity)
-        .or_else(|| crate::agent::install::locate_installed_bin("antigravity"))
-        .unwrap_or_else(|| "agy".to_string())
+        .unwrap_or_else(headless_agy_bin)
+}
+
+/// The non-GUI `agy` lookup shared by launchd and the GUI fallback.
+fn headless_agy_bin() -> String {
+    crate::agent::install::locate_installed_bin("antigravity").unwrap_or_else(|| "agy".to_string())
 }
 
 fn provider_limits_sync(ctx: &crate::host::AppCtx) -> Result<Vec<ProviderLimit>, String> {
@@ -563,10 +567,28 @@ pub(crate) fn merge_cursor_into_limits(
     fresh_cursor: Option<ProviderLimit>,
     now: i64,
 ) -> serde_json::Value {
+    merge_provider_into_limits(existing, "cursor", fresh_cursor, now, true, |_| true)
+}
+
+/// Replace one provider in the limits mirror. Guarded providers retain an existing block when the
+/// fresh candidate has no capture; Cursor intentionally retains its historical replace-on-None
+/// behavior because its own fetch is the authoritative snapshot for this job.
+fn merge_provider_into_limits(
+    existing: serde_json::Value,
+    provider: &str,
+    fresh: Option<ProviderLimit>,
+    now: i64,
+    replace_on_none: bool,
+    guard: impl Fn(&ProviderLimit) -> bool,
+) -> serde_json::Value {
     let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
-    limits.retain(|limit| limit["provider"].as_str() != Some("cursor"));
-    if let Some(cursor) = fresh_cursor.and_then(|limit| serde_json::to_value(limit).ok()) {
-        limits.push(cursor);
+    if let Some(fresh) = fresh.filter(&guard) {
+        limits.retain(|limit| limit["provider"].as_str() != Some(provider));
+        if let Ok(value) = serde_json::to_value(fresh) {
+            limits.push(value);
+        }
+    } else if replace_on_none {
+        limits.retain(|limit| limit["provider"].as_str() != Some(provider));
     }
     serde_json::json!({ "writtenAt": now, "limits": limits })
 }
@@ -581,28 +603,19 @@ pub(crate) fn merge_claude_into_limits(
     fresh_claude: Option<ProviderLimit>,
     now: i64,
 ) -> serde_json::Value {
-    let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
     let has_capture = |l: &ProviderLimit| {
         l.captured_at.is_some()
             || l.accounts
                 .as_ref()
                 .is_some_and(|rows| rows.iter().any(|r| r.captured_at.is_some()))
     };
-    if let Some(claude) = fresh_claude
-        .filter(has_capture)
-        .and_then(|limit| serde_json::to_value(limit).ok())
-    {
-        limits.retain(|limit| limit["provider"].as_str() != Some("claude"));
-        limits.push(claude);
-    }
-    serde_json::json!({ "writtenAt": now, "limits": limits })
+    merge_provider_into_limits(existing, "claude", fresh_claude, now, false, has_capture)
 }
 
-/// Synchronously refresh Cursor and update only its entry in `limits.json`, without an AppCtx.
-/// Runs headless from the `--refresh-provider-limits cursor` launchd job so the mirror stays fresh
-/// for out-of-process consumers (e.g. the Bugbot-meter watcher) even when the drawer is not polling.
-/// It also re-derives Claude from its fresh per-account captures so a rewritten mirror timestamp
-/// cannot carry a stale Claude block forward as current data (HED-348).
+/// Synchronously refresh Cursor, Codex, and Gemini then update `limits.json` once, without an
+/// AppCtx. This launchd path must wait for its bounded Codex (20s) and Gemini (45s) children because
+/// launchd kills the job's process group on exit; even the worst case stays far below the 300s interval.
+/// Claude is re-derived from its captures (HED-348) but is never refreshed here.
 pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
     let fetched = cursor_fetch::fetch_and_write();
     let now = now_secs();
@@ -620,14 +633,73 @@ pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
         })
         .and_then(|claude| claude["activeAccount"].as_str())
         .map(str::to_string);
-    let merged = merge_cursor_into_limits(existing, cursor::limit(now), now);
-    let merged = merge_claude_into_limits(
-        merged,
+    let merged = refresh_headless_limits_with_paths(
+        existing,
+        cursor::limit(now),
         claude::limit_preserving_active(active.as_deref(), now),
+        &home().join(codex::CACHE_REL),
+        &home().join(codex::HELPER_REL),
+        &usage_dir().join("gemini.json"),
+        gemini::agy_profile_exists(),
+        &headless_agy_bin(),
+        &usage_dir(),
         now,
-    );
+    )?;
     write_json_atomic(&path, &merged)?;
     Ok(fetched)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_headless_limits_with_paths(
+    existing: serde_json::Value,
+    fresh_cursor: Option<ProviderLimit>,
+    fresh_claude: Option<ProviderLimit>,
+    codex_cache: &Path,
+    codex_helper: &Path,
+    gemini_snapshot: &Path,
+    gemini_profile_exists: bool,
+    gemini_bin: &Path,
+    gemini_work_dir: &Path,
+    now: i64,
+) -> Result<serde_json::Value, String> {
+    let codex = match codex::refresh_and_limit_with_paths(codex_cache, codex_helper, now) {
+        Ok(limit) => limit,
+        Err(why) => {
+            eprintln!("heddle: codex refresh skipped: {why}");
+            None
+        }
+    };
+    let gemini = match gemini::refresh_and_limit_with_paths(
+        gemini_snapshot,
+        gemini_profile_exists,
+        &gemini_bin.to_string_lossy(),
+        gemini_work_dir,
+        now,
+    ) {
+        Ok(limit) => limit,
+        Err(why) => {
+            eprintln!("heddle: gemini refresh skipped: {why}");
+            gemini::limit_from_snapshot_path(gemini_snapshot, gemini_profile_exists, now)
+        }
+    };
+    let has_capture = |limit: &ProviderLimit| {
+        limit.captured_at.is_some()
+            || limit
+                .accounts
+                .as_ref()
+                .is_some_and(|rows| rows.iter().any(|row| row.captured_at.is_some()))
+    };
+    let merged = merge_cursor_into_limits(existing, fresh_cursor, now);
+    let merged = merge_claude_into_limits(merged, fresh_claude, now);
+    let merged = merge_provider_into_limits(merged, "codex", codex, now, false, has_capture);
+    Ok(merge_provider_into_limits(
+        merged,
+        "gemini",
+        gemini,
+        now,
+        false,
+        has_capture,
+    ))
 }
 
 /// Reads the last mirrored Claude account caps without refreshing or writing any provider state.
