@@ -19,6 +19,7 @@ tab), job summaries, and the job log — plus whatever the AI reviewer apps post
 
 The Rust jobs share `.github/actions/tauri-rust-setup` (Tauri's documented apt deps on `ubuntu-22.04`,
 pnpm/Node, the frontend build that `tauri-build` needs for `../dist`, `rustup` stable, cargo cache).
+For local commands and the symlink/fmt landmines, see [BUILDING.md](BUILDING.md).
 
 ## Rules baked into the workflows (don't undo them casually)
 
