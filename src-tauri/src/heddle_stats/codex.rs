@@ -115,6 +115,16 @@ pub(super) fn refresh_and_limit_with_paths(
     helper_path: &Path,
     now: i64,
 ) -> Result<Option<ProviderLimit>, String> {
+    refresh_and_limit_with_paths_and_timeout(cache_path, helper_path, now, HEADLESS_REFRESH_TIMEOUT)
+}
+
+/// Test seam for the headless refresh's wall-clock budget.
+pub(super) fn refresh_and_limit_with_paths_and_timeout(
+    cache_path: &Path,
+    helper_path: &Path,
+    now: i64,
+    timeout: Duration,
+) -> Result<Option<ProviderLimit>, String> {
     let before = std::fs::read_to_string(cache_path)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
@@ -124,7 +134,7 @@ pub(super) fn refresh_and_limit_with_paths(
     {
         let mut cmd = Command::new(helper_path);
         cmd.args(["--refresh", "lb"]).env("PATH", augmented_path());
-        let (ok, _stdout, stderr) = super::run_with_timeout(cmd, HEADLESS_REFRESH_TIMEOUT)?;
+        let (ok, _stdout, stderr) = super::run_with_timeout(cmd, timeout)?;
         if !ok {
             return Err(format!("helper exited non-zero: {}", stderr.trim()));
         }

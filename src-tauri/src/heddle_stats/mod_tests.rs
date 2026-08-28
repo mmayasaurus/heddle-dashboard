@@ -262,7 +262,7 @@ fn headless_limits_merges_a_fresh_codex_cache_without_touching_other_providers()
         &dir.path().join("missing-helper"),
         &dir.path().join("gemini.json"),
         false,
-        &dir.path().join("missing-agy"),
+        "missing-agy",
         dir.path(),
         1_786_822_400,
     );
@@ -319,7 +319,7 @@ fn headless_limits_runs_a_due_codex_helper_and_merges_its_fresh_cache() {
         &helper,
         &dir.path().join("gemini.json"),
         false,
-        &dir.path().join("missing-agy"),
+        "missing-agy",
         dir.path(),
         1_786_824_000,
     )
@@ -327,6 +327,129 @@ fn headless_limits_runs_a_due_codex_helper_and_merges_its_fresh_cache() {
 
     assert_eq!(merged["limits"][0]["provider"], "codex");
     assert_eq!(merged["limits"][0]["capturedAt"], 1_786_822_350);
+}
+
+#[test]
+fn headless_limits_keeps_existing_codex_when_cache_or_helper_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let existing = serde_json::json!({"limits": [
+        {"provider": "codex", "capturedAt": 7, "marker": "keep"}
+    ]});
+    for (cache, helper) in [
+        (dir.path().join("missing-cache"), dir.path().join("missing-helper")),
+        (dir.path().join("stale-cache"), dir.path().join("missing-helper")),
+    ] {
+        if cache.file_name().is_some_and(|n| n == "stale-cache") {
+            std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[]}"#).unwrap();
+        }
+        let merged = refresh_headless_limits_with_paths(
+            existing.clone(),
+            Some(cursor_limit_for_merge_test()),
+            None,
+            &cache,
+            &helper,
+            &dir.path().join("missing-gemini"),
+            false,
+            "missing-agy",
+            dir.path(),
+            1_000,
+        )
+        .expect("best-effort provider failures must not fail the cursor result");
+        let codex = merged["limits"].as_array().unwrap().iter().find(|l| l["provider"] == "codex").unwrap();
+        assert_eq!(codex, &serde_json::json!({"provider": "codex", "capturedAt": 7, "marker": "keep"}));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_codex_timeout_returns_promptly_and_keeps_the_mirror_candidate_absent() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[]}"#).unwrap();
+    let helper = dir.path().join("slow-helper");
+    std::fs::write(&helper, "#!/bin/sh\nexec sleep 2\n").unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let started = Instant::now();
+    let result = codex::refresh_and_limit_with_paths_and_timeout(
+        &cache, &helper, 1_000, Duration::from_millis(150),
+    );
+    assert!(result.is_err());
+    assert!(started.elapsed() < Duration::from_secs(1), "timeout must kill the child promptly");
+}
+
+#[test]
+fn headless_limits_merges_a_not_due_gemini_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = dir.path().join("gemini.json");
+    let agy: serde_json::Value = serde_json::from_str(include_str!("../../tests/fixtures/heddle_stats/agy-quota.json")).unwrap();
+    let now = 1_786_824_000;
+    write_json_atomic(&snapshot, &gemini::snapshot_from_agy(&agy["command"]["data"], now - 1)).unwrap();
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits":[{"provider":"gemini","marker":"old"}]}),
+        None, None, &dir.path().join("missing-codex"), &dir.path().join("missing-helper"),
+        &snapshot, true, "missing-agy", dir.path(), now,
+    ).unwrap();
+    assert_eq!(merged["limits"][0]["provider"], "gemini");
+    assert_eq!(merged["limits"][0]["capturedAt"], now - 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_limits_does_not_spawn_blocked_gemini_and_retains_existing_entry() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("agy-ran");
+    let agy = dir.path().join("agy");
+    std::fs::write(&agy, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits":[{"provider":"gemini","capturedAt":7,"marker":"keep"}]}),
+        None, None, &dir.path().join("missing-codex"), &dir.path().join("missing-helper"),
+        &dir.path().join("missing-gemini"), false, &agy.to_string_lossy(), dir.path(), 1_000,
+    ).unwrap();
+    assert!(!marker.exists(), "blocked refresh must not execute agy");
+    assert_eq!(merged["limits"][0], serde_json::json!({"provider":"gemini","capturedAt":7,"marker":"keep"}));
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_limits_runs_due_gemini_and_merges_its_new_snapshot() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = include_str!("../../tests/fixtures/heddle_stats/agy-quota.json").replace('"', "\\\"");
+    let agy = dir.path().join("agy");
+    std::fs::write(&agy, format!("#!/bin/sh\nprintf '%s' \"{fixture}\"\n")).unwrap();
+    std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let snapshot = dir.path().join("gemini.json");
+    let now = 1_786_824_000;
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits":[{"provider":"gemini","marker":"old"}]}),
+        None, None, &dir.path().join("missing-codex"), &dir.path().join("missing-helper"),
+        &snapshot, true, &agy.to_string_lossy(), dir.path(), now,
+    ).unwrap();
+    assert_eq!(merged["limits"][0]["provider"], "gemini");
+    assert_eq!(merged["limits"][0]["capturedAt"], now);
+}
+
+#[test]
+fn headless_limits_keeps_best_effort_provider_blocks_when_both_refreshes_fail() {
+    let dir = tempfile::tempdir().unwrap();
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits":[
+            {"provider":"codex","capturedAt":7,"marker":"codex"},
+            {"provider":"gemini","capturedAt":8,"marker":"gemini"}
+        ]}),
+        Some(cursor_limit_for_merge_test()), None,
+        &dir.path().join("missing-cache"), &dir.path().join("missing-helper"),
+        &dir.path().join("missing-gemini"), true, "missing-agy", dir.path(), 1_000,
+    ).unwrap();
+    let limits = merged["limits"].as_array().unwrap();
+    assert!(limits.iter().any(|l| l["provider"] == "cursor"));
+    assert!(limits.iter().any(|l| l["marker"] == "codex"));
+    assert!(limits.iter().any(|l| l["marker"] == "gemini"));
 }
 
 #[test]

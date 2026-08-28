@@ -327,10 +327,10 @@ fn fetch_and_write_at(
         Ok(data) => {
             // A success proves no human is needed right now: clear any sticky block.
             let snap = snapshot_from_agy(&data, now);
-            write_json_atomic(&path, &snap)
+            write_json_atomic(path, &snap)
         }
         Err(e) => {
-            let mut snap = std::fs::read_to_string(&path)
+            let mut snap = std::fs::read_to_string(path)
                 .ok()
                 .and_then(|t| serde_json::from_str::<Value>(&t).ok())
                 .filter(Value::is_object)
@@ -347,7 +347,7 @@ fn fetch_and_write_at(
             record_failure(&mut snap, &e, now);
             // A failed snapshot write is a second, distinct failure — say so instead of hiding it
             // behind the agy error.
-            match write_json_atomic(&path, &snap) {
+            match write_json_atomic(path, &snap) {
                 Ok(()) => Err(e),
                 Err(w) => Err(format!(
                     "{e}; and the error snapshot could not be written: {w}"
@@ -400,6 +400,7 @@ const NULL_LOG: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 /// `agy -p "/quota" --output-format json --log-file <null>` → `command.data`. Runs from the usage
 /// dir (created first) so agy never picks up a project's config from the app's own cwd.
+#[cfg(test)]
 fn run_agy_quota(agy_bin: &str) -> Result<Value, String> {
     run_agy_quota_at(agy_bin, &usage_dir())
 }

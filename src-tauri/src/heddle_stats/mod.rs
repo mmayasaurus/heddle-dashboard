@@ -27,14 +27,14 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 pub(crate) mod claude;
+pub mod discipline;
+pub mod route_mix;
 mod codex;
 mod cursor;
 mod cursor_fetch;
-pub mod discipline;
 mod fable_attrib;
 mod gemini;
 pub mod roster;
-pub mod route_mix;
 mod util;
 
 pub(crate) use util::{
@@ -583,8 +583,8 @@ fn merge_provider_into_limits(
 ) -> serde_json::Value {
     let mut limits = existing["limits"].as_array().cloned().unwrap_or_default();
     if let Some(fresh) = fresh.filter(&guard) {
-        limits.retain(|limit| limit["provider"].as_str() != Some(provider));
         if let Ok(value) = serde_json::to_value(fresh) {
+            limits.retain(|limit| limit["provider"].as_str() != Some(provider));
             limits.push(value);
         }
     } else if replace_on_none {
@@ -658,7 +658,7 @@ fn refresh_headless_limits_with_paths(
     codex_helper: &Path,
     gemini_snapshot: &Path,
     gemini_profile_exists: bool,
-    gemini_bin: &Path,
+    gemini_bin: &str,
     gemini_work_dir: &Path,
     now: i64,
 ) -> Result<serde_json::Value, String> {
@@ -672,7 +672,7 @@ fn refresh_headless_limits_with_paths(
     let gemini = match gemini::refresh_and_limit_with_paths(
         gemini_snapshot,
         gemini_profile_exists,
-        &gemini_bin.to_string_lossy(),
+        gemini_bin,
         gemini_work_dir,
         now,
     ) {
