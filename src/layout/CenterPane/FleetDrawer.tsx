@@ -103,6 +103,17 @@ interface FleetWorker {
   elapsedMs: number;
   stale: boolean;
 }
+interface Hud {
+  model?: string | null;
+  contextPct?: number | null;
+  capturedAt: number;
+  stale: boolean;
+  gitBranch?: string | null;
+  gitDirty: boolean;
+  claudeMdCount: number;
+  rulesCount: number;
+  mcpCount: number;
+}
 interface FleetAgent {
   name: string;
   model?: string | null;
@@ -114,6 +125,7 @@ interface FleetAgent {
   updatedAtMs: number;
   alive: boolean;
   workers: FleetWorker[];
+  hud?: Hud | null;
 }
 
 const POLL_MS = 30_000;
@@ -1051,6 +1063,22 @@ function shortModel(id: string): string {
  * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
  * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
  */
+function AgentHudLine({ hud }: { hud: Hud }) {
+  const t = useT();
+  return <LiveClock render={(now) => {
+    const stale = isStaleByAge(hud.capturedAt, 900, hud.stale, now);
+    const chunks = [
+      hud.model ? t("fleet.hudModel", hud.model) : null,
+      hud.gitBranch ? t("fleet.hudGit", hud.gitBranch, hud.gitDirty) : null,
+      hud.contextPct != null ? t("fleet.hudContext", hud.contextPct) : null,
+      t("fleet.hudResources", hud.claudeMdCount, hud.rulesCount, hud.mcpCount),
+      stale ? t("fleet.hudAge", fmtAgo(hud.capturedAt * 1_000, now)) : null,
+    ].filter((chunk): chunk is string => chunk != null);
+    // Caps await an account field on the capture (#106 follow-up).
+    return <div className={"fleet-agent-hud" + (stale ? " fleet-dim stale" : "")}>{chunks.join(t("fleet.hudSeparator"))}</div>;
+  }} />;
+}
+
 function AgentRow({ a }: { a: FleetAgent }) {
   const [openRow, setOpenRow] = useState(false);
   const liveWorkers = a.workers.filter((w) => !w.stale);
@@ -1090,6 +1118,7 @@ function AgentRow({ a }: { a: FleetAgent }) {
           </span>
         )} />
       </div>
+      {a.hud && <AgentHudLine hud={a.hud} />}
       {openRow && hasChildren && (
         <div className="fleet-agent-workers">
           {a.workers.map((w) => (
