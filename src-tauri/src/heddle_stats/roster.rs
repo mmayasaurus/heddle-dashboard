@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -49,22 +50,28 @@ pub struct FleetAgent {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hud {
-    pub model: Option<String>,
-    pub context_pct: Option<f64>,
-    pub captured_at: i64,
+    /// The tap's display name (`display_name ?? id`), distinct from `FleetAgent.model`, which is
+    /// the agent process's `--model` argv id.
+    pub(crate) model: Option<String>,
+    pub(crate) context_pct: Option<f64>,
+    pub(crate) captured_at: i64,
     /// The capture updates each statusline render, so a live-but-idle session can age; `alive`
     /// remains the primary liveness signal and stale only dims the hud numbers, never hides the row.
-    pub stale: bool,
-    pub git_branch: Option<String>,
-    pub git_dirty: bool,
-    pub claude_md_count: u32,
-    pub rules_count: u32,
-    pub mcp_count: u32,
+    pub(crate) stale: bool,
+    pub(crate) git_branch: Option<String>,
+    pub(crate) git_dirty: bool,
+    /// Config governing this agent, cumulative across its cwd's ancestor chain. These totals
+    /// include user-level `~/.claude/*` consistently and are comparable across roster rows.
+    pub(crate) claude_md_count: u32,
+    pub(crate) rules_count: u32,
+    pub(crate) mcp_count: u32,
 }
 
 /// The capture updates each statusline render, so a live-but-idle session can age; `alive` remains
 /// the primary liveness signal and stale only dims the hud numbers, never hides the row.
 const HUD_STALE_SECS: i64 = 900;
+/// Maximum wall-clock time for the Fleet drawer's best-effort Git facts probe per live agent.
+const HUD_GIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -128,11 +135,12 @@ fn rules_count(cwd: &str) -> u32 {
     if cwd.is_empty() {
         return 0;
     }
+    let mut count = 0;
     let mut directory = PathBuf::from(cwd);
     loop {
         let rules = directory.join(".claude").join("rules");
         if rules.is_dir() {
-            return std::fs::read_dir(rules)
+            count += std::fs::read_dir(rules)
                 .ok()
                 .into_iter()
                 .flatten()
@@ -151,9 +159,10 @@ fn rules_count(cwd: &str) -> u32 {
                 .count() as u32;
         }
         if !directory.pop() {
-            return 0;
+            break;
         }
     }
+    count
 }
 
 fn mcp_server_names(path: &Path) -> HashSet<String> {
@@ -174,8 +183,9 @@ fn mcp_server_names(path: &Path) -> HashSet<String> {
         None => top_level,
     };
     servers
-        .keys()
-        .cloned()
+        .iter()
+        .filter(|(_, value)| value.is_object())
+        .map(|(name, _)| name.clone())
         .collect()
 }
 
@@ -183,21 +193,46 @@ fn mcp_count(cwd: &str) -> u32 {
     if cwd.is_empty() {
         return 0;
     }
+    let mut names = HashSet::new();
     let mut directory = PathBuf::from(cwd);
     loop {
         let mcp = directory.join(".mcp.json");
         let claude_mcp = directory.join(".claude").join("mcp.json");
-        if mcp.is_file() || claude_mcp.is_file() {
-            return mcp_server_names(&mcp)
-                .into_iter()
-                .chain(mcp_server_names(&claude_mcp))
-                .collect::<HashSet<_>>()
-                .len() as u32;
-        }
+        names.extend(mcp_server_names(&mcp));
+        names.extend(mcp_server_names(&claude_mcp));
         if !directory.pop() {
-            return 0;
+            break;
         }
     }
+    names.len() as u32
+}
+
+fn hud_git_facts(cwd: &str) -> (Option<String>, bool) {
+    let mut command = crate::host::command("git");
+    command
+        .arg("-C")
+        .arg(cwd)
+        // Read-only probe: never take .git/index.lock, so the 30s roster poll cannot collide with an
+        // agent's concurrent `git add`/`commit` in the same worktree (shared git.rs tracked in HED-416).
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(["status", "--porcelain=v1", "--branch"]);
+    let Ok((ok, stdout, _)) = crate::heddle_stats::run_with_timeout(command, HUD_GIT_TIMEOUT)
+    else {
+        return (None, false);
+    };
+    if !ok {
+        return (None, false);
+    }
+
+    let mut lines = stdout.lines();
+    let branch = lines.next().and_then(|line| {
+        line.strip_prefix("## ")
+            .and_then(|head| head.split("...").next())
+            .filter(|head| !head.is_empty() && *head != "HEAD (no branch)")
+            .map(str::to_string)
+    });
+    let dirty = lines.next().is_some();
+    (branch, dirty)
 }
 
 /// Joins an agent's session capture with best-effort project facts. Missing or invalid data simply
@@ -207,17 +242,21 @@ fn hud_for(home: &Path, session_id: &str, cwd: &str) -> Option<Hud> {
         return None;
     }
     let text = std::fs::read_to_string(session_capture_path(home, session_id)).ok()?;
-    let capture = serde_json::from_str::<SessionCapture>(&text).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let capture = serde_json::from_value::<SessionCapture>(serde_json::Value::Object(
+        value.as_object()?.clone(),
+    ))
+    .ok()?;
     let captured_at = capture.captured_at.unwrap_or_default();
     let now = now_epoch_secs();
-    let git = crate::git::status(cwd);
+    let (git_branch, git_dirty) = hud_git_facts(cwd);
     Some(Hud {
         model: capture.model,
         context_pct: capture.context_pct,
         captured_at,
         stale: now.saturating_sub(captured_at) > HUD_STALE_SECS,
-        git_branch: git.branch,
-        git_dirty: git.staged + git.unstaged + git.untracked > 0,
+        git_branch,
+        git_dirty,
         claude_md_count: claude_md_count(cwd),
         rules_count: rules_count(cwd),
         mcp_count: mcp_count(cwd),
@@ -341,6 +380,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let project = tempfile::tempdir().unwrap();
         let cwd = project.path().join("agent/subdir");
+        let bare_temp_root = project.path().parent().unwrap();
+        let baseline_claude_md_count = claude_md_count(&bare_temp_root.display().to_string());
+        let baseline_rules_count = rules_count(&bare_temp_root.display().to_string());
+        let baseline_mcp_count = mcp_count(&bare_temp_root.display().to_string());
         std::fs::create_dir_all(&cwd).unwrap();
         std::fs::write(project.path().join("CLAUDE.md"), "project instructions").unwrap();
         std::fs::write(cwd.join("CLAUDE.md"), "agent instructions").unwrap();
@@ -348,14 +391,22 @@ mod tests {
         std::fs::create_dir_all(&rules).unwrap();
         std::fs::write(rules.join("one.md"), "one").unwrap();
         std::fs::write(rules.join("two.md"), "two").unwrap();
+        let child_rules = cwd.join(".claude/rules");
+        std::fs::create_dir_all(&child_rules).unwrap();
+        std::fs::write(child_rules.join("child.md"), "child").unwrap();
         std::fs::write(
             project.path().join(".mcp.json"),
-            r#"{"mcpServers":{"alpha":{},"beta":{}}}"#,
+            r#"{"mcpServers":{"hed382-project-alpha":{},"hed382-project-beta":{}}}"#,
         )
         .unwrap();
         std::fs::write(
             project.path().join(".claude/mcp.json"),
-            r#"{"mcpServers":{"beta":{},"gamma":{}}}"#,
+            r#"{"mcpServers":{"hed382-project-beta":{},"hed382-project-gamma":{}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.join(".mcp.json"),
+            r#"{"mcpServers":{"hed382-child":{}}}"#,
         )
         .unwrap();
         let session_id = "session/with slash";
@@ -376,9 +427,9 @@ mod tests {
         assert_eq!(hud.model.as_deref(), Some("claude-test"));
         assert_eq!(hud.context_pct, Some(42.0));
         assert!(!hud.stale);
-        assert_eq!(hud.claude_md_count, 2);
-        assert_eq!(hud.rules_count, 2);
-        assert_eq!(hud.mcp_count, 3);
+        assert_eq!(hud.claude_md_count, baseline_claude_md_count + 2);
+        assert_eq!(hud.rules_count, baseline_rules_count + 3);
+        assert_eq!(hud.mcp_count, baseline_mcp_count + 4);
     }
 
     #[test]
@@ -411,6 +462,15 @@ mod tests {
         let cwd = tempfile::tempdir().unwrap();
         assert!(hud_for(home.path(), "missing", &cwd.path().display().to_string()).is_none());
         assert!(hud_for(home.path(), "", &cwd.path().display().to_string()).is_none());
+    }
+
+    #[test]
+    fn hud_is_absent_for_a_non_object_capture() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        write_session_capture(home.path(), "array", serde_json::json!([]));
+
+        assert!(hud_for(home.path(), "array", &cwd.path().display().to_string()).is_none());
     }
 
     #[test]
@@ -459,7 +519,7 @@ mod tests {
 
         let repo_hud = hud_for(home.path(), "repo", &repo.path().display().to_string())
             .expect("repo HUD");
-        assert!(repo_hud.git_branch.is_some());
+        assert_eq!(repo_hud.git_branch.as_deref(), Some("main"));
         assert!(repo_hud.git_dirty);
 
         let plain_hud = hud_for(home.path(), "plain", &plain.path().display().to_string())
@@ -469,28 +529,24 @@ mod tests {
     }
 
     #[test]
-    fn hud_uses_tap_hashed_filename_for_sanitized_session_ids() {
+    fn hud_uses_shared_tap_session_filename_fixture() {
         let home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let session_id = "session/needs sanitizing";
-        assert_eq!(
-            session_capture_path(home.path(), session_id).file_name().unwrap(),
-            "session_needs_sanitizing-58e0a636.json"
-        );
-        assert_eq!(
-            session_capture_path(home.path(), "café").file_name().unwrap(),
-            "caf_-850f7dc4.json"
-        );
-        assert_eq!(
-            session_capture_path(home.path(), "sess😀").file_name().unwrap(),
-            "sess__-ee7cb0f6.json"
-        );
-        assert_eq!(
-            session_capture_path(home.path(), "3b1e4c7a-0000-4000-8000-000000000000")
-                .file_name()
-                .unwrap(),
-            "3b1e4c7a-0000-4000-8000-000000000000.json"
-        );
+        let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../scripts/__fixtures__/session-filenames.json");
+        let fixtures: Vec<serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(fixture_path).unwrap()).unwrap();
+        for fixture in fixtures {
+            let session_id = fixture["sessionId"].as_str().unwrap();
+            let expected_file = fixture["file"].as_str().unwrap();
+            assert_eq!(
+                session_capture_path(home.path(), session_id)
+                    .file_name()
+                    .unwrap(),
+                expected_file
+            );
+        }
         write_session_capture(
             home.path(),
             session_id,
@@ -534,11 +590,40 @@ mod tests {
         })))
         .unwrap();
         let hud = &with_hud["hud"];
+        assert_eq!(hud["model"], "claude-test");
         assert_eq!(hud["contextPct"], 12.0);
+        assert_eq!(hud["capturedAt"], 123);
+        assert_eq!(hud["stale"], false);
         assert_eq!(hud["gitBranch"], "main");
+        assert_eq!(hud["gitDirty"], true);
         assert_eq!(hud["claudeMdCount"], 1);
         assert_eq!(hud["rulesCount"], 2);
         assert_eq!(hud["mcpCount"], 3);
+    }
+
+    #[test]
+    fn mcp_server_names_ignores_non_object_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join(".mcp.json");
+        std::fs::write(
+            &mcp,
+            r#"{"$schema":"schema","inputs":[],"top-level-server":{},"scalar":1}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            mcp_server_names(&mcp),
+            HashSet::from(["top-level-server".to_string()])
+        );
+
+        std::fs::write(
+            &mcp,
+            r#"{"mcpServers":{"object-server":{},"scalar-server":"command"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            mcp_server_names(&mcp),
+            HashSet::from(["object-server".to_string()])
+        );
     }
 
     #[test]
@@ -1036,11 +1121,11 @@ fn attach_in_flight_workers(agents: &mut [FleetAgent]) -> Vec<Worker> {
 
 /// Live Claude Code fleet agents plus their in-flight heddle workers. Both sources are optional:
 /// inaccessible sessions or ledger data simply produce a partial roster rather than failing callers.
-pub(crate) fn fleet_roster() -> Vec<FleetAgent> {
+pub(crate) fn fleet_roster(want_hud: bool) -> Vec<FleetAgent> {
     let mut agents = live_fleet_agents();
     let home = home();
     for agent in &mut agents {
-        if agent.alive {
+        if want_hud && agent.alive {
             agent.hud = hud_for(&home, &agent.session_id, &agent.cwd);
         }
     }
@@ -1071,7 +1156,7 @@ pub(crate) fn fleet_roster() -> Vec<FleetAgent> {
 
 #[tauri::command]
 pub async fn heddle_fleet_roster() -> Result<Vec<FleetAgent>, String> {
-    Ok(tauri::async_runtime::spawn_blocking(fleet_roster)
-    .await
-    .map_err(|e| format!("failed to compute fleet roster: {e}"))?)
+    Ok(tauri::async_runtime::spawn_blocking(|| fleet_roster(true))
+        .await
+        .map_err(|e| format!("failed to compute fleet roster: {e}"))?)
 }

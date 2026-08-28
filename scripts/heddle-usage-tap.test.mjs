@@ -16,6 +16,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), "heddle-usage-tap.mjs");
+const sessionFilenameFixture = JSON.parse(readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "__fixtures__/session-filenames.json"),
+  "utf8",
+));
 
 describe("heddle usage tap", () => {
   let tmpHome;
@@ -199,6 +203,12 @@ describe("heddle usage tap", () => {
         : `${safe}-${createHash("sha256").update(sessionId).digest("hex").slice(0, 8)}`;
       return `${base}.json`;
     }
+
+    it("matches the shared session filename fixture", () => {
+      for (const { sessionId, file } of sessionFilenameFixture) {
+        expect(sessionFileName(sessionId)).toBe(file);
+      }
+    });
 
     it("preserves byte-identical passthrough when a session id is present", () => {
       const payload = {
