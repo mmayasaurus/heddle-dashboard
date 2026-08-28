@@ -168,9 +168,12 @@ pub(crate) fn run_with_timeout(
             Ok(Some(st)) => break Ok(st),
             Ok(None) if started.elapsed() >= budget => {
                 #[cfg(unix)]
-                unsafe {
-                    // The child is the process-group leader because `process_group(0)` above.
-                    // Kill the group before reaping it so descendants cannot retain the pipe ends.
+                unsafe { // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage -- FFI kill(2) has no safe std wrapper; SAFETY below.
+                    // SAFETY: `process_group(0)` above made the child its own process-group leader, so
+                    // its PID (`child.id()`) is also the group id and negating it targets the whole
+                    // group. The child is still unreaped here (`try_wait` returned `Ok(None)`), so the
+                    // OS cannot recycle that PID before this call. SIGKILL to the group also reaps
+                    // descendants that inherited the stdout/stderr pipe ends — the point of the group kill.
                     libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
                 }
                 #[cfg(not(unix))]
