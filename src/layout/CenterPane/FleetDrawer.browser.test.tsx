@@ -941,6 +941,8 @@ describe("FleetDrawer roster HUD", () => {
     await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toMatch(/fleet\.hudAge:\d+m/));
     const hudLine = document.querySelector(".fleet-agent-hud");
     expect(hudLine?.classList.contains("stale")).toBe(true);
+    // The class must actually dim — assert the CSS rule dims it, not just that the class toggles.
+    expect(vlinxCss).toMatch(/\.fleet-agent-hud\.stale\s*\{[^}]*--text-faint/);
   });
 
   it("preserves zero HUD values while omitting null optional chunks", async () => {
@@ -973,6 +975,34 @@ describe("FleetDrawer roster HUD", () => {
     expect(hudLine?.textContent).toContain("fleet.hudResources:1,0,0");
     expect(hudLine?.classList.contains("stale")).toBe(false);
     expect(hudLine?.textContent).not.toContain("fleet.hudAge");
+  });
+
+  it("omits the context chunk when contextPct is null", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "heddle_fleet_roster") {
+        return Promise.resolve([{
+          ...baseAgent,
+          name: "null-ctx-agent",
+          hud: {
+            model: "claude-x",
+            contextPct: null,
+            gitBranch: "b",
+            gitDirty: false,
+            capturedAt: now,
+            stale: false,
+            claudeMdCount: 0,
+            rulesCount: 0,
+            mcpCount: 0,
+          },
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+    render(<FleetDrawer />);
+
+    await waitFor(() => expect(document.querySelector(".fleet-agent-hud")?.textContent).toContain("fleet.hudModel:claude-x"));
+    const hudLine = document.querySelector(".fleet-agent-hud");
+    expect(hudLine?.textContent).not.toContain("fleet.hudContext");
   });
 
   it("keeps the pre-HUD roster shape when a capture is absent", async () => {
