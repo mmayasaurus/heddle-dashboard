@@ -3,9 +3,11 @@
 //! `kill(pid, 0)`) with the in-flight heddle workers each one owns, plus an "(orphaned)" bucket
 //! for workers whose orchestrator is gone.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{home, ledger};
 
@@ -39,6 +41,169 @@ pub struct FleetAgent {
     pub(crate) updated_at_ms: i64,
     pub(crate) alive: bool,
     pub(crate) workers: Vec<Worker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hud: Option<Hud>,
+}
+
+/// Per-session statusline and project facts for the Fleet drawer.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hud {
+    pub model: Option<String>,
+    pub context_pct: Option<f64>,
+    pub captured_at: i64,
+    /// The capture updates each statusline render, so a live-but-idle session can age; `alive`
+    /// remains the primary liveness signal and stale only dims the hud numbers, never hides the row.
+    pub stale: bool,
+    pub git_branch: Option<String>,
+    pub git_dirty: bool,
+    pub claude_md_count: u32,
+    pub rules_count: u32,
+    pub mcp_count: u32,
+}
+
+/// The capture updates each statusline render, so a live-but-idle session can age; `alive` remains
+/// the primary liveness signal and stale only dims the hud numbers, never hides the row.
+const HUD_STALE_SECS: i64 = 900;
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct SessionCapture {
+    model: Option<String>,
+    context_pct: Option<f64>,
+    captured_at: Option<i64>,
+}
+
+fn now_epoch_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+/// Mirrors `safeSessionSegment` / `shortHash` in `scripts/heddle-usage-tap.mjs`.
+fn session_capture_path(home: &Path, session_id: &str) -> PathBuf {
+    let safe: String = session_id
+        .encode_utf16()
+        .map(|unit| {
+            if matches!(unit, 0x41..=0x5a | 0x61..=0x7a | 0x30..=0x39 | 0x2e | 0x5f | 0x2d) {
+                char::from_u32(unit as u32).unwrap()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let base = if safe == session_id {
+        safe
+    } else {
+        let hash = Sha256::digest(session_id.as_bytes());
+        format!(
+            "{safe}-{:02x}{:02x}{:02x}{:02x}",
+            hash[0], hash[1], hash[2], hash[3]
+        )
+    };
+    home.join(".heddle")
+        .join("sessions")
+        .join(format!("{base}.json"))
+}
+
+fn claude_md_count(cwd: &str) -> u32 {
+    if cwd.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut directory = PathBuf::from(cwd);
+    loop {
+        if directory.join("CLAUDE.md").is_file() {
+            count += 1;
+        }
+        if !directory.pop() {
+            break;
+        }
+    }
+    count
+}
+
+fn rules_count(cwd: &str) -> u32 {
+    if cwd.is_empty() {
+        return 0;
+    }
+    std::fs::read_dir(Path::new(cwd).join(".claude").join("rules"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    == Some("md")
+        })
+        .count() as u32
+}
+
+fn mcp_server_names(path: &Path) -> HashSet<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HashSet::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return HashSet::new();
+    };
+    let Some(top_level) = value.as_object() else {
+        return HashSet::new();
+    };
+    let servers = match top_level.get("mcpServers") {
+        Some(value) => match value.as_object() {
+            Some(servers) => servers,
+            None => return HashSet::new(),
+        },
+        None => top_level,
+    };
+    servers
+        .keys()
+        .cloned()
+        .collect()
+}
+
+fn mcp_count(cwd: &str) -> u32 {
+    if cwd.is_empty() {
+        return 0;
+    }
+    let cwd = Path::new(cwd);
+    mcp_server_names(&cwd.join(".mcp.json"))
+        .into_iter()
+        .chain(mcp_server_names(&cwd.join(".claude").join("mcp.json")))
+        .collect::<HashSet<_>>()
+        .len() as u32
+}
+
+/// Joins an agent's session capture with best-effort project facts. Missing or invalid data simply
+/// leaves the row without a HUD.
+fn hud_for(session_id: &str, cwd: &str) -> Option<Hud> {
+    if session_id.is_empty() {
+        return None;
+    }
+    let text = std::fs::read_to_string(session_capture_path(&home(), session_id)).ok()?;
+    let capture = serde_json::from_str::<SessionCapture>(&text).ok()?;
+    let captured_at = capture.captured_at.unwrap_or_default();
+    let now = now_epoch_secs();
+    let git = crate::git::status(cwd);
+    Some(Hud {
+        model: capture.model,
+        context_pct: capture.context_pct,
+        captured_at,
+        stale: now.saturating_sub(captured_at) > HUD_STALE_SECS,
+        git_branch: git.branch,
+        git_dirty: git.staged + git.unstaged + git.untracked > 0,
+        claude_md_count: claude_md_count(cwd),
+        rules_count: rules_count(cwd),
+        mcp_count: mcp_count(cwd),
+    })
 }
 
 fn process_alive(pid: i32) -> bool {
@@ -145,6 +310,225 @@ fn parse_model_flag(args: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+
+    fn home_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct HomeOverride(Option<OsString>);
+
+    impl HomeOverride {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::var_os("HOME");
+            std::env::set_var("HOME", path);
+            Self(previous)
+        }
+    }
+
+    impl Drop for HomeOverride {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                std::env::set_var("HOME", previous);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    fn with_test_home<T>(home: &Path, test: impl FnOnce() -> T) -> T {
+        let _lock = home_lock().lock().unwrap();
+        let _home = HomeOverride::set(home);
+        test()
+    }
+
+    fn write_session_capture(home: &Path, session_id: &str, capture: serde_json::Value) {
+        let path = session_capture_path(home, session_id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, capture.to_string()).unwrap();
+    }
+
+    #[test]
+    fn hud_joins_session_capture_and_project_counts() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        std::fs::write(cwd.path().join("CLAUDE.md"), "project instructions").unwrap();
+        let rules = cwd.path().join(".claude/rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("one.md"), "one").unwrap();
+        std::fs::write(rules.join("two.md"), "two").unwrap();
+        std::fs::write(
+            cwd.path().join(".mcp.json"),
+            r#"{"mcpServers":{"alpha":{},"beta":{}}}"#,
+        )
+        .unwrap();
+        let session_id = "session/with slash";
+        write_session_capture(
+            home.path(),
+            session_id,
+            serde_json::json!({
+                "sessionId": session_id,
+                "model": "claude-test",
+                "contextPct": 42.0,
+                "capturedAt": super::now_epoch_secs(),
+            }),
+        );
+
+        let hud = with_test_home(home.path(), || {
+            hud_for(session_id, &cwd.path().display().to_string())
+        })
+        .expect("capture should attach a HUD");
+
+        assert_eq!(hud.model.as_deref(), Some("claude-test"));
+        assert_eq!(hud.context_pct, Some(42.0));
+        assert!(!hud.stale);
+        assert!(hud.claude_md_count >= 1);
+        assert_eq!(hud.rules_count, 2);
+        assert_eq!(hud.mcp_count, 2);
+    }
+
+    #[test]
+    fn hud_marks_aged_captures_stale_but_not_fresh_ones() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let now = super::now_epoch_secs();
+        write_session_capture(
+            home.path(),
+            "aged",
+            serde_json::json!({"capturedAt": now - 1_000}),
+        );
+        write_session_capture(home.path(), "fresh", serde_json::json!({"capturedAt": now}));
+
+        with_test_home(home.path(), || {
+            assert!(
+                hud_for("aged", &cwd.path().display().to_string())
+                    .expect("aged capture")
+                    .stale
+            );
+            assert!(
+                !hud_for("fresh", &cwd.path().display().to_string())
+                    .expect("fresh capture")
+                    .stale
+            );
+        });
+    }
+
+    #[test]
+    fn hud_is_absent_without_a_capture_or_session_id() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        with_test_home(home.path(), || {
+            assert!(hud_for("missing", &cwd.path().display().to_string()).is_none());
+            assert!(hud_for("", &cwd.path().display().to_string()).is_none());
+        });
+    }
+
+    #[test]
+    fn hud_reports_dirty_git_facts_and_non_repo_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let repo_path = repo.path().to_str().unwrap();
+        // A realistic agent cwd has at least one commit, so HEAD resolves and the branch name is
+        // returned. A fresh `git init` with no commit leaves HEAD unborn and `rev-parse
+        // --abbrev-ref HEAD` yields no branch — not the state a live roster ever sees.
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(git(&["init", "--quiet", "-b", "main", repo_path]));
+        assert!(git(&["-C", repo_path, "config", "user.email", "t@example.com"]));
+        assert!(git(&["-C", repo_path, "config", "user.name", "Test"]));
+        std::fs::write(repo.path().join("seed.txt"), "seed").unwrap();
+        assert!(git(&["-C", repo_path, "add", "-A"]));
+        assert!(git(&["-C", repo_path, "commit", "--quiet", "-m", "seed"]));
+        // Now an untracked file makes the tree dirty against that committed state.
+        std::fs::write(repo.path().join("dirty.txt"), "uncommitted").unwrap();
+        let plain = tempfile::tempdir().unwrap();
+        let now = super::now_epoch_secs();
+        write_session_capture(home.path(), "repo", serde_json::json!({"capturedAt": now}));
+        write_session_capture(home.path(), "plain", serde_json::json!({"capturedAt": now}));
+
+        with_test_home(home.path(), || {
+            let repo_hud = hud_for("repo", &repo.path().display().to_string()).expect("repo HUD");
+            assert!(repo_hud.git_branch.is_some());
+            assert!(repo_hud.git_dirty);
+
+            let plain_hud =
+                hud_for("plain", &plain.path().display().to_string()).expect("plain HUD");
+            assert_eq!(plain_hud.git_branch, None);
+            assert!(!plain_hud.git_dirty);
+        });
+    }
+
+    #[test]
+    fn hud_uses_tap_hashed_filename_for_sanitized_session_ids() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let session_id = "session/needs sanitizing";
+        let path = session_capture_path(home.path(), session_id);
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("session_needs_sanitizing-"));
+        write_session_capture(
+            home.path(),
+            session_id,
+            serde_json::json!({"model": "found-through-hash", "capturedAt": super::now_epoch_secs()}),
+        );
+
+        let hud = with_test_home(home.path(), || {
+            hud_for(session_id, &cwd.path().display().to_string())
+        })
+        .expect("hashed session filename should join");
+        assert_eq!(hud.model.as_deref(), Some("found-through-hash"));
+    }
+
+    #[test]
+    fn fleet_agent_hud_serialization_is_optional_and_camel_case() {
+        let agent = |hud| FleetAgent {
+            name: "T".to_string(),
+            model: None,
+            pid: 1,
+            session_id: "session".to_string(),
+            cwd: String::new(),
+            status: String::new(),
+            kind: String::new(),
+            updated_at_ms: 0,
+            alive: true,
+            workers: vec![],
+            hud,
+        };
+
+        let without_hud = serde_json::to_value(agent(None)).unwrap();
+        assert!(without_hud.get("hud").is_none());
+
+        let with_hud = serde_json::to_value(agent(Some(Hud {
+            model: Some("claude-test".to_string()),
+            context_pct: Some(12.0),
+            captured_at: 123,
+            stale: false,
+            git_branch: Some("main".to_string()),
+            git_dirty: true,
+            claude_md_count: 1,
+            rules_count: 2,
+            mcp_count: 3,
+        })))
+        .unwrap();
+        let hud = &with_hud["hud"];
+        assert_eq!(hud["contextPct"], 12.0);
+        assert_eq!(hud["gitBranch"], "main");
+        assert_eq!(hud["claudeMdCount"], 1);
+        assert_eq!(hud["rulesCount"], 2);
+        assert_eq!(hud["mcpCount"], 3);
+    }
 
     #[test]
     fn empty_ps_output_means_all_dead_not_ps_failure() {
@@ -186,6 +570,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: false,
                 workers: vec![],
+                hud: None,
             },
             FleetAgent {
                 name: "r".to_string(),
@@ -198,6 +583,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: true,
                 workers: vec![],
+                hud: None,
             },
         ];
 
@@ -218,6 +604,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: true,
                 workers: vec![],
+                hud: None,
             },
             FleetAgent {
                 name: "S".to_string(),
@@ -230,6 +617,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: true,
                 workers: vec![],
+                hud: None,
             },
             FleetAgent {
                 name: "T".to_string(),
@@ -242,6 +630,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: true,
                 workers: vec![],
+                hud: None,
             },
         ];
         let worktrees = vec![
@@ -273,6 +662,7 @@ mod tests {
             updated_at_ms: 0,
             alive: true,
             workers: vec![],
+            hud: None,
         }];
 
         assert_eq!(worktrees, vec![non_git_root.to_string()]);
@@ -299,6 +689,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: true,
                 workers: vec![],
+                hud: None,
             },
             FleetAgent {
                 name: "DEAD".to_string(),
@@ -311,6 +702,7 @@ mod tests {
                 updated_at_ms: 0,
                 alive: false,
                 workers: vec![],
+                hud: None,
             },
         ];
 
@@ -428,20 +820,24 @@ fn live_fleet_agents() -> Vec<FleetAgent> {
         if pid_for_kill <= 0 {
             continue;
         }
+        let session_id = session["sessionId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let cwd = session["cwd"].as_str().unwrap_or_default().to_string();
+        let hud = hud_for(&session_id, &cwd);
         agents.push(FleetAgent {
             name: name.to_string(),
             model: None,
             pid,
-            session_id: session["sessionId"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            cwd: session["cwd"].as_str().unwrap_or_default().to_string(),
+            session_id,
+            cwd,
             status: session["status"].as_str().unwrap_or_default().to_string(),
             kind: session["kind"].as_str().unwrap_or_default().to_string(),
             updated_at_ms: session["updatedAt"].as_i64().unwrap_or_default(),
             alive: false,
             workers: vec![],
+            hud,
         });
     }
     if agents.is_empty() {
@@ -651,6 +1047,7 @@ pub(crate) fn fleet_roster() -> Vec<FleetAgent> {
             updated_at_ms: 0,
             alive: false,
             workers: orphaned,
+            hud: None,
         });
     }
     agents
