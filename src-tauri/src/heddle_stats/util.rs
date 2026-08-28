@@ -144,14 +144,19 @@ pub(crate) fn run_with_timeout(
     let drain = |pipe: Option<std::process::ChildStdout>,
                  err: Option<std::process::ChildStderr>| {
         std::thread::spawn(move || {
-            let mut out = String::new();
+            // Drain raw bytes then lossy-decode. `read_to_string` is STRICT: on any non-UTF-8 byte
+            // it errors AND leaves the buffer empty, so a single non-UTF-8 path in `git status`
+            // output would silently empty the WHOLE stream (a dirty repo reads clean). `read_to_end`
+            // + `from_utf8_lossy` preserves the rest, matching the prior `from_utf8_lossy` in
+            // `git::run_git` (HED-416 review, finding 1).
+            let mut bytes = Vec::new();
             if let Some(mut p) = pipe {
-                let _ = p.read_to_string(&mut out);
+                let _ = p.read_to_end(&mut bytes);
             }
             if let Some(mut e) = err {
-                let _ = e.read_to_string(&mut out);
+                let _ = e.read_to_end(&mut bytes);
             }
-            out
+            String::from_utf8_lossy(&bytes).into_owned()
         })
     };
     let out_t = drain(child.stdout.take(), None);

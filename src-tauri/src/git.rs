@@ -157,8 +157,13 @@ impl GitStatus {
     }
 }
 
-/// Maximum wall-clock time for read-only Git probes.
-const GIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Wall-clock bound for read-only Git probes. A wedged git (stalled network mount, hung fsmonitor)
+/// is effectively infinite, so any finite bound is strictly better than the prior unbounded wait;
+/// on timeout `run_git` yields `None`, which callers treat as no-data (e.g. `is_repo=false`,
+/// `has_changes=false`). Kept generous (15s) so a legitimately-slow cold `status`/`worktree list`
+/// on a large repo is not misread as absent — only a genuine stall exceeds it (HED-416 review,
+/// finding 2).
+const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn git_command(path: &str, args: &[&str]) -> Command {
     let mut command = crate::host::command("git");
@@ -170,12 +175,16 @@ fn git_command(path: &str, args: &[&str]) -> Command {
     command
 }
 
-fn run_git_command(command: Command) -> Option<String> {
-    let (ok, stdout, _) = crate::heddle_stats::run_with_timeout(command, GIT_TIMEOUT).ok()?;
+fn run_git_command_with(command: Command, budget: Duration) -> Option<String> {
+    let (ok, stdout, _) = crate::heddle_stats::run_with_timeout(command, budget).ok()?;
     if !ok {
         return None;
     }
     Some(stdout.trim().to_string())
+}
+
+fn run_git_command(command: Command) -> Option<String> {
+    run_git_command_with(command, GIT_TIMEOUT)
 }
 
 /// Run Git in a directory and return trimmed stdout on success.
@@ -1753,11 +1762,27 @@ mod merge_tests {
     #[cfg(unix)]
     #[test]
     fn run_git_command_returns_none_after_timeout() {
+        // A budget shorter than the child's runtime is reported as a timeout (Err) and mapped to
+        // None — the anti-hang guarantee. Uses a short budget so it doesn't wait the real
+        // GIT_TIMEOUT.
         let mut command = crate::host::command("sh");
-        let sleep_secs = (GIT_TIMEOUT.as_secs() + 1).to_string();
-        command.args(["-c", &format!("sleep {sleep_secs}")]);
+        command.args(["-c", "sleep 2"]);
+        assert_eq!(run_git_command_with(command, Duration::from_millis(200)), None);
+    }
 
-        assert_eq!(run_git_command(command), None);
+    #[cfg(unix)]
+    #[test]
+    fn run_git_command_lossy_decodes_non_utf8_output() {
+        // Finding 1 (HED-416 review): non-UTF-8 Git output must be lossy-decoded, not silently
+        // emptied. Emit raw bytes 0xFF 0xFE; the prior strict read_to_string returned "" for the
+        // whole stream, which would make a dirty repo with a non-UTF-8 path read as clean.
+        let mut command = crate::host::command("sh");
+        command.args(["-c", "printf '\\377\\376'"]);
+        assert_eq!(
+            run_git_command(command).as_deref().map(str::is_empty),
+            Some(false),
+            "non-UTF-8 output must be lossy-decoded to a non-empty string"
+        );
     }
 
     #[test]
