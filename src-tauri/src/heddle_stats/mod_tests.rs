@@ -298,15 +298,12 @@ fn headless_limits_runs_a_due_codex_helper_and_merges_its_fresh_cache() {
     let stale = include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")
         .replace("1786822350.4144561", "1");
     std::fs::write(&cache, stale).unwrap();
-    let fresh = include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")
-        .replace('"', "\\\"");
+    let fixture = dir.path().join("fresh-cache.json");
+    std::fs::write(&fixture, include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")).unwrap();
     let helper = dir.path().join("claudex-usage");
     std::fs::write(
         &helper,
-        format!(
-            "#!/bin/sh\nprintf '%s' \"{fresh}\" > '{}'\n",
-            cache.display()
-        ),
+        format!("#!/bin/sh\ncat '{}' > '{}'\n", fixture.display(), cache.display()),
     )
     .unwrap();
     std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -382,18 +379,23 @@ fn headless_codex_timeout_returns_promptly_and_keeps_the_mirror_candidate_absent
 
 #[test]
 fn headless_limits_merges_a_not_due_gemini_snapshot() {
+    #[cfg(unix)] use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let snapshot = dir.path().join("gemini.json");
     let agy: serde_json::Value = serde_json::from_str(include_str!("../../tests/fixtures/heddle_stats/agy-quota.json")).unwrap();
     let now = 1_786_824_000;
     write_json_atomic(&snapshot, &gemini::snapshot_from_agy(&agy["command"]["data"], now - 1)).unwrap();
+    let marker = dir.path().join("agy-ran");
+    let agy = dir.path().join("agy");
+    #[cfg(unix)] { std::fs::write(&agy, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap(); std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap(); }
     let merged = refresh_headless_limits_with_paths(
         serde_json::json!({"limits":[{"provider":"gemini","marker":"old"}]}),
         None, None, &dir.path().join("missing-codex"), &dir.path().join("missing-helper"),
-        &snapshot, true, "missing-agy", dir.path(), now,
+        &snapshot, true, &agy.to_string_lossy(), dir.path(), now,
     ).unwrap();
     assert_eq!(merged["limits"][0]["provider"], "gemini");
     assert_eq!(merged["limits"][0]["capturedAt"], now - 1);
+    assert!(!marker.exists(), "not-due snapshot must not spawn agy");
 }
 
 #[cfg(unix)]
@@ -419,9 +421,10 @@ fn headless_limits_does_not_spawn_blocked_gemini_and_retains_existing_entry() {
 fn headless_limits_runs_due_gemini_and_merges_its_new_snapshot() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let fixture = include_str!("../../tests/fixtures/heddle_stats/agy-quota.json").replace('"', "\\\"");
+    let fixture = dir.path().join("agy-quota.json");
+    std::fs::write(&fixture, include_str!("../../tests/fixtures/heddle_stats/agy-quota.json")).unwrap();
     let agy = dir.path().join("agy");
-    std::fs::write(&agy, format!("#!/bin/sh\nprintf '%s' \"{fixture}\"\n")).unwrap();
+    std::fs::write(&agy, format!("#!/bin/sh\ncat '{}'\n", fixture.display())).unwrap();
     std::fs::set_permissions(&agy, std::fs::Permissions::from_mode(0o755)).unwrap();
     let snapshot = dir.path().join("gemini.json");
     let now = 1_786_824_000;
@@ -432,6 +435,7 @@ fn headless_limits_runs_due_gemini_and_merges_its_new_snapshot() {
     ).unwrap();
     assert_eq!(merged["limits"][0]["provider"], "gemini");
     assert_eq!(merged["limits"][0]["capturedAt"], now);
+    assert!(merged["limits"][0]["windows"][0]["usedPercentage"].is_number());
 }
 
 #[test]
@@ -450,6 +454,70 @@ fn headless_limits_keeps_best_effort_provider_blocks_when_both_refreshes_fail() 
     assert!(limits.iter().any(|l| l["provider"] == "cursor"));
     assert!(limits.iter().any(|l| l["marker"] == "codex"));
     assert!(limits.iter().any(|l| l["marker"] == "gemini"));
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_codex_empty_refresh_retains_but_mixed_refresh_replaces() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[]}"#).unwrap();
+    let fresh = dir.path().join("fresh.json");
+    std::fs::write(&fresh, r#"{"fetched_at":1000,"mode":"lb","payload":[{"email":"a@b.com","data":null}]}"#).unwrap();
+    let helper = dir.path().join("helper");
+    std::fs::write(&helper, format!("#!/bin/sh\ncat '{}' > '{}'\n", fresh.display(), cache.display())).unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let inputs = HeadlessRefreshInputs { codex_cache:&cache, codex_helper:&helper, codex_timeout:std::time::Duration::from_secs(10), gemini_snapshot:&dir.path().join("gemini"), gemini_profile_exists:false, gemini_bin:"missing", gemini_work_dir:dir.path(), now:1000 };
+    let old = serde_json::json!({"limits":[{"provider":"codex","capturedAt":7,"sevenDay":{"usedPercentage":81},"accounts":[]}]});
+    let retained = refresh_headless_limits(old.clone(), None, None, inputs).unwrap();
+    assert_eq!(retained["limits"][0], old["limits"][0]);
+    let source: serde_json::Value = serde_json::from_str(include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")).unwrap();
+    let mixed = serde_json::json!({"fetched_at":1000,"mode":"lb","payload":[{"email":"a@b.com","data":null}, source["payload"][0].clone()]});
+    std::fs::write(&fresh, mixed.to_string()).unwrap();
+    std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[]}"#).unwrap();
+    let inputs = HeadlessRefreshInputs { codex_cache:&cache, codex_helper:&helper, codex_timeout:std::time::Duration::from_secs(10), gemini_snapshot:&dir.path().join("gemini"), gemini_profile_exists:false, gemini_bin:"missing", gemini_work_dir:dir.path(), now:1000 };
+    let replaced = refresh_headless_limits(old, None, None, inputs).unwrap();
+    assert_ne!(replaced["limits"][0]["capturedAt"], 7);
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_timeout_and_missing_fetched_at_are_repaired_in_the_same_pass() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    let dir = tempfile::tempdir().unwrap(); let cache=dir.path().join("cache"); let helper=dir.path().join("helper");
+    std::fs::write(&cache, r#"{"mode":"lb"}"#).unwrap(); std::fs::write(&helper, "#!/bin/sh\nexec sleep 2\n").unwrap(); std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let started=Instant::now(); let inputs=HeadlessRefreshInputs { codex_cache:&cache,codex_helper:&helper,codex_timeout:Duration::from_millis(150),gemini_snapshot:&dir.path().join("gem"),gemini_profile_exists:false,gemini_bin:"missing",gemini_work_dir:dir.path(),now:1000};
+    let old=serde_json::json!({"limits":[{"provider":"codex","capturedAt":7}]}); let kept=refresh_headless_limits(old.clone(),None,None,inputs).unwrap(); assert!(started.elapsed()<Duration::from_secs(1)); assert_eq!(kept["limits"][0],old["limits"][0]);
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_missing_fetched_at_is_due_and_the_fresh_cache_merges() {
+    // F5 (HED-421 review): a cache file with no numeric `fetched_at` must count as DUE in the headless
+    // path — the helper runs and its fresh data lands in the same pass (a false-negative due check
+    // would leave a junk cache unrepaired forever).
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(&cache, r#"{"mode":"lb"}"#).unwrap();
+    let fixture = dir.path().join("fresh-cache.json");
+    std::fs::write(&fixture, include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json")).unwrap();
+    let helper = dir.path().join("claudex-usage");
+    std::fs::write(&helper, format!("#!/bin/sh\ncat '{}' > '{}'\n", fixture.display(), cache.display())).unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let inputs = HeadlessRefreshInputs {
+        codex_cache: &cache, codex_helper: &helper, codex_timeout: std::time::Duration::from_secs(10),
+        gemini_snapshot: &dir.path().join("gemini"), gemini_profile_exists: false, gemini_bin: "missing",
+        gemini_work_dir: dir.path(), now: 1_786_824_000,
+    };
+    let merged = refresh_headless_limits(
+        serde_json::json!({"limits":[{"provider":"codex","capturedAt":7,"marker":"junk-era"}]}), None, None, inputs,
+    ).unwrap();
+    assert_eq!(merged["limits"][0]["provider"], "codex");
+    assert_eq!(merged["limits"][0]["capturedAt"], 1_786_822_350, "fresh fixture data must replace the junk-era block");
+    assert!(merged["limits"][0]["marker"].is_null());
 }
 
 #[test]

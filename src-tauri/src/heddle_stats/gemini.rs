@@ -28,7 +28,10 @@
 //! block stops automatic refreshes until a person intervenes. Cost of being wrong here is a stale
 //! gauge; cost of being wrong the other way is hijacking the user's browser on a timer.
 //!
-//! COST: ~3s wall clock and a few Google round trips per run, so it never runs inline. The Tauri
+//! COST: ~3s wall clock and a few Google round trips per run, so it never runs inline. The launchd
+//! headless path makes ONE foreground `AGY_TIMEOUT`-bounded attempt per run because launchd kills
+//! detached children with the CLI job's process group on exit; the long-lived GUI keeps its detached gate.
+//! The Tauri
 //! command reads the snapshot `~/.heddle/usage/gemini.json` (tap format + extras) and, when it is
 //! older than `REFRESH_AFTER_SECS`, kicks ONE detached refresh thread (`agy … --log-file /dev/null`
 //! so it doesn't leave a log file per run) that rewrites the snapshot atomically. Failures are

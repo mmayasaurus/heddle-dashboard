@@ -613,7 +613,7 @@ pub(crate) fn merge_claude_into_limits(
 }
 
 /// Synchronously refresh Cursor, Codex, and Gemini then update `limits.json` once, without an
-/// AppCtx. This launchd path must wait for its bounded Codex (20s) and Gemini (45s) children because
+/// AppCtx. This launchd path must wait for its bounded Codex (45s) and Gemini (45s) children because
 /// launchd kills the job's process group on exit; even the worst case stays far below the 300s interval.
 /// Claude is re-derived from its captures (HED-348) but is never refreshed here.
 pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
@@ -633,36 +633,38 @@ pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
         })
         .and_then(|claude| claude["activeAccount"].as_str())
         .map(str::to_string);
-    let merged = refresh_headless_limits_with_paths(
-        existing,
-        cursor::limit(now),
-        claude::limit_preserving_active(active.as_deref(), now),
-        &home().join(codex::CACHE_REL),
-        &home().join(codex::HELPER_REL),
-        &usage_dir().join("gemini.json"),
-        gemini::agy_profile_exists(),
-        &headless_agy_bin(),
-        &usage_dir(),
-        now,
-    )?;
+    let codex_cache = home().join(codex::CACHE_REL);
+    let codex_helper = home().join(codex::HELPER_REL);
+    let gemini_snapshot = usage_dir().join("gemini.json");
+    let gemini_bin = headless_agy_bin();
+    let work_dir = usage_dir();
+    let merged = refresh_headless_limits(existing, cursor::limit(now), claude::limit_preserving_active(active.as_deref(), now), HeadlessRefreshInputs {
+        codex_cache: &codex_cache, codex_helper: &codex_helper, codex_timeout: codex::HEADLESS_REFRESH_TIMEOUT,
+        gemini_snapshot: &gemini_snapshot, gemini_profile_exists: gemini::agy_profile_exists(), gemini_bin: &gemini_bin,
+        gemini_work_dir: &work_dir, now,
+    })?;
     write_json_atomic(&path, &merged)?;
     Ok(fetched)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn refresh_headless_limits_with_paths(
+struct HeadlessRefreshInputs<'a> {
+    codex_cache: &'a Path,
+    codex_helper: &'a Path,
+    codex_timeout: std::time::Duration,
+    gemini_snapshot: &'a Path,
+    gemini_profile_exists: bool,
+    gemini_bin: &'a str,
+    gemini_work_dir: &'a Path,
+    now: i64,
+}
+
+fn refresh_headless_limits(
     existing: serde_json::Value,
     fresh_cursor: Option<ProviderLimit>,
     fresh_claude: Option<ProviderLimit>,
-    codex_cache: &Path,
-    codex_helper: &Path,
-    gemini_snapshot: &Path,
-    gemini_profile_exists: bool,
-    gemini_bin: &str,
-    gemini_work_dir: &Path,
-    now: i64,
+    inputs: HeadlessRefreshInputs<'_>,
 ) -> Result<serde_json::Value, String> {
-    let codex = match codex::refresh_and_limit_with_paths(codex_cache, codex_helper, now) {
+    let codex = match codex::refresh_and_limit_with_paths_and_timeout(inputs.codex_cache, inputs.codex_helper, inputs.now, inputs.codex_timeout) {
         Ok(limit) => limit,
         Err(why) => {
             eprintln!("heddle: codex refresh skipped: {why}");
@@ -670,16 +672,12 @@ fn refresh_headless_limits_with_paths(
         }
     };
     let gemini = match gemini::refresh_and_limit_with_paths(
-        gemini_snapshot,
-        gemini_profile_exists,
-        gemini_bin,
-        gemini_work_dir,
-        now,
+        inputs.gemini_snapshot, inputs.gemini_profile_exists, inputs.gemini_bin, inputs.gemini_work_dir, inputs.now,
     ) {
         Ok(limit) => limit,
         Err(why) => {
             eprintln!("heddle: gemini refresh skipped: {why}");
-            gemini::limit_from_snapshot_path(gemini_snapshot, gemini_profile_exists, now)
+            gemini::limit_from_snapshot_path(inputs.gemini_snapshot, inputs.gemini_profile_exists, inputs.now)
         }
     };
     let has_capture = |limit: &ProviderLimit| {
@@ -689,17 +687,34 @@ fn refresh_headless_limits_with_paths(
                 .as_ref()
                 .is_some_and(|rows| rows.iter().any(|row| row.captured_at.is_some()))
     };
-    let merged = merge_cursor_into_limits(existing, fresh_cursor, now);
-    let merged = merge_claude_into_limits(merged, fresh_claude, now);
-    let merged = merge_provider_into_limits(merged, "codex", codex, now, false, has_capture);
+    let codex_has_usage = |limit: &ProviderLimit| limit.accounts.as_ref().is_some_and(|rows| rows.iter().any(|row| {
+        !row.note_codes.iter().any(|code| code == codex::CODE_ACCOUNT_FETCH_FAILED)
+            && (row.five_hour.used_percentage.is_some() || row.seven_day.used_percentage.is_some() || row.windows.iter().any(|window| window.used_percentage.is_some()))
+    }));
+    let merged = merge_cursor_into_limits(existing, fresh_cursor, inputs.now);
+    let merged = merge_claude_into_limits(merged, fresh_claude, inputs.now);
+    let merged = merge_provider_into_limits(merged, "codex", codex, inputs.now, false, codex_has_usage);
     Ok(merge_provider_into_limits(
         merged,
         "gemini",
         gemini,
-        now,
+        inputs.now,
         false,
         has_capture,
     ))
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn refresh_headless_limits_with_paths(
+    existing: serde_json::Value, fresh_cursor: Option<ProviderLimit>, fresh_claude: Option<ProviderLimit>,
+    codex_cache: &Path, codex_helper: &Path, gemini_snapshot: &Path, gemini_profile_exists: bool,
+    gemini_bin: &str, gemini_work_dir: &Path, now: i64,
+) -> Result<serde_json::Value, String> {
+    refresh_headless_limits(existing, fresh_cursor, fresh_claude, HeadlessRefreshInputs {
+        codex_cache, codex_helper, codex_timeout: codex::HEADLESS_REFRESH_TIMEOUT,
+        gemini_snapshot, gemini_profile_exists, gemini_bin, gemini_work_dir, now,
+    })
 }
 
 /// Reads the last mirrored Claude account caps without refreshing or writing any provider state.
