@@ -331,7 +331,7 @@ fn cached_roster() -> Vec<crate::heddle_stats::roster::FleetAgent> {
             return roster.clone();
         }
     }
-    let roster = crate::heddle_stats::roster::fleet_roster();
+    let roster = crate::heddle_stats::roster::fleet_roster(false);
     *cached = Some((Instant::now(), roster.clone()));
     roster
 }

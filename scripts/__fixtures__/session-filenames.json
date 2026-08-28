@@ -1,0 +1,22 @@
+[
+  {
+    "sessionId": "3b1e4c7a-0000-4000-8000-000000000000",
+    "file": "3b1e4c7a-0000-4000-8000-000000000000.json"
+  },
+  {
+    "sessionId": "session/needs sanitizing",
+    "file": "session_needs_sanitizing-58e0a636.json"
+  },
+  {
+    "sessionId": "café",
+    "file": "caf_-850f7dc4.json"
+  },
+  {
+    "sessionId": "sess😀",
+    "file": "sess__-ee7cb0f6.json"
+  },
+  {
+    "sessionId": "../nested/session",
+    "file": ".._nested_session-1adf6177.json"
+  }
+]
