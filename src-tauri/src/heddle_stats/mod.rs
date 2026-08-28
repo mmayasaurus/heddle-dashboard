@@ -615,34 +615,23 @@ pub(crate) fn merge_claude_into_limits(
 /// Synchronously refresh Cursor, Codex, and Gemini then update `limits.json` once, without an
 /// AppCtx. This launchd path must wait for its bounded Codex (45s) and Gemini (45s) children because
 /// launchd kills the job's process group on exit; even the worst case stays far below the 300s interval.
+/// The slow provider files are refreshed before reading the mirror, so a concurrent GUI write is only
+/// exposed to the same millisecond-scale read/merge/write window as the former Cursor-only path.
 /// Claude is re-derived from its captures (HED-348) but is never refreshed here.
 pub(crate) fn refresh_cursor_limits() -> Result<bool, String> {
     let fetched = cursor_fetch::fetch_and_write();
     let now = now_secs();
     let path = usage_dir().join("limits.json");
-    let existing = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or(serde_json::Value::Null);
-    let active = existing["limits"]
-        .as_array()
-        .and_then(|limits| {
-            limits
-                .iter()
-                .find(|limit| limit["provider"].as_str() == Some("claude"))
-        })
-        .and_then(|claude| claude["activeAccount"].as_str())
-        .map(str::to_string);
     let codex_cache = home().join(codex::CACHE_REL);
     let codex_helper = home().join(codex::HELPER_REL);
     let gemini_snapshot = usage_dir().join("gemini.json");
     let gemini_bin = headless_agy_bin();
     let work_dir = usage_dir();
-    let merged = refresh_headless_limits(existing, cursor::limit(now), claude::limit_preserving_active(active.as_deref(), now), HeadlessRefreshInputs {
+    let merged = refresh_headless_limits_at_path(&path, HeadlessRefreshInputs {
         codex_cache: &codex_cache, codex_helper: &codex_helper, codex_timeout: codex::HEADLESS_REFRESH_TIMEOUT,
         gemini_snapshot: &gemini_snapshot, gemini_profile_exists: gemini::agy_profile_exists(), gemini_bin: &gemini_bin,
         gemini_work_dir: &work_dir, now,
-    })?;
+    }, || cursor::limit(now), |active| claude::limit_preserving_active(active, now))?;
     write_json_atomic(&path, &merged)?;
     Ok(fetched)
 }
@@ -658,17 +647,23 @@ struct HeadlessRefreshInputs<'a> {
     now: i64,
 }
 
+#[cfg(test)]
 fn refresh_headless_limits(
     existing: serde_json::Value,
     fresh_cursor: Option<ProviderLimit>,
     fresh_claude: Option<ProviderLimit>,
     inputs: HeadlessRefreshInputs<'_>,
 ) -> Result<serde_json::Value, String> {
+    let (codex, gemini) = refresh_headless_sources(&inputs);
+    Ok(merge_headless_limits(existing, fresh_cursor, fresh_claude, codex, gemini, inputs.now))
+}
+
+fn refresh_headless_sources(inputs: &HeadlessRefreshInputs<'_>) -> (Option<ProviderLimit>, Option<ProviderLimit>) {
     let codex = match codex::refresh_and_limit_with_paths_and_timeout(inputs.codex_cache, inputs.codex_helper, inputs.now, inputs.codex_timeout) {
         Ok(limit) => limit,
         Err(why) => {
             eprintln!("heddle: codex refresh skipped: {why}");
-            None
+            codex::limit_from_cache_and_helper_path(inputs.codex_cache, inputs.codex_helper, inputs.now, false)
         }
     };
     let gemini = match gemini::refresh_and_limit_with_paths(
@@ -680,6 +675,17 @@ fn refresh_headless_limits(
             gemini::limit_from_snapshot_path(inputs.gemini_snapshot, inputs.gemini_profile_exists, inputs.now)
         }
     };
+    (codex, gemini)
+}
+
+fn merge_headless_limits(
+    existing: serde_json::Value,
+    fresh_cursor: Option<ProviderLimit>,
+    fresh_claude: Option<ProviderLimit>,
+    codex: Option<ProviderLimit>,
+    gemini: Option<ProviderLimit>,
+    now: i64,
+) -> serde_json::Value {
     let has_capture = |limit: &ProviderLimit| {
         limit.captured_at.is_some()
             || limit
@@ -691,17 +697,36 @@ fn refresh_headless_limits(
         !row.note_codes.iter().any(|code| code == codex::CODE_ACCOUNT_FETCH_FAILED)
             && (row.five_hour.used_percentage.is_some() || row.seven_day.used_percentage.is_some() || row.windows.iter().any(|window| window.used_percentage.is_some()))
     }));
-    let merged = merge_cursor_into_limits(existing, fresh_cursor, inputs.now);
-    let merged = merge_claude_into_limits(merged, fresh_claude, inputs.now);
-    let merged = merge_provider_into_limits(merged, "codex", codex, inputs.now, false, codex_has_usage);
-    Ok(merge_provider_into_limits(
+    let merged = merge_cursor_into_limits(existing, fresh_cursor, now);
+    let merged = merge_claude_into_limits(merged, fresh_claude, now);
+    let merged = merge_provider_into_limits(merged, "codex", codex, now, false, codex_has_usage);
+    merge_provider_into_limits(
         merged,
         "gemini",
         gemini,
-        inputs.now,
+        now,
         false,
         has_capture,
-    ))
+    )
+}
+
+fn refresh_headless_limits_at_path(
+    path: &Path,
+    inputs: HeadlessRefreshInputs<'_>,
+    fresh_cursor: impl FnOnce() -> Option<ProviderLimit>,
+    fresh_claude: impl FnOnce(Option<&str>) -> Option<ProviderLimit>,
+) -> Result<serde_json::Value, String> {
+    let (codex, gemini) = refresh_headless_sources(&inputs);
+    let existing = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let active = existing["limits"]
+        .as_array()
+        .and_then(|limits| limits.iter().find(|limit| limit["provider"].as_str() == Some("claude")))
+        .and_then(|claude| claude["activeAccount"].as_str())
+        .map(str::to_string);
+    Ok(merge_headless_limits(existing, fresh_cursor(), fresh_claude(active.as_deref()), codex, gemini, inputs.now))
 }
 
 #[cfg(test)]

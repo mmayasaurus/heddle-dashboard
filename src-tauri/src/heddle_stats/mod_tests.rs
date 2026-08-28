@@ -377,6 +377,112 @@ fn headless_codex_timeout_returns_promptly_and_keeps_the_mirror_candidate_absent
     assert!(started.elapsed() < Duration::from_secs(1), "timeout must kill the child promptly");
 }
 
+#[cfg(unix)]
+#[test]
+fn headless_timeout_kills_the_helper_process_group_and_returns_without_waiting_for_inherited_pipes() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let pid_path = dir.path().join("grandchild.pid");
+    let helper = dir.path().join("process-group-helper");
+    std::fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\nsleep 3 &\necho $! > '{}'\nexec sleep 3\n",
+            pid_path.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let started = Instant::now();
+    // A full parallel suite can delay a fresh shell for more than 200 ms before it reaches its
+    // first instruction. One second still distinguishes the former three-second pipe-drain wedge.
+    let error = std::thread::spawn(move || {
+        run_with_timeout(Command::new(&helper), Duration::from_secs(1))
+    })
+    .join()
+    .unwrap()
+    .unwrap_err();
+    assert!(error.starts_with("timed out after"));
+    assert!(started.elapsed() < Duration::from_secs(2), "timeout must not wait on inherited pipes");
+
+    let grandchild = std::fs::read_to_string(pid_path)
+        .expect("helper never started its grandchild")
+        .trim()
+        .to_string();
+    assert!(
+        !Command::new("kill").args(["-0", &grandchild]).status().unwrap().success(),
+        "timeout must kill the process group, including the grandchild"
+    );
+}
+
+#[test]
+fn headless_codex_refresh_failure_still_merges_a_parseable_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(
+        &cache,
+        include_str!("../../tests/fixtures/heddle_stats/claudex-usage-cache.lb.json"),
+    )
+    .unwrap();
+
+    let merged = refresh_headless_limits_with_paths(
+        serde_json::json!({"limits":[{"provider":"codex","capturedAt":1,"marker":"older-mirror"}]}),
+        None, None, &cache, &dir.path().join("missing-helper"),
+        &dir.path().join("gemini.json"), false, "missing-agy", dir.path(), 1_786_824_000,
+    ).unwrap();
+
+    let codex = merged["limits"].as_array().unwrap().iter().find(|limit| limit["provider"] == "codex").unwrap();
+    assert_eq!(codex["capturedAt"], 1_786_822_350, "the parseable cache must win over an older mirror block");
+}
+
+#[test]
+fn headless_codex_refresh_failure_with_no_usage_retains_the_mirror_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[{"email":"a@b.com","data":null}]}"#).unwrap();
+    let existing = serde_json::json!({"limits":[{"provider":"codex","capturedAt":7,"marker":"keep"}]});
+
+    let merged = refresh_headless_limits_with_paths(
+        existing.clone(), None, None, &cache, &dir.path().join("missing-helper"),
+        &dir.path().join("gemini.json"), false, "missing-agy", dir.path(), 1_000,
+    ).unwrap();
+
+    assert_eq!(merged["limits"][0], existing["limits"][0]);
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_limits_reads_the_mirror_after_slow_refreshes_finish() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("cache.json");
+    std::fs::write(&cache, r#"{"fetched_at":1,"mode":"lb","payload":[]}"#).unwrap();
+    let limits = dir.path().join("limits.json");
+    std::fs::write(&limits, r#"{"limits":[{"provider":"claude","marker":"old"}]}"#).unwrap();
+    let helper = dir.path().join("helper");
+    std::fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\nprintf '%s' '{}' > '{}'\n",
+            r#"{"limits":[{"provider":"claude","marker":"written-during-refresh"}]}"#,
+            limits.display(),
+        ),
+    ).unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let inputs = HeadlessRefreshInputs {
+        codex_cache: &cache, codex_helper: &helper, codex_timeout: std::time::Duration::from_secs(1),
+        gemini_snapshot: &dir.path().join("gemini.json"), gemini_profile_exists: false, gemini_bin: "missing-agy",
+        gemini_work_dir: dir.path(), now: 1_000,
+    };
+
+    let merged = refresh_headless_limits_at_path(&limits, inputs, || None, |_| None).unwrap();
+    assert_eq!(merged["limits"][0]["marker"], "written-during-refresh");
+}
+
 #[test]
 fn headless_limits_merges_a_not_due_gemini_snapshot() {
     #[cfg(unix)] use std::os::unix::fs::PermissionsExt;

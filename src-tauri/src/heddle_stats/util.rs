@@ -129,12 +129,18 @@ fn sweep_stale_tmp(target: &Path) {
 }
 
 /// Run a command with a wall-clock budget, returning (exit success, stdout, stderr). The child is
-/// killed on timeout. stdout/stderr are drained on threads so a chatty child can't deadlock us.
+/// killed on timeout. On Unix the child has its own process group, so timeout also kills descendants
+/// that inherited stdout/stderr. stdout/stderr are drained on threads so a chatty child can't deadlock us.
 pub(crate) fn run_with_timeout(
     mut cmd: Command,
     budget: Duration,
 ) -> Result<(bool, String, String), String> {
     use std::process::Stdio;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -161,6 +167,13 @@ pub(crate) fn run_with_timeout(
         match child.try_wait() {
             Ok(Some(st)) => break Ok(st),
             Ok(None) if started.elapsed() >= budget => {
+                #[cfg(unix)]
+                unsafe {
+                    // The child is the process-group leader because `process_group(0)` above.
+                    // Kill the group before reaping it so descendants cannot retain the pipe ends.
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                #[cfg(not(unix))]
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(format!("timed out after {}s", budget.as_secs()));
@@ -169,9 +182,11 @@ pub(crate) fn run_with_timeout(
             Err(e) => break Err(format!("wait failed: {e}")),
         }
     };
+    // Do not join drainers after an error: a malformed descendant may still hold an inherited pipe.
+    // Dropping their JoinHandles detaches them, while returning promptly to the caller.
+    let st = status?;
     let stdout = out_t.join().unwrap_or_default();
     let stderr = err_t.join().unwrap_or_default();
-    let st = status?;
     Ok((st.success(), stdout, stderr))
 }
 
