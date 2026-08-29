@@ -129,12 +129,18 @@ fn sweep_stale_tmp(target: &Path) {
 }
 
 /// Run a command with a wall-clock budget, returning (exit success, stdout, stderr). The child is
-/// killed on timeout. stdout/stderr are drained on threads so a chatty child can't deadlock us.
+/// killed on timeout. On Unix the child has its own process group, so timeout also kills descendants
+/// that inherited stdout/stderr. stdout/stderr are drained on threads so a chatty child can't deadlock us.
 pub(crate) fn run_with_timeout(
     mut cmd: Command,
     budget: Duration,
 ) -> Result<(bool, String, String), String> {
     use std::process::Stdio;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -161,6 +167,16 @@ pub(crate) fn run_with_timeout(
         match child.try_wait() {
             Ok(Some(st)) => break Ok(st),
             Ok(None) if started.elapsed() >= budget => {
+                #[cfg(unix)]
+                unsafe { // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage -- FFI kill(2) has no safe std wrapper; SAFETY below.
+                    // SAFETY: `process_group(0)` above made the child its own process-group leader, so
+                    // its PID (`child.id()`) is also the group id and negating it targets the whole
+                    // group. The child is still unreaped here (`try_wait` returned `Ok(None)`), so the
+                    // OS cannot recycle that PID before this call. SIGKILL to the group also reaps
+                    // descendants that inherited the stdout/stderr pipe ends — the point of the group kill.
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                #[cfg(not(unix))]
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(format!("timed out after {}s", budget.as_secs()));
@@ -169,9 +185,11 @@ pub(crate) fn run_with_timeout(
             Err(e) => break Err(format!("wait failed: {e}")),
         }
     };
+    // Do not join drainers after an error: a malformed descendant may still hold an inherited pipe.
+    // Dropping their JoinHandles detaches them, while returning promptly to the caller.
+    let st = status?;
     let stdout = out_t.join().unwrap_or_default();
     let stderr = err_t.join().unwrap_or_default();
-    let st = status?;
     Ok((st.success(), stdout, stderr))
 }
 

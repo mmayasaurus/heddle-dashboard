@@ -24,7 +24,9 @@
 //! entry `stale` when it hasn't refreshed in 5 minutes (network down, expired login, helper missing).
 
 use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -34,11 +36,14 @@ use super::{
 };
 
 /// claudex-usage's cache file, relative to `$HOME`.
-const CACHE_REL: &str = ".local/state/claudex-usage-cache.json";
+pub(super) const CACHE_REL: &str = ".local/state/claudex-usage-cache.json";
 /// claudex-usage's refresh helper, relative to `$HOME`.
-const HELPER_REL: &str = ".local/bin/claudex-usage";
+pub(super) const HELPER_REL: &str = ".local/bin/claudex-usage";
 /// Kick `claudex-usage --refresh lb` when the cache is older than this (claudex's own TTL is 60s).
-const REFRESH_AFTER_SECS: f64 = 90.0;
+pub(super) const REFRESH_AFTER_SECS: f64 = 90.0;
+/// Headless launchd waits for one foreground helper attempt: up to four sequential 8-second account
+/// calls plus Python startup margin. Together with Gemini's 45-second budget this stays under 300s.
+pub(super) const HEADLESS_REFRESH_TIMEOUT: Duration = Duration::from_secs(45);
 /// Never kick more often than this, even if the cache never advances (helper broken / offline) —
 /// otherwise a 30s poll would spawn a failing child every tick.
 const KICK_COOLDOWN_SECS: i64 = 60;
@@ -101,6 +106,46 @@ pub(super) fn limit_from_cache_and_helper_path(
         maybe_refresh_at(&v, now, helper_path);
     }
     parse_cache(&v, now)
+}
+
+/// Headless-only refresh: unlike the GUI's detached kick, wait for one bounded helper run then
+/// parse the cache it wrote in this same process. Every path is injected for hermetic callers.
+pub(super) fn refresh_and_limit_with_paths(
+    cache_path: &Path,
+    helper_path: &Path,
+    now: i64,
+) -> Result<Option<ProviderLimit>, String> {
+    refresh_and_limit_with_paths_and_timeout(cache_path, helper_path, now, HEADLESS_REFRESH_TIMEOUT)
+}
+
+/// Test seam for the headless refresh's wall-clock budget.
+pub(super) fn refresh_and_limit_with_paths_and_timeout(
+    cache_path: &Path,
+    helper_path: &Path,
+    now: i64,
+    timeout: Duration,
+) -> Result<Option<ProviderLimit>, String> {
+    let before = std::fs::read_to_string(cache_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    if before.as_ref().is_none_or(|cache| headless_needs_refresh(cache, now)) {
+        let mut cmd = Command::new(helper_path);
+        cmd.args(["--refresh", "lb"]).env("PATH", augmented_path());
+        let (ok, _stdout, stderr) = super::run_with_timeout(cmd, timeout)?;
+        if !ok {
+            return Err(format!("helper exited non-zero: {}", stderr.trim()));
+        }
+    }
+    limit_from_cache_and_helper_path(cache_path, helper_path, now, false)
+        .ok_or_else(|| "cache missing or unparsable after refresh".to_string())
+        .map(Some)
+}
+
+/// Headless repair treats malformed freshness as due; the GUI preserves its detached-kick behavior.
+fn headless_needs_refresh(v: &Value, now: i64) -> bool {
+    v["fetched_at"]
+        .as_f64()
+        .is_none_or(|fetched| (now as f64) - fetched > REFRESH_AFTER_SECS)
 }
 
 /// Self-refresh: if the cache is older than `REFRESH_AFTER_SECS`, run `claudex-usage --refresh lb`

@@ -238,9 +238,10 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
   (`--verify acct2`, 2026-08-15) — the keeper only starts windows, never shifts them. `--dry-run`
   prints decisions. Never uses Fable/Opus.
 - **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd `io.heddle.cursor-refresh`,
-  every 5 min): runs the dashboard's `--refresh-provider-limits cursor` subcommand to fetch Cursor's
-  usage snapshot and merge its block into `~/.heddle/usage/limits.json`, keeping the cursor block
-  fresh independently of the FleetDrawer for out-of-app consumers (e.g. the Bugbot meter). The plist
+  every 5 min): runs the dashboard's `--refresh-provider-limits cursor` subcommand to fetch Cursor,
+  synchronously refresh Codex and Gemini, re-derive Claude, and write `~/.heddle/usage/limits.json`
+  once for out-of-app consumers (e.g. the Bugbot meter). Codex and Gemini each wait up to 45 seconds
+  because launchd otherwise kills detached children with the job's process group on CLI exit. The plist
   invokes a stable symlink `~/.local/bin/heddle-app` — a distinct name so it never shadows the JS
   `heddle` CLI — that the installer points at the built binary; repoint it at
   `Heddle.app/Contents/MacOS/heddle` when the dashboard ships as an app, no plist edit needed.
