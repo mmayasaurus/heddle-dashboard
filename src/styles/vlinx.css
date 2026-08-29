@@ -366,6 +366,8 @@ svg { display: block; }
 .fleet-agent-glyph.dead { color: var(--text-faint); }
 .fleet-agent-name { font-weight: 700; min-width: 22px; }
 .fleet-agent.dead .fleet-agent-name { color: var(--text-faint); text-decoration: line-through; }
+.fleet-agent-hud { margin: 1px 0 2px 34px; font-size: 10.5px; color: var(--text-mid); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-agent-hud.stale { color: var(--text-faint); }
 .fleet-agent-model { color: var(--text-dim); font-size: 10.5px; max-width: 72px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .fleet-agent-status { color: var(--text-mid); font-size: 10.5px; min-width: 44px; }
 .fleet-agent-cwd { font-size: 10.5px; }

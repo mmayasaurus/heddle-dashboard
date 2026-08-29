@@ -103,6 +103,17 @@ interface FleetWorker {
   elapsedMs: number;
   stale: boolean;
 }
+interface Hud {
+  model?: string | null;
+  contextPct?: number | null;
+  capturedAt: number;
+  stale: boolean;
+  gitBranch?: string | null;
+  gitDirty: boolean;
+  claudeMdCount: number;
+  rulesCount: number;
+  mcpCount: number;
+}
 interface FleetAgent {
   name: string;
   model?: string | null;
@@ -114,6 +125,7 @@ interface FleetAgent {
   updatedAtMs: number;
   alive: boolean;
   workers: FleetWorker[];
+  hud?: Hud | null;
 }
 
 const POLL_MS = 30_000;
@@ -1047,6 +1059,24 @@ function shortModel(id: string): string {
   return truncateModelChip(id.split("-").slice(-2).join("-"));
 }
 
+/** Compact, live-updating statusline capture for one fleet agent. */
+function AgentHudLine({ hud }: { hud: Hud }) {
+  const t = useT();
+  return <LiveClock render={(now) => {
+    // Mirrors heddle_stats/roster.rs HUD_STALE_SECS; shipping staleAfterSecs in Hud is tracked in HED-431.
+    const stale = isStaleByAge(hud.capturedAt, 900, hud.stale, now);
+    // Caps await an account field on the capture (HED-431 follow-up).
+    const chunks = [
+      stale ? t("fleet.hudAge", fmtAgo(hud.capturedAt * 1_000, now)) : null,
+      hud.model ? t("fleet.hudModel", hud.model) : null,
+      hud.gitBranch ? t("fleet.hudGit", hud.gitBranch, hud.gitDirty) : null,
+      hud.contextPct != null ? t("fleet.hudContext", hud.contextPct) : null,
+      t("fleet.hudResources", hud.claudeMdCount, hud.rulesCount, hud.mcpCount),
+    ].filter((chunk): chunk is string => chunk != null);
+    return <div className={"fleet-agent-hud" + (stale ? " stale" : "")} title={chunks.join(t("fleet.hudSeparator"))}>{chunks.join(t("fleet.hudSeparator"))}</div>;
+  }} />;
+}
+
 /**
  * One named agent (fleet tag) with its status; click to expand the workers it has in flight.
  * Status glyph: busy = solid accent, idle/waiting = dim ring, dead = struck.
@@ -1090,6 +1120,7 @@ function AgentRow({ a }: { a: FleetAgent }) {
           </span>
         )} />
       </div>
+      {a.hud && <AgentHudLine hud={a.hud} />}
       {openRow && hasChildren && (
         <div className="fleet-agent-workers">
           {a.workers.map((w) => (
