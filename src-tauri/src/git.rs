@@ -3,7 +3,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Read;
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -157,14 +157,21 @@ impl GitStatus {
     }
 }
 
-/// Run Git in a directory and return trimmed stdout on success.
-fn run_git(path: &str, args: &[&str]) -> Option<String> {
-    let output = crate::host::command("git")
+fn git_command(path: &str, args: &[&str]) -> Command {
+    let mut command = crate::host::command("git");
+    // Read-only probe: GIT_OPTIONAL_LOCKS=0 skips taking .git/index.lock, so a roster/pocket poll
+    // never collides with an agent's concurrent `git add`/`commit` in the same worktree.
+    command
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(path)
-        .args(args)
-        .output()
-        .ok()?;
+        .args(args);
+    command
+}
+
+/// Run Git in a directory and return trimmed stdout on success.
+fn run_git(path: &str, args: &[&str]) -> Option<String> {
+    let output = git_command(path, args).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1730,6 +1737,28 @@ pub fn file_diff(cwd: &str, path: &str) -> Result<FileDiff, String> {
 mod merge_tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn git_command_disables_optional_locks() {
+        assert!(git_command("/x", &["status"]).get_envs().any(|(key, value)| {
+            key == "GIT_OPTIONAL_LOCKS" && value == Some(std::ffi::OsStr::new("0"))
+        }));
+    }
+
+    #[test]
+    fn run_git_returns_current_branch_for_repository() {
+        let repo = init_repo();
+
+        assert_eq!(
+            run_git(
+                repo.to_str().expect("temporary repository path is UTF-8"),
+                &["rev-parse", "--abbrev-ref", "HEAD"],
+            ),
+            Some("main".to_string())
+        );
+
+        std::fs::remove_dir_all(repo).unwrap();
+    }
 
     /// Run a Git command in a directory and assert success.
     fn git(dir: &std::path::Path, args: &[&str]) {
