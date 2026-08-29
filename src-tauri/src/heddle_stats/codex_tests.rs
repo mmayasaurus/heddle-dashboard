@@ -75,6 +75,71 @@ fn additional_rate_limits_become_named_windows_keyed_by_metered_feature() {
 }
 
 #[test]
+fn a_named_short_window_promotes_to_the_account_five_hour_slot() {
+    let mut v = lb();
+    let window = &mut v["payload"][0]["data"]["additional_rate_limits"][0]["rate_limit"]
+        ["primary_window"];
+    window["used_percent"] = Value::from(42);
+    window["limit_window_seconds"] = Value::from(18_000);
+    window["reset_at"] = Value::from(1_786_840_042);
+
+    let l = parse_cache(&v, 1_786_822_400).unwrap();
+    let account = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(account.five_hour.used_percentage, Some(42.0));
+    assert_eq!(account.five_hour.resets_at, Some(1_786_840_042));
+    assert!(account
+        .windows
+        .iter()
+        .any(|window| window.id == "codex_bengalfox-5h" && window.used_percentage == Some(42.0)));
+}
+
+#[test]
+fn top_level_five_hour_window_wins_over_a_named_short_window() {
+    let mut v = lb();
+    v["payload"][0]["data"]["rate_limit"]["secondary_window"] = serde_json::json!({
+        "used_percent": 30,
+        "limit_window_seconds": 18_000,
+        "reset_at": 1_786_840_030
+    });
+    let named = &mut v["payload"][0]["data"]["additional_rate_limits"][0]["rate_limit"]
+        ["primary_window"];
+    named["used_percent"] = Value::from(90);
+    named["limit_window_seconds"] = Value::from(18_000);
+    named["reset_at"] = Value::from(1_786_840_090);
+
+    let l = parse_cache(&v, 1_786_822_400).unwrap();
+    let account = &l.accounts.as_ref().unwrap()[0];
+    assert_eq!(account.five_hour.used_percentage, Some(30.0));
+    assert_eq!(account.five_hour.resets_at, Some(1_786_840_030));
+}
+
+#[test]
+fn a_named_long_window_does_not_populate_the_five_hour_slot() {
+    let l = parse(LB_2_ACCOUNTS, 1_786_822_400);
+    assert_eq!(l.accounts.as_ref().unwrap()[0].five_hour, LimitWindow::default());
+    assert_eq!(l.five_hour, LimitWindow::default());
+}
+
+#[test]
+fn named_short_windows_bind_across_accounts_after_promotion() {
+    let mut v = lb();
+    for (account, used_percent, reset_at) in [
+        (0, 10, 1_786_840_010),
+        (1, 80, 1_786_840_080),
+    ] {
+        let window = &mut v["payload"][account]["data"]["additional_rate_limits"][0]
+            ["rate_limit"]["primary_window"];
+        window["used_percent"] = Value::from(used_percent);
+        window["limit_window_seconds"] = Value::from(18_000);
+        window["reset_at"] = Value::from(reset_at);
+    }
+
+    let l = parse_cache(&v, 1_786_822_400).unwrap();
+    assert_eq!(l.five_hour.used_percentage, Some(80.0));
+    assert_eq!(l.five_hour.resets_at, Some(1_786_840_080));
+}
+
+#[test]
 fn named_window_ids_fall_back_to_a_slug_then_position_and_never_collide_by_display_name() {
     let mut v = lb();
     let extra = &mut v["payload"][0]["data"]["additional_rate_limits"];

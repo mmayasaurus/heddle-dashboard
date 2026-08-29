@@ -335,7 +335,8 @@ fn account_from_wham(label: String, data: &Value) -> AccountLimit {
         };
     }
     let rl = &data["rate_limit"];
-    let (five_hour, seven_day) = windows_from_rate_limit(rl);
+    let (mut five_hour, seven_day) = windows_from_rate_limit(rl);
+    promote_five_hour_from_additional(&mut five_hour, data);
     let (note_codes, note) = account_notes(data);
     AccountLimit {
         id: String::new(),
@@ -367,12 +368,7 @@ fn additional_windows(data: &Value) -> Vec<NamedWindow> {
     for (i, e) in extra.iter().enumerate() {
         let name_opt = e["limit_name"].as_str().filter(|n| !n.trim().is_empty());
         let name = name_opt.unwrap_or("additional limit");
-        let key = e["metered_feature"]
-            .as_str()
-            .map(str::to_string)
-            .filter(|k| !k.is_empty())
-            .or_else(|| name_opt.map(slug).filter(|s| !s.is_empty()))
-            .unwrap_or_else(|| format!("additional-{i}"));
+        let key = additional_window_key(e, i);
         let (f, s) = windows_from_rate_limit(&e["rate_limit"]);
         for (win, tag) in [(f, "5h"), (s, "7d")] {
             if win.used_percentage.is_none() {
@@ -390,6 +386,59 @@ fn additional_windows(data: &Value) -> Vec<NamedWindow> {
         }
     }
     windows
+}
+
+/// Promote the highest-used short per-model window when the account-level rate limit has no 5h
+/// gauge. The stable named-window id breaks equal-usage ties deterministically.
+fn promote_five_hour_from_additional(five_hour: &mut LimitWindow, data: &Value) {
+    if five_hour.used_percentage.is_some() {
+        return;
+    }
+    let Some(extra) = data["additional_rate_limits"].as_array() else {
+        return;
+    };
+    let mut candidate: Option<(String, LimitWindow)> = None;
+    for (i, e) in extra.iter().enumerate() {
+        let key = additional_window_key(e, i);
+        for window_key in ["primary_window", "secondary_window"] {
+            let window = &e["rate_limit"][window_key];
+            let Some(secs) = window["limit_window_seconds"].as_i64().filter(|secs| *secs > 0)
+            else {
+                continue;
+            };
+            if secs >= FIVE_HOUR_MAX_SECS {
+                continue;
+            }
+            let id = format!("{key}-5h");
+            let limit = LimitWindow {
+                used_percentage: window["used_percent"].as_f64(),
+                resets_at: window["reset_at"].as_i64(),
+            };
+            let replaces = match &candidate {
+                None => true,
+                Some((best_id, best)) => {
+                    limit.used_percentage.unwrap_or(-1.0) > best.used_percentage.unwrap_or(-1.0)
+                        || (limit.used_percentage == best.used_percentage && id < *best_id)
+                }
+            };
+            if replaces {
+                candidate = Some((id, limit));
+            }
+        }
+    }
+    if let Some((_, limit)) = candidate {
+        *five_hour = limit;
+    }
+}
+
+fn additional_window_key(entry: &Value, index: usize) -> String {
+    let name_opt = entry["limit_name"].as_str().filter(|name| !name.trim().is_empty());
+    entry["metered_feature"]
+        .as_str()
+        .map(str::to_string)
+        .filter(|key| !key.is_empty())
+        .or_else(|| name_opt.map(slug).filter(|key| !key.is_empty()))
+        .unwrap_or_else(|| format!("additional-{index}"))
 }
 
 /// Per-account status flags → (codes, English text).
