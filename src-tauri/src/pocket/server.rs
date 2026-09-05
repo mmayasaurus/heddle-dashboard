@@ -76,8 +76,10 @@ mod tests {
     #[test]
     fn pending_spool_returns_only_objects_and_missing_spool_is_empty() {
         // Exercise the path-injectable seam directly — no `PUSH_SPOOL` env mutation, which would
-        // race the other handlers' env reads in this parallel test binary.
-        let path = std::env::temp_dir().join(format!("heddle-pending-{}.json", std::process::id()));
+        // race the other handlers' env reads in this parallel test binary. A private tempdir keeps
+        // the fixture off a predictable shared /tmp path.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pending.json");
         std::fs::write(&path, r#"[{"id":"one"},{"id":"two"},null]"#).unwrap();
         let items = read_pending_spool_from(&path);
         assert_eq!(items.len(), 2);
@@ -85,6 +87,18 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         assert!(read_pending_spool_from(&path).is_empty());
+    }
+
+    #[test]
+    fn pending_spool_is_sorted_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pending.json");
+        std::fs::write(&path, r#"[{"id":"old","ts":100},{"id":"new","ts":300},{"id":"mid","ts":200}]"#).unwrap();
+        let ids: Vec<String> = read_pending_spool_from(&path)
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, ["new", "mid", "old"]);
     }
 
     fn test_token_verifier(token: &str) -> bool {
@@ -347,11 +361,22 @@ fn read_pending_spool_from(path: &std::path::Path) -> Vec<serde_json::Value> {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return vec![];
     };
-    serde_json::from_str::<Vec<serde_json::Value>>(&contents)
+    let mut items: Vec<serde_json::Value> = serde_json::from_str::<Vec<serde_json::Value>>(&contents)
         .unwrap_or_default()
         .into_iter()
-        .filter(serde_json::Value::is_object)
-        .collect()
+        // A well-formed envelope is an object with a string `id`; skip anything else so the PWA can
+        // key on `id` and never renders id-less junk. (Missing non-id fields are tolerated here and
+        // rendered defensively client-side.)
+        .filter(|value| value.get("id").and_then(serde_json::Value::as_str).is_some())
+        .collect();
+    // Newest-first, defensively: the producer already sorts, but the host must not depend on it — a
+    // hand-edited spool, or S3b merging a second producer later, could arrive unordered. A missing
+    // or non-numeric `ts` sorts last.
+    items.sort_by(|a, b| {
+        let ts = |value: &serde_json::Value| value["ts"].as_f64().unwrap_or(0.0);
+        ts(b).partial_cmp(&ts(a)).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    items
 }
 
 fn session_card(agent: crate::heddle_stats::roster::FleetAgent) -> serde_json::Value {

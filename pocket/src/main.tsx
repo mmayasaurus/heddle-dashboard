@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -224,35 +224,26 @@ function approvalCategory(category: string): string {
   return ({ "needs-maya": "needs-maya", meter: "meter", attention: "attention", "important-tag": "⭐ important" })[category] ?? category;
 }
 
-function ApprovalsFeed({ deny }: { deny: () => void }) {
-  const [approvals, setApprovals] = useState<Approval[] | null>(null);
-  const [error, setError] = useState(false);
+function ApprovalsFeed({ approvals, error, read, onMarkRead }: { approvals: Approval[] | null; error: boolean; read: Set<string>; onMarkRead: (id: string) => void }) {
   const [showRead, setShowRead] = useState(false);
-  const [, setReadVersion] = useState(0);
-  const load = useCallback(async (signal: AbortSignal) => {
-    try {
-      const result = await getJson<{ approvals: Approval[] }>("/api/approvals", signal, deny);
-      setApprovals(result.approvals);
-      setError(false);
-    } catch (fetchError) {
-      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setError(true);
-    }
-  }, [deny]);
-  usePoller(true, 5000, load);
-  const read = readIds();
   const unread = (approvals ?? []).filter((approval) => !read.has(approval.id));
-  const shown = showRead ? [...unread, ...(approvals ?? []).filter((approval) => read.has(approval.id))] : unread;
+  const readList = (approvals ?? []).filter((approval) => read.has(approval.id));
+  const shown = showRead ? [...unread, ...readList] : unread;
   return <section className="approvals-feed" aria-label="Approvals feed">
     {error && <InlineError>Can’t reach host — showing the last available view.</InlineError>}
-    <button className="show-read" onClick={() => setShowRead((visible) => !visible)}>{showRead ? "Hide read" : "Show read"}</button>
-    {approvals !== null && unread.length === 0 && <section className="card empty"><p>You’re all caught up</p></section>}
+    {readList.length > 0 && <button className="show-read" onClick={() => setShowRead((visible) => !visible)}>{showRead ? "Hide read" : "Show read"}</button>}
+    {approvals !== null && shown.length === 0 && <section className="card empty"><p>You’re all caught up</p></section>}
     {shown.map((approval) => {
       const isRead = read.has(approval.id);
-      const source = [approval.source.agent, approval.source.account, approval.source.issue, approval.source.session].filter((value): value is string => Boolean(value));
-      return <button className={`card approval-card${approval.priority === "urgent" ? " urgent" : ""}${isRead ? " read" : ""}`} data-deeplink={approval.deepLink} key={approval.id} onClick={() => { markRead(approval.id); setReadVersion((version) => version + 1); }}>
-        <span className={`approval-badge ${approval.category}`}>{approvalCategory(approval.category)}</span>
-        <span className="approval-copy"><strong>{approval.title}</strong>{approval.body && <span className="approval-body">{approval.body}</span>}{source.length > 0 && <span className="approval-source">{source.map((identity) => <Chip key={identity}>{identity}</Chip>)}</span>}</span>
-        <time dateTime={new Date(approval.ts * 1000).toISOString()}>{formatAgo(approval.ts)}</time>
+      // Defensive: the spool is an external file, so a malformed/partial envelope must render
+      // degraded, never crash the whole feed.
+      const source = approval.source ?? { session: null, agent: null, account: null, issue: null };
+      const identities = [source.agent, source.account, source.issue, source.session].filter((value): value is string => Boolean(value));
+      const ts = Number.isFinite(approval.ts) ? approval.ts : 0;
+      return <button className={`card approval-card${approval.priority === "urgent" ? " urgent" : ""}${isRead ? " read" : ""}`} data-deeplink={approval.deepLink ?? ""} key={approval.id} onClick={() => onMarkRead(approval.id)}>
+        <span className={`approval-badge ${approval.category ?? ""}`}>{approvalCategory(approval.category ?? "")}</span>
+        <span className="approval-copy"><strong>{approval.title || approval.id}</strong>{approval.body && <span className="approval-body">{approval.body}</span>}{identities.length > 0 && <span className="approval-source">{identities.map((identity) => <Chip key={identity}>{identity}</Chip>)}</span>}</span>
+        <time dateTime={new Date(ts * 1000).toISOString()}>{formatAgo(ts)}</time>
       </button>;
     })}
   </section>;
@@ -350,15 +341,27 @@ function App() {
   const [activeTab, setActiveTab] = useState(0);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [fleetOpen, setFleetOpen] = useState(false);
-  const [approvalsUnread, setApprovalsUnread] = useState(0);
+  const [approvals, setApprovals] = useState<Approval[] | null>(null);
+  const [approvalsError, setApprovalsError] = useState(false);
+  const [readVersion, setReadVersion] = useState(0);
   const retry = () => setAttempt((count) => count + 1);
   const deny = useCallback(() => setConnection("denied"), []);
-  const loadApprovalUnread = useCallback(async (signal: AbortSignal) => {
-    const result = await getJson<{ approvals: Approval[] }>("/api/approvals", signal, deny);
-    const read = readIds();
-    setApprovalsUnread(result.approvals.filter((approval) => !read.has(approval.id)).length);
+  // App owns the approvals fetch + read-state so the tab badge and the feed share one source: a
+  // mark-read in the feed drops the badge immediately (bumping readVersion), instead of lagging a
+  // poll cycle behind, and there's a single poller rather than one per surface.
+  const loadApprovals = useCallback(async (signal: AbortSignal) => {
+    try {
+      const result = await getJson<{ approvals: Approval[] }>("/api/approvals", signal, deny);
+      setApprovals(result.approvals);
+      setApprovalsError(false);
+    } catch (fetchError) {
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setApprovalsError(true);
+    }
   }, [deny]);
-  usePoller(connection === "authenticated", 10000, loadApprovalUnread);
+  usePoller(connection === "authenticated", 5000, loadApprovals);
+  const markApprovalRead = useCallback((id: string) => { markRead(id); setReadVersion((version) => version + 1); }, []);
+  const readApprovals = useMemo(() => readIds(), [readVersion]);
+  const approvalsUnread = (approvals ?? []).filter((approval) => !readApprovals.has(approval.id)).length;
   useEffect(() => {
     let cancelled = false;
     setConnection("checking");
@@ -374,7 +377,7 @@ function App() {
   if (activeTab === 0) {
     content = selectedSession ? <SessionChat session={selectedSession} deny={deny} goBack={() => setSelectedSession(null)} /> : fleetOpen ? <FleetChat deny={deny} goBack={() => setFleetOpen(false)} /> : <SessionRoster deny={deny} openSession={setSelectedSession} openFleet={() => setFleetOpen(true)} />;
   } else if (activeTab === 1) {
-    content = <ApprovalsFeed deny={deny} />;
+    content = <ApprovalsFeed approvals={approvals} error={approvalsError} read={readApprovals} onMarkRead={markApprovalRead} />;
   }
   return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div>{!selectedSession && !fleetOpen && <header><h1>{name}</h1></header>}{content}<nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => changeTab(index)}>{tab}{index === 1 && approvalsUnread > 0 && <span className="tab-badge">{approvalsUnread}</span>}</button>)}</div></nav></main>;
 }
