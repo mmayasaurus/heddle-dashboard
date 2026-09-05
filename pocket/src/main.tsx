@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const TOKEN_KEY = "heddle.pocket.token";
+const APPROVALS_READ_KEY = "heddle.pocket.approvals.read";
 const isValidToken = (token: string): boolean => /^[a-f0-9]{64}$/.test(token);
 
 const tabs = [
@@ -41,6 +42,28 @@ type SessionStatus = {
 };
 type UsageWindow = { resetsAt: string | number | null; usedPercentage: number | null };
 type FleetMessage = { sender: string; body: string; ts: string | number };
+type ApprovalSource = { session: string | null; agent: string | null; account: string | null; issue: string | null };
+type Approval = { id: string; category: string; priority: string; title: string; body: string; deepLink: string; source: ApprovalSource; ts: number; state: string; kind: string | null };
+
+function readIds(): Set<string> {
+  try {
+    const stored = localStorage.getItem(APPROVALS_READ_KEY);
+    const ids: unknown = stored ? JSON.parse(stored) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markRead(id: string): void {
+  try {
+    const ids = readIds();
+    ids.add(id);
+    localStorage.setItem(APPROVALS_READ_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Read state is a local enhancement; unavailable storage must not block the feed.
+  }
+}
 
 function readOnboardingToken(): string | null {
   const params = new URLSearchParams(window.location.hash.slice(1));
@@ -136,6 +159,16 @@ function formatReset(value: string | number | null): string {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+function formatAgo(tsSeconds: number): string {
+  if (!Number.isFinite(tsSeconds)) return formatReset(tsSeconds);
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - tsSeconds));
+  if (seconds < 60) return "now";
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3_600)}h`;
+  if (seconds < 604_800) return `${Math.floor(seconds / 86_400)}d`;
+  return formatReset(tsSeconds);
+}
+
 function formatUsage(usageWindow: UsageWindow | undefined): string {
   if (!usageWindow) return "—";
   if (usageWindow.usedPercentage === null) return formatReset(usageWindow.resetsAt);
@@ -183,6 +216,44 @@ function SessionRoster({ deny, openSession, openFleet }: { deny: () => void; ope
     {sorted.map((session) => {
       const tone = statusTone(session);
       return <button className="card session-card" key={session.sessionId} onClick={() => openSession(session)}><span className={`status-dot ${tone}`} aria-label={tone} /><span className="session-card-copy"><span className="session-identity"><strong>{session.name}</strong>{session.account && <Chip>{session.account}</Chip>}<span className="kind">{session.kind}</span></span><span className="session-secondary"><span>{basename(session.cwd)}</span>{session.model && <Chip>{session.model}</Chip>}</span><span className="now-doing">{session.status || "—"}</span></span><span className="session-chevron" aria-hidden="true">›</span></button>;
+    })}
+  </section>;
+}
+
+function approvalCategory(category: string): string {
+  return ({ "needs-maya": "needs-maya", meter: "meter", attention: "attention", "important-tag": "⭐ important" })[category] ?? category;
+}
+
+function ApprovalsFeed({ deny }: { deny: () => void }) {
+  const [approvals, setApprovals] = useState<Approval[] | null>(null);
+  const [error, setError] = useState(false);
+  const [showRead, setShowRead] = useState(false);
+  const [, setReadVersion] = useState(0);
+  const load = useCallback(async (signal: AbortSignal) => {
+    try {
+      const result = await getJson<{ approvals: Approval[] }>("/api/approvals", signal, deny);
+      setApprovals(result.approvals);
+      setError(false);
+    } catch (fetchError) {
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setError(true);
+    }
+  }, [deny]);
+  usePoller(true, 5000, load);
+  const read = readIds();
+  const unread = (approvals ?? []).filter((approval) => !read.has(approval.id));
+  const shown = showRead ? [...unread, ...(approvals ?? []).filter((approval) => read.has(approval.id))] : unread;
+  return <section className="approvals-feed" aria-label="Approvals feed">
+    {error && <InlineError>Can’t reach host — showing the last available view.</InlineError>}
+    <button className="show-read" onClick={() => setShowRead((visible) => !visible)}>{showRead ? "Hide read" : "Show read"}</button>
+    {approvals !== null && unread.length === 0 && <section className="card empty"><p>You’re all caught up</p></section>}
+    {shown.map((approval) => {
+      const isRead = read.has(approval.id);
+      const source = [approval.source.agent, approval.source.account, approval.source.issue, approval.source.session].filter((value): value is string => Boolean(value));
+      return <button className={`card approval-card${approval.priority === "urgent" ? " urgent" : ""}${isRead ? " read" : ""}`} data-deeplink={approval.deepLink} key={approval.id} onClick={() => { markRead(approval.id); setReadVersion((version) => version + 1); }}>
+        <span className={`approval-badge ${approval.category}`}>{approvalCategory(approval.category)}</span>
+        <span className="approval-copy"><strong>{approval.title}</strong>{approval.body && <span className="approval-body">{approval.body}</span>}{source.length > 0 && <span className="approval-source">{source.map((identity) => <Chip key={identity}>{identity}</Chip>)}</span>}</span>
+        <time dateTime={new Date(approval.ts * 1000).toISOString()}>{formatAgo(approval.ts)}</time>
+      </button>;
     })}
   </section>;
 }
@@ -279,8 +350,15 @@ function App() {
   const [activeTab, setActiveTab] = useState(0);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [fleetOpen, setFleetOpen] = useState(false);
+  const [approvalsUnread, setApprovalsUnread] = useState(0);
   const retry = () => setAttempt((count) => count + 1);
   const deny = useCallback(() => setConnection("denied"), []);
+  const loadApprovalUnread = useCallback(async (signal: AbortSignal) => {
+    const result = await getJson<{ approvals: Approval[] }>("/api/approvals", signal, deny);
+    const read = readIds();
+    setApprovalsUnread(result.approvals.filter((approval) => !read.has(approval.id)).length);
+  }, [deny]);
+  usePoller(connection === "authenticated", 10000, loadApprovalUnread);
   useEffect(() => {
     let cancelled = false;
     setConnection("checking");
@@ -295,8 +373,10 @@ function App() {
   let content: ReactNode = <section className="card empty"><p>{empty}</p></section>;
   if (activeTab === 0) {
     content = selectedSession ? <SessionChat session={selectedSession} deny={deny} goBack={() => setSelectedSession(null)} /> : fleetOpen ? <FleetChat deny={deny} goBack={() => setFleetOpen(false)} /> : <SessionRoster deny={deny} openSession={setSelectedSession} openFleet={() => setFleetOpen(true)} />;
+  } else if (activeTab === 1) {
+    content = <ApprovalsFeed deny={deny} />;
   }
-  return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div>{!selectedSession && !fleetOpen && <header><h1>{name}</h1></header>}{content}<nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => changeTab(index)}>{tab}</button>)}</div></nav></main>;
+  return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div>{!selectedSession && !fleetOpen && <header><h1>{name}</h1></header>}{content}<nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => changeTab(index)}>{tab}{index === 1 && approvalsUnread > 0 && <span className="tab-badge">{approvalsUnread}</span>}</button>)}</div></nav></main>;
 }
 
 const rootEl = document.getElementById("root");

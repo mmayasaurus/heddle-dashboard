@@ -35,6 +35,7 @@ mod tests {
             "/api/sessions/missing/transcript",
             "/api/sessions/missing/status",
             "/api/fleet-chat",
+            "/api/approvals",
             "/api/unrecognized",
         ] {
             let response = router_with_verifier(test_token_verifier)
@@ -50,6 +51,7 @@ mod tests {
             "/api/sessions/missing/transcript",
             "/api/sessions/missing/status",
             "/api/fleet-chat",
+            "/api/approvals",
         ] {
             let response = router_with_verifier(test_token_verifier)
                 .oneshot(
@@ -62,12 +64,27 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{path}");
-            if path == "/api/sessions" {
+            if path == "/api/sessions" || path == "/api/approvals" {
                 assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
                 let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-                assert!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["sessions"].is_array());
+                let body = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
+                assert!(body[if path == "/api/sessions" { "sessions" } else { "approvals" }].is_array());
             }
         }
+    }
+
+    #[test]
+    fn pending_spool_returns_only_objects_and_missing_spool_is_empty() {
+        // Exercise the path-injectable seam directly — no `PUSH_SPOOL` env mutation, which would
+        // race the other handlers' env reads in this parallel test binary.
+        let path = std::env::temp_dir().join(format!("heddle-pending-{}.json", std::process::id()));
+        std::fs::write(&path, r#"[{"id":"one"},{"id":"two"},null]"#).unwrap();
+        let items = read_pending_spool_from(&path);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(serde_json::Value::is_object));
+
+        let _ = std::fs::remove_file(&path);
+        assert!(read_pending_spool_from(&path).is_empty());
     }
 
     fn test_token_verifier(token: &str) -> bool {
@@ -168,7 +185,8 @@ fn router_with_verifier(token_verifier: fn(&str) -> bool) -> Router {
         .route("/sessions", get(sessions))
         .route("/sessions/:id/transcript", get(session_transcript))
         .route("/sessions/:id/status", get(session_status))
-        .route("/fleet-chat", get(fleet_chat));
+        .route("/fleet-chat", get(fleet_chat))
+        .route("/approvals", get(approvals));
     Router::new()
         .route("/api/health", get(health))
         .nest("/api", protected)
@@ -300,6 +318,40 @@ async fn fleet_chat(Query(query): Query<TailQuery>) -> axum::Json<serde_json::Va
     .await
     .unwrap_or_default();
     axum::Json(serde_json::json!({ "messages": messages }))
+}
+
+async fn approvals() -> axum::Json<serde_json::Value> {
+    let items = tokio::task::spawn_blocking(read_pending_spool)
+        .await
+        .unwrap_or_default();
+    axum::Json(serde_json::json!({ "approvals": items }))
+}
+
+fn pending_spool_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("PUSH_SPOOL")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".heddle/push/pending.json")))
+}
+
+fn read_pending_spool() -> Vec<serde_json::Value> {
+    match pending_spool_path() {
+        Some(path) => read_pending_spool_from(&path),
+        None => vec![],
+    }
+}
+
+/// Path-injectable core so tests exercise the parse/filter/absent behaviour without mutating the
+/// process-global `PUSH_SPOOL` env — which would race the other handlers' env reads in the parallel
+/// test binary. Runtime callers go through `read_pending_spool` / `pending_spool_path`.
+fn read_pending_spool_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    serde_json::from_str::<Vec<serde_json::Value>>(&contents)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(serde_json::Value::is_object)
+        .collect()
 }
 
 fn session_card(agent: crate::heddle_stats::roster::FleetAgent) -> serde_json::Value {
