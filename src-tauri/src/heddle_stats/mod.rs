@@ -760,6 +760,45 @@ pub(crate) fn mirrored_claude_account_usage(account_id: &str) -> Option<serde_js
     }))
 }
 
+/// Reads every mirrored account cap without refreshing or writing any provider state.
+/// The pocket host uses this out-of-process contract because its handlers must remain read-only.
+pub(crate) fn mirrored_all_account_meters() -> Vec<serde_json::Value> {
+    mirrored_all_account_meters_from(&usage_dir().join("limits.json"))
+}
+
+fn mirrored_all_account_meters_from(path: &Path) -> Vec<serde_json::Value> {
+    let limits: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let Some(providers) = limits["limits"].as_array() else {
+        return vec![];
+    };
+
+    providers
+        .iter()
+        .filter_map(|provider| {
+            provider["accounts"]
+                .as_array()
+                .map(|accounts| (provider["provider"].clone(), accounts))
+        })
+        .flat_map(|(provider, accounts)| {
+            accounts.iter().filter_map(move |account| {
+                account.is_object().then(|| serde_json::json!({
+                    "provider": provider,
+                    "id": account["id"],
+                    "label": account["label"],
+                    "plan": account["plan"],
+                    "fiveHour": account["fiveHour"],
+                    "sevenDay": account["sevenDay"],
+                    "stale": account["stale"],
+                    "limitReached": account["limitReached"],
+                }))
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;

@@ -41,6 +41,7 @@ type SessionStatus = {
   filesEditing: string[] | null;
 };
 type UsageWindow = { resetsAt: string | number | null; usedPercentage: number | null };
+type AccountMeter = { provider: string; id: string; label: string | null; plan: string | null; fiveHour: UsageWindow | null; sevenDay: UsageWindow | null; stale: boolean; limitReached: boolean | null };
 type FleetMessage = { sender: string; body: string; ts: string | number };
 type ApprovalSource = { session: string | null; agent: string | null; account: string | null; issue: string | null };
 type Approval = { id: string; category: string; priority: string; title: string; body: string; deepLink: string; source: ApprovalSource; ts: number; state: string; kind: string | null };
@@ -169,7 +170,7 @@ function formatAgo(tsSeconds: number): string {
   return formatReset(tsSeconds);
 }
 
-function formatUsage(usageWindow: UsageWindow | undefined): string {
+function formatUsage(usageWindow: UsageWindow | null | undefined): string {
   if (!usageWindow) return "—";
   if (usageWindow.usedPercentage === null) return formatReset(usageWindow.resetsAt);
   return `${usageWindow.usedPercentage}% · ${formatReset(usageWindow.resetsAt)}`;
@@ -246,6 +247,27 @@ function ApprovalsFeed({ approvals, error, read, onMarkRead }: { approvals: Appr
         <time dateTime={new Date(ts * 1000).toISOString()}>{formatAgo(ts)}</time>
       </button>;
     })}
+  </section>;
+}
+
+function MeterRow({ label, usageWindow }: { label: string; usageWindow: UsageWindow | null | undefined }) {
+  const usedPercentage = usageWindow?.usedPercentage;
+  const width = typeof usedPercentage === "number" && Number.isFinite(usedPercentage) ? Math.min(100, Math.max(0, usedPercentage)) : 0;
+  return <div className="meter-row"><div className="meter-label"><span>{label}</span><span>{formatUsage(usageWindow)}</span></div><div className="meter-bar" aria-label={`${label} usage`}><span className="meter-fill" style={{ width: `${width}%` }} /></div></div>;
+}
+
+function OpsPanel({ meters, error }: { meters: AccountMeter[] | null; error: boolean }) {
+  const providers = new Map<string, AccountMeter[]>();
+  for (const meter of meters ?? []) {
+    const provider = typeof meter?.provider === "string" && meter.provider ? meter.provider : "Unknown provider";
+    const accounts = providers.get(provider) ?? [];
+    accounts.push(meter);
+    providers.set(provider, accounts);
+  }
+  return <section className="ops-panel" aria-label="Account usage meters">
+    {error && <InlineError>Can’t reach host — showing the last available view.</InlineError>}
+    {meters !== null && providers.size === 0 && <section className="card empty"><p>No account meters available</p></section>}
+    {[...providers].map(([provider, accounts]) => <section className="meter-provider" key={provider}><h2>{provider}</h2><div className="meter-cards">{accounts.map((meter, index) => <article className="card meter-card" key={`${meter.id ?? "account"}-${index}`}><div className="meter-card-header"><strong>{meter.label || meter.id || "—"}</strong><div>{meter.plan && <Chip>{meter.plan}</Chip>}{meter.stale && <span className="meter-stale">stale</span>}</div></div><MeterRow label="5h" usageWindow={meter.fiveHour} /><MeterRow label="7d" usageWindow={meter.sevenDay} /></article>)}</div></section>)}
   </section>;
 }
 
@@ -343,6 +365,8 @@ function App() {
   const [fleetOpen, setFleetOpen] = useState(false);
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [approvalsError, setApprovalsError] = useState(false);
+  const [meters, setMeters] = useState<AccountMeter[] | null>(null);
+  const [metersError, setMetersError] = useState(false);
   const [readVersion, setReadVersion] = useState(0);
   const retry = () => setAttempt((count) => count + 1);
   const deny = useCallback(() => setConnection("denied"), []);
@@ -359,6 +383,16 @@ function App() {
     }
   }, [deny]);
   usePoller(connection === "authenticated", 5000, loadApprovals);
+  const loadMeters = useCallback(async (signal: AbortSignal) => {
+    try {
+      const result = await getJson<{ meters: AccountMeter[] }>("/api/meters", signal, deny);
+      setMeters(result.meters);
+      setMetersError(false);
+    } catch (fetchError) {
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setMetersError(true);
+    }
+  }, [deny]);
+  usePoller(connection === "authenticated", 10000, loadMeters);
   const markApprovalRead = useCallback((id: string) => { markRead(id); setReadVersion((version) => version + 1); }, []);
   const readApprovals = useMemo(() => readIds(), [readVersion]);
   const approvalsUnread = (approvals ?? []).filter((approval) => !readApprovals.has(approval.id)).length;
@@ -378,6 +412,8 @@ function App() {
     content = selectedSession ? <SessionChat session={selectedSession} deny={deny} goBack={() => setSelectedSession(null)} /> : fleetOpen ? <FleetChat deny={deny} goBack={() => setFleetOpen(false)} /> : <SessionRoster deny={deny} openSession={setSelectedSession} openFleet={() => setFleetOpen(true)} />;
   } else if (activeTab === 1) {
     content = <ApprovalsFeed approvals={approvals} error={approvalsError} read={readApprovals} onMarkRead={markApprovalRead} />;
+  } else if (activeTab === 3) {
+    content = <OpsPanel meters={meters} error={metersError} />;
   }
   return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div>{!selectedSession && !fleetOpen && <header><h1>{name}</h1></header>}{content}<nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => changeTab(index)}>{tab}{index === 1 && approvalsUnread > 0 && <span className="tab-badge">{approvalsUnread}</span>}</button>)}</div></nav></main>;
 }

@@ -6,6 +6,12 @@ The pocket console is a sibling Axum host, not an extension of `web/`. It serves
 
 S1 is read-nothing: health plus token confirmation only. S2 adds Sessions and Chat with a status strip; S3/S4 add the prompt feed and reverse-channel approvals; S5 adds web push (the source writes `~/.heddle/push/pending.json`, and the host drains/merges producer files); S6 is the security pass that gates the interactive path.
 
+## Ops panel
+
+The first HED-319 Ops-panel increment is a read-only per-account usage view. The protected `GET /api/meters` route reads the keeper-mirrored `~/.heddle/usage/limits.json` contract and exposes each provider account’s five-hour and seven-day windows, plan, and stale state. The phone UI polls this route and never refreshes provider state or writes usage data.
+
+Fleet-liveness, screenshot/artifact viewing, and the relaunch action are subsequent HED-319 increments. Relaunch remains S6-gated and is not part of this read-only meter view.
+
 ## S3b permission-prompt collector
 
 `scripts/pocket-prompt-recorder.mjs` is an observational Claude Code `PermissionRequest` hook. It writes the latest pending permission prompt for each session to `~/.heddle/push/prompts/<session_id>.json` as a one-element pocket-envelope array; subsequent prompts for that session overwrite the prior file. The pocket host merges those files into `/api/approvals` alongside `pending.json`, so permission prompts render in the existing Approvals tab.
