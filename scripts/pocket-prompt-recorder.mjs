@@ -11,7 +11,6 @@ try {
   const input = JSON.parse(fs.readFileSync(0, "utf8"));
   if (input.hook_event_name !== "PermissionRequest") process.exit(0);
   if (typeof input.session_id !== "string" || !input.session_id) process.exit(0);
-  if (typeof input.prompt_id !== "string" || !input.prompt_id) process.exit(0);
 
   const safeSessionId = input.session_id.replace(/[^A-Za-z0-9._-]/g, "_");
   if (!safeSessionId || safeSessionId === "." || safeSessionId === "..") process.exit(0);
@@ -26,8 +25,16 @@ try {
       ? toolInput.file_path
       : JSON.stringify(toolInput);
   const body = String(summary ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const ts = Math.floor(Date.now() / 1000);
+  // The hooks docs list prompt_id for PermissionRequest; fall back to tool_use_id, then a
+  // session+timestamp id, so a build that omits prompt_id still records (never an empty feed) and the
+  // host/PWA always have a stable non-empty string id to key and dedup on.
+  const id =
+    (typeof input.prompt_id === "string" && input.prompt_id) ||
+    (typeof input.tool_use_id === "string" && input.tool_use_id) ||
+    `${input.session_id}:${ts}`;
   const envelope = [{
-    id: input.prompt_id,
+    id,
     category: "permission",
     priority: "urgent",
     title: typeof input.tool_name === "string" ? input.tool_name : "",
@@ -39,7 +46,7 @@ try {
       account: null,
       issue: null,
     },
-    ts: Math.floor(Date.now() / 1000),
+    ts,
     state: "pending",
     kind: "permission-request",
     toolName: typeof input.tool_name === "string" ? input.tool_name : "",
