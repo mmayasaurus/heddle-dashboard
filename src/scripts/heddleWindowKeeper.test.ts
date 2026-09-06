@@ -35,6 +35,12 @@ function mkHome({ usageDir = true }: { usageDir?: boolean } = {}): string {
 }
 
 function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = {}) {
+  const censusFixture = path.join(home, "census-ps.json");
+  // One active interactive tab makes the other logged-in account legally under ceiling. Individual
+  // tests can replace this fixture to exercise exact split rules without shelling out to ps.
+  if (!fs.existsSync(censusFixture)) {
+    fs.writeFileSync(censusFixture, JSON.stringify([`1 claude --resume abc CLAUDE_CONFIG_DIR=${home}/.claude`]));
+  }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
@@ -43,10 +49,15 @@ function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = 
     HEDDLE_SECURITY_BIN: path.join(home, "fake-security-unavailable"),
     HEDDLE_OAUTH_USAGE_URL: `file://${path.join(home, "missing-oauth-usage.json")}`,
     HEDDLE_OAUTH_ALLOW_INSECURE_URL: "1",
+    HEDDLE_CENSUS_PS_FIXTURE: censusFixture,
   };
   delete env.CLAUDE_CONFIG_DIR;
   Object.assign(env, overrides);
   return spawnSync("python3", [keeperPath, ...args], { cwd: path.resolve(path.dirname(keeperPath), ".."), env, encoding: "utf8" });
+}
+
+function writeCensusFixture(home: string, lines: string[]) {
+  fs.writeFileSync(path.join(home, "census-ps.json"), JSON.stringify(lines));
 }
 
 function calls(home: string): string[] {
@@ -504,6 +515,39 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(rotationAdvice.thresholdPct).toBe(85);
   });
 
+  it("uses the census ceiling and waits rather than recommending a fourth session", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+      { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true },
+      { id: "acct4", configDir: "~/.claude-acct4", loggedIn: true },
+    ]);
+    writeTap(home, "acct1", now + 4, 88, now + 3600);
+    writeTap(home, "acct2", now + 3, 90, now + 4000);
+    writeTap(home, "acct3", now + 2, 90, now + 2000);
+    writeTap(home, "acct4", now + 1, 10, now + 3000);
+    writeCensusFixture(home, [
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude`),
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct2`),
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct3`),
+      ...Array.from({ length: 3 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct4`),
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(advice(home).target).toBeNull();
+    expect(advice(home).reason).toContain("wait until acct3 resets");
+  });
+
+  it("prints advisory in dry-run without writing or posting it", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    const result = runKeeper(["--dry-run"], home);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WOULD advise (dry-run)");
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+  });
+
   it("does not advise when the active tap usage is below the default rotation threshold", () => {
     const home = mkHome();
     seedRotationWindows(home, { activeUsed: 80 });
@@ -643,7 +687,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const result = runKeeper([], home);
     expect(result.status).toBe(0);
     expect(advice(home).target).toBeNull();
-    expect(advice(home).reason).toContain("every other logged-in account is also at/over the threshold or unknown");
+    expect(advice(home).reason).toContain("no legal target");
     expect(calls(home)).toEqual([]);
   });
 

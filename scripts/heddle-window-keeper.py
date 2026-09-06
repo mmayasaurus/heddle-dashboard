@@ -39,6 +39,8 @@ STATE = os.path.join(HOME, ".heddle", "window-keeper.state.json")
 OAUTH_STATE = os.path.join(HOME, ".heddle", "oauth-usage-state.json")
 LOG = os.path.join(HOME, ".heddle", "window-keeper.log")
 ROTATION_ADVICE = os.path.join(HOME, ".heddle", "rotation-advice.json")
+ROTATION_POLICY = os.path.join(HOME, ".heddle", "rotation-policy.json")
+LIVE_IDENTITIES = os.path.join(HOME, ".heddle", "live-identities.json")
 TRANSCRIPT_OFFSETS = os.path.join(HOME, ".heddle", "transcript-offsets.json")
 TRANSCRIPT_STATE = os.path.join(HOME, ".heddle", "transcript-usage-state.json")
 TRANSCRIPT_LOCK = os.path.join(HOME, ".heddle", "transcript-accounting.lock")
@@ -444,39 +446,150 @@ def fmt(ts):
     return dt.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "—"
 
 
-def rotation_target(accts, active_id, now):
-    """Choose the most useful logged-in account to rotate onto, if its headroom is known enough."""
-    known, unknown = [], []
+def load_rotation_policy():
+    """Read operator-owned advisor policy; absence deliberately remains a usable default."""
+    defaults = {"schemaVersion": 1, "rotateThresholdPct": ROTATE_PCT, "criticalPct": 95}
+    raw = load(ROTATION_POLICY, None)
+    if raw is None:
+        log("rotation advisor: rotation-policy.json absent; using defaults")
+        return defaults
+    if not isinstance(raw, dict) or raw.get("schemaVersion") != 1:
+        log("rotation advisor: invalid rotation-policy.json; using defaults")
+        return defaults
+    policy = dict(defaults)
+    for key in ("rotateThresholdPct", "criticalPct"):
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 1 <= value <= 100:
+            policy[key] = value
+        elif value is not None:
+            log(f"rotation advisor: invalid policy {key}; using default {policy[key]}")
+    return policy
+
+
+def identity_groups(accts):
+    """Return account id -> live identity, falling back to registry email without credentials."""
+    groups = {}
+    artifact = load(LIVE_IDENTITIES, {})
+    artifact_groups = artifact.get("accounts") if isinstance(artifact, dict) else None
     for acct in accts:
-        if acct["id"] == active_id:
+        acct_id = acct.get("id")
+        if not isinstance(acct_id, str):
             continue
-        w = window(acct["id"])
-        if not w:
+        artifact_identity = artifact_groups.get(acct_id) if isinstance(artifact_groups, dict) else None
+        email = acct.get("email")
+        if isinstance(artifact_identity, str) and artifact_identity:
+            identity = "live:" + artifact_identity
+        elif isinstance(email, str) and email.strip():
+            identity = "email:" + email.strip().lower()
+        else:
+            identity = "account:" + acct_id
+        groups[acct_id] = identity
+    by_identity = {}
+    for acct_id, identity in groups.items():
+        by_identity.setdefault(identity, []).append(acct_id)
+    for identity, ids in by_identity.items():
+        if len(ids) > 1:
+            log(f"rotation advisor: WARNING duplicate live identity {identity!r} for config accounts {','.join(sorted(ids))}; counting as one account")
+    return groups
+
+
+def live_census(accts, process_lines=None):
+    """Count current interactive --resume sessions by current CLAUDE_CONFIG_DIR identity.
+
+    `process_lines` exists to inject ps output in tests. A missing/ambiguous census is deliberately
+    not guessed: sending an operator to an illegal fourth slot costs more than skipping advice.
+    """
+    groups = identity_groups(accts)
+    config_to_id = {}
+    for acct in accts:
+        acct_id = acct.get("id")
+        if isinstance(acct_id, str):
+            config_to_id[os.path.realpath(os.path.expanduser(acct.get("configDir") or "~/.claude"))] = acct_id
+    if process_lines is None and os.environ.get("HEDDLE_CENSUS_PS_FIXTURE"):
+        # Test-only injection: production always obtains a fresh process table.
+        fixture = load(os.environ["HEDDLE_CENSUS_PS_FIXTURE"], None)
+        process_lines = fixture if isinstance(fixture, list) else []
+    if process_lines is None:
+        try:
+            pids = subprocess.run(["pgrep", "-x", "claude"], capture_output=True, text=True, timeout=5)
+            if pids.returncode not in (0, 1):
+                raise OSError("pgrep failed")
+            process_lines = []
+            for pid in pids.stdout.split():
+                result = subprocess.run(["ps", "eww", "-p", pid], capture_output=True, text=True, timeout=5)
+                if result.returncode:
+                    raise OSError("ps failed")
+                process_lines.extend(result.stdout.splitlines()[1:])
+        except (subprocess.TimeoutExpired, OSError):
+            log("rotation advisor: census unavailable (process inspection failed)")
+            return None, groups
+    counts, found, ambiguous = {}, 0, False
+    for line in process_lines:
+        if not isinstance(line, str) or "--resume" not in line:
             continue
-        if not w.get("resets_at") or w["resets_at"] <= now:
-            # An expired reading's usage is unknown, but it is not a warm keeper anchor that can
-            # safely stand in for measured headroom.
+        if "CODEX_COMPANION" in line or "shell-snapshot" in line:
             continue
-        used = w.get("used")
-        if used is not None:
-            try:
-                used_pct = float(used)
-            except (TypeError, ValueError):
-                continue
-            if used_pct >= ROTATE_PCT:
-                continue
-            known.append((used_pct, acct, w))
-        elif w.get("source") == "keeper":
-            unknown.append((acct, w))
-    if known:
-        _, acct, w = min(known, key=lambda item: (item[0], item[1]["id"]))
-        return acct, w
-    if unknown:
-        # A keeper window is a warm, recently anchored fallback when no measured headroom exists.
-        acct, w = min(unknown, key=lambda item: (item[1].get("source") != "keeper",
-                                                   item[1].get("resets_at") or float("inf"), item[0]["id"]))
-        return acct, w
-    return None, None
+        found += 1
+        match = re.search(r"(?:^|\s)CLAUDE_CONFIG_DIR=([^\s]+)", line)
+        if not match:
+            ambiguous = True
+            continue
+        config_dir = os.path.realpath(os.path.expanduser(match.group(1).strip("'\"")))
+        acct_id = config_to_id.get(config_dir)
+        if not acct_id:
+            ambiguous = True
+            continue
+        identity = groups[acct_id]
+        counts[identity] = counts.get(identity, 0) + 1
+    if ambiguous or not found:
+        log("rotation advisor: census unavailable (no unambiguous interactive sessions)")
+        return None, groups
+    return {acct_id: counts.get(identity, 0) for acct_id, identity in groups.items()}, groups
+
+
+def rotation_target(census, accounts, now, policy, active_id):
+    """Pure balance-first target decision. Returns target or a first-class wait/unavailable outcome."""
+    if census is None:
+        return {"status": "unavailable"}
+    representatives = {}
+    for acct in accounts:
+        identity = acct.get("identity", acct["id"])
+        if identity not in representatives or acct["id"] < representatives[identity]["id"]:
+            representatives[identity] = acct
+    live_accounts = sorted(representatives)
+    # Account records can be duplicated for config directories; use one representative per identity.
+    live_sessions = sum(census.get(acct["id"], 0) for acct in representatives.values())
+    ceiling = int(math.ceil(float(live_sessions) / len(live_accounts))) if live_accounts else 0
+    loads = [census.get(acct["id"], 0) for acct in representatives.values()]
+    # A rotation cannot truthfully be called legal if the observed fleet is already outside the
+    # exact split. Wait for an operator to correct the census rather than compounding the skew.
+    evenly_split = bool(loads) and max(loads) - min(loads) <= 1
+    eligible, waits = [], []
+    threshold = policy["rotateThresholdPct"]
+    active_identity = next((a.get("identity", a["id"]) for a in accounts if a["id"] == active_id), active_id)
+    for acct in accounts:
+        if acct["id"] == active_id or acct.get("identity", acct["id"]) == active_identity:
+            continue
+        # Only one representative can be considered for a deduplicated identity.
+        if representatives[acct.get("identity", acct["id"])]["id"] != acct["id"]:
+            continue
+        w, load_count = acct.get("window"), census.get(acct["id"], 0)
+        if not w or not w.get("resets_at") or w["resets_at"] <= now:
+            continue
+        waits.append((w["resets_at"], acct))
+        try:
+            used = float(w.get("used"))
+        except (TypeError, ValueError):
+            continue
+        if evenly_split and load_count < ceiling and used < threshold:
+            eligible.append((load_count, used, acct["id"], acct))
+    if eligible:
+        acct = min(eligible)[3]
+        return {"status": "target", "account": acct, "ceiling": ceiling}
+    if waits:
+        reset, acct = min(waits, key=lambda item: (item[0], item[1]["id"]))
+        return {"status": "wait", "account": acct, "resetsAt": reset, "ceiling": ceiling}
+    return {"status": "wait", "account": None, "resetsAt": None, "ceiling": ceiling}
 
 
 def run_rotation_notification(text):
@@ -538,7 +651,7 @@ def pct(v):
         return None
 
 
-def advise_rotation(accts, state, now):
+def advise_rotation(accts, state, now, dry_run=False, census_lines=None):
     # A tap capture is written only when a live interactive session renders its statusline. The newest
     # tap is therefore the load-bearing signal for which account is actively in use; keeper anchors do
     # not prove an interactive session exists, so without a tap we intentionally offer no advice.
@@ -556,7 +669,9 @@ def advise_rotation(accts, state, now):
         active_used = float(active_window["used"])
     except (TypeError, ValueError):
         return
-    if active_used < ROTATE_PCT:
+    policy = load_rotation_policy()
+    threshold = policy["rotateThresholdPct"]
+    if active_used < threshold:
         return
 
     resets_at = active_window.get("resets_at")
@@ -568,7 +683,14 @@ def advise_rotation(accts, state, now):
            for key in advice_keys if isinstance(key, dict)):
         return
 
-    target, target_window = rotation_target(accts, active["id"], now)
+    census, groups = live_census(accts, census_lines)
+    target_result = rotation_target(
+        census,
+        [{**acct, "window": window(acct["id"]), "identity": groups.get(acct["id"], acct["id"])} for acct in accts],
+        now, policy, active["id"],
+    )
+    target = target_result.get("account") if target_result["status"] == "target" else None
+    target_window = target.get("window") if target else None
     active_pct = pct(active_window["used"])
     target_payload = None
     command = None
@@ -582,23 +704,33 @@ def advise_rotation(accts, state, now):
             template_error = True
             log(f"rotation advisor: invalid HEDDLE_RELAUNCH_TEMPLATE: {str(e)[-160:]}")
     if target and template_error:
-        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation threshold; "
-                  f"{target['id']} has the most available headroom, but HEDDLE_RELAUNCH_TEMPLATE is unusable.")
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation threshold; "
+                  f"{target['id']} is the legal balance-first target, but HEDDLE_RELAUNCH_TEMPLATE is unusable.")
     elif target:
-        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation "
-                  f"threshold; {target['id']} has the most available headroom.")
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation "
+                  f"threshold; {target['id']} is the legal balance-first target.")
+    elif target_result["status"] == "unavailable":
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation threshold; "
+                  "census unavailable — verify manually.")
+    elif target_result.get("account"):
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation threshold; no legal target; "
+                  f"wait until {target_result['account']['id']} resets at {fmt(target_result['resetsAt'])} — commit+push now.")
     else:
-        reason = (f"{active['id']} is at {active_pct}%, meeting the {ROTATE_PCT}% rotation threshold; "
-                  "every other logged-in account is also at/over the threshold or unknown.")
+        reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation threshold; "
+                  "no legal target; census has no live eligible account — verify manually.")
     advice = {"advisedAt": int(now),
               "active": {"id": active["id"], "usedPct": active_pct, "resetsAt": resets_at},
-              "target": target_payload, "command": command, "thresholdPct": ROTATE_PCT, "reason": reason}
+              "target": target_payload, "command": command, "thresholdPct": threshold, "reason": reason,
+              "censusStatus": target_result["status"], "ceiling": target_result.get("ceiling")}
     command_text = command or ("HEDDLE_RELAUNCH_TEMPLATE is unusable" if template_error else "no eligible target")
     advice_text = f"Heddle rotation advice: {reason} Command: {command_text}"
 
     # These channels are deliberately independent: a broken desktop or fleet hook must not interrupt
     # the five-minute keeper job, nor should it prevent the durable advice artifact from being attempted.
     log(f"rotation advisor: active={active['id']} used={active_pct}% target={target and target['id']} command={command}")
+    if dry_run:
+        log(f"rotation advisor: WOULD advise (dry-run): {advice_text}")
+        return
     try:
         write_json_atomic(ROTATION_ADVICE, advice)
     except Exception as e:
@@ -1015,13 +1147,13 @@ def main():
             write_json_atomic(STATE, state)
             break  # one ping per run: the stagger is enforced by run cadence + STAGGER_MIN
 
+    # SECONDARY work, now that the pings are done. Each is wrapped so a raised error degrades to a
+    # log line; a hung open() cannot reach here to block a ping because the pings already ran.
+    try:
+        advise_rotation(accts, state, now, dry_run=dry)
+    except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
+        log(f"[rotate] advisor failed: {type(e).__name__}: {str(e)[-160:]}")
     if not dry:
-        # SECONDARY work, now that the pings are done. Each is wrapped so a raised error degrades to a
-        # log line; a hung open() cannot reach here to block a ping because the pings already ran.
-        try:
-            advise_rotation(accts, state, now)
-        except Exception as e:  # noqa: BLE001 - advising must never cost us a ping
-            log(f"[rotate] advisor failed: {type(e).__name__}: {str(e)[-160:]}")
         try:
             account_transcripts(accts, now)
         except Exception as e:  # noqa: BLE001 - accounting must never cost us a ping
