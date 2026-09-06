@@ -172,7 +172,7 @@ function formatAgo(tsSeconds: number): string {
 
 function formatUsage(usageWindow: UsageWindow | null | undefined): string {
   if (!usageWindow) return "—";
-  if (usageWindow.usedPercentage === null) return formatReset(usageWindow.resetsAt);
+  if (typeof usageWindow.usedPercentage !== "number") return formatReset(usageWindow.resetsAt);
   return `${usageWindow.usedPercentage}% · ${formatReset(usageWindow.resetsAt)}`;
 }
 

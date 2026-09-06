@@ -775,28 +775,46 @@ fn mirrored_all_account_meters_from(path: &Path) -> Vec<serde_json::Value> {
         return vec![];
     };
 
-    providers
-        .iter()
-        .filter_map(|provider| {
-            provider["accounts"]
-                .as_array()
-                .map(|accounts| (provider["provider"].clone(), accounts))
-        })
-        .flat_map(|(provider, accounts)| {
-            accounts.iter().filter_map(move |account| {
-                account.is_object().then(|| serde_json::json!({
-                    "provider": provider,
-                    "id": account["id"],
-                    "label": account["label"],
-                    "plan": account["plan"],
-                    "fiveHour": account["fiveHour"],
-                    "sevenDay": account["sevenDay"],
-                    "stale": account["stale"],
-                    "limitReached": account["limitReached"],
-                }))
-            })
-        })
-        .collect()
+    let mut rows = Vec::new();
+    for provider in providers {
+        let name = provider["provider"].clone();
+        match provider["accounts"].as_array() {
+            Some(accounts) if !accounts.is_empty() => {
+                for account in accounts.iter().filter(|account| account.is_object()) {
+                    rows.push(serde_json::json!({
+                        "provider": name.clone(),
+                        "id": account["id"],
+                        "label": account["label"],
+                        "plan": account["plan"],
+                        "fiveHour": account["fiveHour"],
+                        "sevenDay": account["sevenDay"],
+                        "stale": account["stale"],
+                        "limitReached": account["limitReached"],
+                    }));
+                }
+            }
+            // No per-account breakdown (e.g. gemini, or claude in single-file tap mode): fall back to the
+            // provider's own top-level windows so its usage still appears in the Ops panel.
+            _ if provider["fiveHour"].is_object() || provider["sevenDay"].is_object() => {
+                let id = provider["activeAccount"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map_or_else(|| name.clone(), serde_json::Value::from);
+                rows.push(serde_json::json!({
+                    "provider": name,
+                    "id": id,
+                    "label": provider["activeAccount"],
+                    "plan": provider["plan"],
+                    "fiveHour": provider["fiveHour"],
+                    "sevenDay": provider["sevenDay"],
+                    "stale": provider["stale"],
+                    "limitReached": provider["limitReached"],
+                }));
+            }
+            _ => {}
+        }
+    }
+    rows
 }
 
 #[cfg(test)]
