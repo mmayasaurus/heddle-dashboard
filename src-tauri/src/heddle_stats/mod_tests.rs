@@ -835,6 +835,94 @@ fn contract_json_matches_the_golden_file() {
     );
 }
 
+#[test]
+fn mirrored_all_account_meters_normalizes_rows_in_provider_and_account_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("limits.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "limits": [
+                {
+                    "provider": "claude",
+                    "accounts": [
+                        {"id": "primary", "label": "Primary", "plan": "Max", "fiveHour": {"usedPercentage": 25, "resetsAt": 100}, "sevenDay": {"usedPercentage": 50, "resetsAt": 200}, "stale": false, "limitReached": false},
+                        {"id": "backup"}
+                    ]
+                },
+                {
+                    "provider": "codex",
+                    "accounts": [
+                        {"id": "work", "label": "Work", "plan": "Pro", "fiveHour": {"usedPercentage": null, "resetsAt": null}, "sevenDay": {"usedPercentage": 10, "resetsAt": "2026-01-01T00:00:00Z"}, "stale": true, "limitReached": true}
+                    ]
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        mirrored_all_account_meters_from(&path),
+        vec![
+            serde_json::json!({"provider": "claude", "id": "primary", "label": "Primary", "plan": "Max", "fiveHour": {"usedPercentage": 25, "resetsAt": 100}, "sevenDay": {"usedPercentage": 50, "resetsAt": 200}, "stale": false, "limitReached": false}),
+            serde_json::json!({"provider": "claude", "id": "backup", "label": null, "plan": null, "fiveHour": null, "sevenDay": null, "stale": null, "limitReached": null}),
+            serde_json::json!({"provider": "codex", "id": "work", "label": "Work", "plan": "Pro", "fiveHour": {"usedPercentage": null, "resetsAt": null}, "sevenDay": {"usedPercentage": 10, "resetsAt": "2026-01-01T00:00:00Z"}, "stale": true, "limitReached": true}),
+        ]
+    );
+}
+
+#[test]
+fn mirrored_all_account_meters_returns_empty_for_empty_or_wrong_shaped_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("limits.json");
+    std::fs::write(&path, "").unwrap();
+    assert!(mirrored_all_account_meters_from(&path).is_empty());
+
+    std::fs::write(&path, r#"{"limits": {}}"#).unwrap();
+    assert!(mirrored_all_account_meters_from(&path).is_empty());
+}
+
+#[test]
+fn mirrored_all_account_meters_falls_back_to_provider_windows_without_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("limits.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "limits": [
+                {
+                    "provider": "gemini",
+                    "activeAccount": "primary@example.com",
+                    "accounts": [],
+                    "fiveHour": {"usedPercentage": 2.3, "resetsAt": 100},
+                    "sevenDay": {"usedPercentage": 0.6, "resetsAt": 200},
+                    "stale": false
+                },
+                {"provider": "no-usage", "accounts": []}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Empty-accounts providers WITH top-level windows still surface (one provider-level row);
+    // an empty-accounts provider with no windows contributes nothing.
+    assert_eq!(
+        mirrored_all_account_meters_from(&path),
+        vec![serde_json::json!({
+            "provider": "gemini",
+            "id": "primary@example.com",
+            "label": "primary@example.com",
+            "plan": null,
+            "fiveHour": {"usedPercentage": 2.3, "resetsAt": 100},
+            "sevenDay": {"usedPercentage": 0.6, "resetsAt": 200},
+            "stale": false,
+            "limitReached": null,
+        })]
+    );
+}
+
 /// Regenerates the golden file. Ignored so it never runs by accident.
 #[test]
 #[ignore]

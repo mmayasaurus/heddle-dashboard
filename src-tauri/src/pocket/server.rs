@@ -36,6 +36,7 @@ mod tests {
             "/api/sessions/missing/status",
             "/api/fleet-chat",
             "/api/approvals",
+            "/api/meters",
             "/api/unrecognized",
         ] {
             let response = router_with_verifier(test_token_verifier)
@@ -52,6 +53,7 @@ mod tests {
             "/api/sessions/missing/status",
             "/api/fleet-chat",
             "/api/approvals",
+            "/api/meters",
         ] {
             let response = router_with_verifier(test_token_verifier)
                 .oneshot(
@@ -64,11 +66,17 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{path}");
-            if path == "/api/sessions" || path == "/api/approvals" {
+            if path == "/api/sessions" || path == "/api/approvals" || path == "/api/meters" {
                 assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
                 let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
                 let body = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
-                assert!(body[if path == "/api/sessions" { "sessions" } else { "approvals" }].is_array());
+                let key = match path {
+                    "/api/sessions" => "sessions",
+                    "/api/approvals" => "approvals",
+                    "/api/meters" => "meters",
+                    _ => unreachable!(),
+                };
+                assert!(body[key].is_array());
             }
         }
     }
@@ -249,7 +257,8 @@ fn router_with_verifier(token_verifier: fn(&str) -> bool) -> Router {
         .route("/sessions/:id/transcript", get(session_transcript))
         .route("/sessions/:id/status", get(session_status))
         .route("/fleet-chat", get(fleet_chat))
-        .route("/approvals", get(approvals));
+        .route("/approvals", get(approvals))
+        .route("/meters", get(meters));
     Router::new()
         .route("/api/health", get(health))
         .nest("/api", protected)
@@ -388,6 +397,13 @@ async fn approvals() -> axum::Json<serde_json::Value> {
         .await
         .unwrap_or_default();
     axum::Json(serde_json::json!({ "approvals": items }))
+}
+
+async fn meters() -> axum::Json<serde_json::Value> {
+    let items = tokio::task::spawn_blocking(crate::heddle_stats::mirrored_all_account_meters)
+        .await
+        .unwrap_or_default();
+    axum::Json(serde_json::json!({ "meters": items }))
 }
 
 fn pending_spool_path() -> Option<std::path::PathBuf> {

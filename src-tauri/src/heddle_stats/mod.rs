@@ -760,6 +760,63 @@ pub(crate) fn mirrored_claude_account_usage(account_id: &str) -> Option<serde_js
     }))
 }
 
+/// Reads every mirrored account cap without refreshing or writing any provider state.
+/// The pocket host uses this out-of-process contract because its handlers must remain read-only.
+pub(crate) fn mirrored_all_account_meters() -> Vec<serde_json::Value> {
+    mirrored_all_account_meters_from(&usage_dir().join("limits.json"))
+}
+
+fn mirrored_all_account_meters_from(path: &Path) -> Vec<serde_json::Value> {
+    let limits: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let Some(providers) = limits["limits"].as_array() else {
+        return vec![];
+    };
+
+    let mut rows = Vec::new();
+    for provider in providers {
+        let name = provider["provider"].clone();
+        match provider["accounts"].as_array() {
+            Some(accounts) if !accounts.is_empty() => {
+                for account in accounts.iter().filter(|account| account.is_object()) {
+                    rows.push(serde_json::json!({
+                        "provider": name.clone(),
+                        "id": account["id"],
+                        "label": account["label"],
+                        "plan": account["plan"],
+                        "fiveHour": account["fiveHour"],
+                        "sevenDay": account["sevenDay"],
+                        "stale": account["stale"],
+                        "limitReached": account["limitReached"],
+                    }));
+                }
+            }
+            // No per-account breakdown (e.g. gemini, or claude in single-file tap mode): fall back to the
+            // provider's own top-level windows so its usage still appears in the Ops panel.
+            _ if provider["fiveHour"].is_object() || provider["sevenDay"].is_object() => {
+                let id = provider["activeAccount"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map_or_else(|| name.clone(), serde_json::Value::from);
+                rows.push(serde_json::json!({
+                    "provider": name,
+                    "id": id,
+                    "label": provider["activeAccount"],
+                    "plan": provider["plan"],
+                    "fiveHour": provider["fiveHour"],
+                    "sevenDay": provider["sevenDay"],
+                    "stale": provider["stale"],
+                    "limitReached": provider["limitReached"],
+                }));
+            }
+            _ => {}
+        }
+    }
+    rows
+}
+
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
