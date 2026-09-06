@@ -101,14 +101,63 @@ mod tests {
         assert_eq!(ids, ["new", "mid", "old"]);
     }
 
+    #[test]
+    fn prompt_spools_filter_stale_and_invalid_entries_across_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("first.json"),
+            r#"[{"id":"fresh","ts":950},{"id":"stale","ts":899},null,{"ts":999}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("second.json"),
+            r#"[{"id":"also-fresh","ts":1000},{"id":"no-ts"}]"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("ignored.txt"), r#"[{"id":"ignored","ts":1000}]"#).unwrap();
+
+        let mut ids: Vec<String> = read_prompt_spools_from(dir.path(), 1000, 100)
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["also-fresh", "fresh"]);
+    }
+
+    #[test]
+    fn merged_approvals_dedup_by_newest_timestamp_and_sort_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let pending_path = dir.path().join("pending.json");
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+        std::fs::write(
+            &pending_path,
+            r#"[{"id":"shared","ts":100},{"id":"pending","ts":300}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            prompts_dir.join("session.json"),
+            r#"[{"id":"shared","ts":200,"category":"permission"},{"id":"prompt","ts":400}]"#,
+        )
+        .unwrap();
+
+        let items = read_approvals_from(&pending_path, &prompts_dir, 250, 50);
+        let ids: Vec<String> = items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, ["prompt", "pending", "shared"]);
+        assert_eq!(items[2]["category"], "permission");
+    }
+
     fn test_token_verifier(token: &str) -> bool {
         token == "test-token"
     }
 }
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
@@ -335,7 +384,7 @@ async fn fleet_chat(Query(query): Query<TailQuery>) -> axum::Json<serde_json::Va
 }
 
 async fn approvals() -> axum::Json<serde_json::Value> {
-    let items = tokio::task::spawn_blocking(read_pending_spool)
+    let items = tokio::task::spawn_blocking(read_approvals)
         .await
         .unwrap_or_default();
     axum::Json(serde_json::json!({ "approvals": items }))
@@ -352,6 +401,82 @@ fn read_pending_spool() -> Vec<serde_json::Value> {
         Some(path) => read_pending_spool_from(&path),
         None => vec![],
     }
+}
+
+fn prompts_spool_dir() -> Option<PathBuf> {
+    std::env::var_os("POCKET_PROMPTS_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".heddle/push/prompts")))
+}
+
+fn prompt_ttl_secs() -> u64 {
+    std::env::var("POCKET_PROMPT_TTL_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(21_600)
+}
+
+fn read_approvals() -> Vec<serde_json::Value> {
+    let mut items = read_pending_spool();
+    if let Some(dir) = prompts_spool_dir() {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        items.extend(read_prompt_spools_from(&dir, now_secs, prompt_ttl_secs()));
+    }
+    merge_approvals(items)
+}
+
+#[cfg(test)]
+fn read_approvals_from(
+    pending_path: &Path,
+    prompts_dir: &Path,
+    now_secs: u64,
+    ttl_secs: u64,
+) -> Vec<serde_json::Value> {
+    let mut items = read_pending_spool_from(pending_path);
+    items.extend(read_prompt_spools_from(prompts_dir, now_secs, ttl_secs));
+    merge_approvals(items)
+}
+
+fn merge_approvals(items: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut deduplicated = std::collections::HashMap::new();
+    for item in items {
+        let id = item["id"].as_str().unwrap_or_default().to_string();
+        let replace = deduplicated
+            .get(&id)
+            .is_none_or(|existing: &serde_json::Value| timestamp(&item) > timestamp(existing));
+        if replace {
+            deduplicated.insert(id, item);
+        }
+    }
+    let mut items: Vec<serde_json::Value> = deduplicated.into_values().collect();
+    items.sort_by(|a, b| timestamp(b).partial_cmp(&timestamp(a)).unwrap_or(std::cmp::Ordering::Equal));
+    items
+}
+
+fn read_prompt_spools_from(dir: &Path, now_secs: u64, ttl_secs: u64) -> Vec<serde_json::Value> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    let oldest = now_secs.saturating_sub(ttl_secs);
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "json"))
+        .flat_map(|entry| {
+            std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|contents| serde_json::from_str::<Vec<serde_json::Value>>(&contents).ok())
+                .unwrap_or_default()
+        })
+        .filter(|value| value.is_object() && value["id"].as_str().is_some())
+        .filter(|value| value["ts"].as_f64().is_some_and(|ts| ts >= oldest as f64))
+        .collect()
+}
+
+fn timestamp(value: &serde_json::Value) -> f64 {
+    value["ts"].as_f64().unwrap_or(0.0)
 }
 
 /// Path-injectable core so tests exercise the parse/filter/absent behaviour without mutating the

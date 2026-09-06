@@ -221,7 +221,7 @@ function SessionRoster({ deny, openSession, openFleet }: { deny: () => void; ope
 }
 
 function approvalCategory(category: string): string {
-  return ({ "needs-maya": "needs-maya", meter: "meter", attention: "attention", "important-tag": "⭐ important" })[category] ?? category;
+  return ({ "needs-maya": "needs-maya", meter: "meter", attention: "attention", "important-tag": "⭐ important", permission: "⚠ permission" })[category] ?? category;
 }
 
 function ApprovalsFeed({ approvals, error, read, onMarkRead }: { approvals: Approval[] | null; error: boolean; read: Set<string>; onMarkRead: (id: string) => void }) {
