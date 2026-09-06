@@ -6,6 +6,14 @@ The pocket console is a sibling Axum host, not an extension of `web/`. It serves
 
 S1 is read-nothing: health plus token confirmation only. S2 adds Sessions and Chat with a status strip; S3/S4 add the prompt feed and reverse-channel approvals; S5 adds web push (the source writes `~/.heddle/push/pending.json`, and the host drains/merges producer files); S6 is the security pass that gates the interactive path.
 
+## S3b permission-prompt collector
+
+`scripts/pocket-prompt-recorder.mjs` is an observational Claude Code `PermissionRequest` hook. It writes the latest pending permission prompt for each session to `~/.heddle/push/prompts/<session_id>.json` as a one-element pocket-envelope array; subsequent prompts for that session overwrite the prior file. The pocket host merges those files into `/api/approvals` alongside `pending.json`, so permission prompts render in the existing Approvals tab.
+
+Prompt spools are TTL-filtered with `POCKET_PROMPT_TTL_SECS` (default: 21,600 seconds / 6 hours). There is no answered-prompt hook event yet, so an already answered prompt can linger until the TTL expires, until S4 adds approve/deny removal, or until a future PostToolUse-clearing follow-up. Overwrite-latest caps this at one stale card per session.
+
+The recorder is default-off. It fires fleet-wide only when the launcher passes a `--settings <fleet-hooks overlay>` for each tab, with an environment toggle; R owns that activation. `scripts/fleet-hooks.sample.json` is the launcher-template sample and is not wired into the checked-in `.claude/settings.json`.
+
 ## Security posture
 
 The listener binds only `127.0.0.1`, never a public or LAN address. Tailscale Serve supplies the real ts.net certificate and tailnet reachability; never use `tailscale funnel`. Each device uses a high-entropy token, whose SHA-256 hash alone is stored in `~/.heddle/pocket/config.json`. To verify “never a public listener,” inspect/assert the listener address is `127.0.0.1`; the only external exposure must be `tailscale serve`.

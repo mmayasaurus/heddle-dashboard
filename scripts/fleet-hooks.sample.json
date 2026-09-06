@@ -1,0 +1,16 @@
+{
+  "_comment": "Sample overlay for the launcher to template per tab; not a wired configuration.",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /ABSOLUTE/PATH/TO/heddle-dashboard/scripts/pocket-prompt-recorder.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
