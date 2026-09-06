@@ -256,7 +256,15 @@ function MeterRow({ label, usageWindow }: { label: string; usageWindow: UsageWin
   return <div className="meter-row"><div className="meter-label"><span>{label}</span><span>{formatUsage(usageWindow)}</span></div><div className="meter-bar" aria-label={`${label} usage`}><span className="meter-fill" style={{ width: `${width}%` }} /></div></div>;
 }
 
-function OpsPanel({ meters, error }: { meters: AccountMeter[] | null; error: boolean }) {
+const livenessToneLabel: Record<StatusTone, string> = { "waiting-on-you": "waiting", working: "working", idle: "idle", "deaf-down": "down" };
+const livenessToneOrder: StatusTone[] = ["waiting-on-you", "working", "idle", "deaf-down"];
+
+function OpsPanel({ meters, error, sessions, sessionsError }: { meters: AccountMeter[] | null; error: boolean; sessions: Session[] | null; sessionsError: boolean }) {
+  const toned = (sessions ?? []).map((session) => ({ session, tone: statusTone(session) }));
+  const sorted = [...toned].sort((left, right) => statusRank(left.tone) - statusRank(right.tone));
+  const toneCounts = livenessToneOrder
+    .map((tone) => ({ tone, count: toned.filter((entry) => entry.tone === tone).length }))
+    .filter((entry) => entry.count > 0);
   const providers = new Map<string, AccountMeter[]>();
   for (const meter of meters ?? []) {
     const provider = typeof meter?.provider === "string" && meter.provider ? meter.provider : "Unknown provider";
@@ -264,7 +272,16 @@ function OpsPanel({ meters, error }: { meters: AccountMeter[] | null; error: boo
     accounts.push(meter);
     providers.set(provider, accounts);
   }
-  return <section className="ops-panel" aria-label="Account usage meters">
+  return <section className="ops-panel" aria-label="Ops panel">
+    <section className="liveness" aria-label="Fleet liveness">
+      <h2>Fleet liveness</h2>
+      {sessionsError && <InlineError>Can’t reach host — showing the last available view.</InlineError>}
+      {sessions !== null && <>
+        {toneCounts.length > 0 && <div className="liveness-summary">{toneCounts.map(({ tone, count }) => <span className="liveness-pill" key={tone}><span className={`status-dot ${tone}`} aria-hidden="true" />{livenessToneLabel[tone]} {count}</span>)}</div>}
+        {sessions.length === 0 && <p className="liveness-empty">No live sessions</p>}
+        {sorted.length > 0 && <div className="liveness-list">{sorted.map(({ session, tone }, index) => <div className="liveness-row" key={session.sessionId || `${session.name}-${index}`}><span className={`status-dot ${tone}`} aria-label={tone} /><strong>{session.name || "—"}</strong><span className="liveness-status">{session.status || "—"}</span>{session.account && <Chip>{session.account}</Chip>}</div>)}</div>}
+      </>}
+    </section>
     {error && <InlineError>Can’t reach host — showing the last available view.</InlineError>}
     {meters !== null && providers.size === 0 && <section className="card empty"><p>No account meters available</p></section>}
     {[...providers].map(([provider, accounts]) => <section className="meter-provider" key={provider}><h2>{provider}</h2><div className="meter-cards">{accounts.map((meter, index) => <article className="card meter-card" key={`${meter.id ?? "account"}-${index}`}><div className="meter-card-header"><strong>{meter.label || meter.id || "—"}</strong><div>{meter.plan && <Chip>{meter.plan}</Chip>}{meter.stale && <span className="meter-stale">stale</span>}</div></div><MeterRow label="5h" usageWindow={meter.fiveHour} /><MeterRow label="7d" usageWindow={meter.sevenDay} /></article>)}</div></section>)}
@@ -367,6 +384,8 @@ function App() {
   const [approvalsError, setApprovalsError] = useState(false);
   const [meters, setMeters] = useState<AccountMeter[] | null>(null);
   const [metersError, setMetersError] = useState(false);
+  const [opsSessions, setOpsSessions] = useState<Session[] | null>(null);
+  const [opsSessionsError, setOpsSessionsError] = useState(false);
   const [readVersion, setReadVersion] = useState(0);
   const retry = () => setAttempt((count) => count + 1);
   const deny = useCallback(() => setConnection("denied"), []);
@@ -393,6 +412,16 @@ function App() {
     }
   }, [deny]);
   usePoller(connection === "authenticated", 10000, loadMeters);
+  const loadOpsSessions = useCallback(async (signal: AbortSignal) => {
+    try {
+      const result = await getJson<{ sessions: Session[] }>("/api/sessions", signal, deny);
+      setOpsSessions(result.sessions);
+      setOpsSessionsError(false);
+    } catch (fetchError) {
+      if (!(fetchError instanceof DOMException && fetchError.name === "AbortError")) setOpsSessionsError(true);
+    }
+  }, [deny]);
+  usePoller(connection === "authenticated" && activeTab === 3, 3000, loadOpsSessions);
   const markApprovalRead = useCallback((id: string) => { markRead(id); setReadVersion((version) => version + 1); }, []);
   const readApprovals = useMemo(() => readIds(), [readVersion]);
   const approvalsUnread = (approvals ?? []).filter((approval) => !readApprovals.has(approval.id)).length;
@@ -413,7 +442,7 @@ function App() {
   } else if (activeTab === 1) {
     content = <ApprovalsFeed approvals={approvals} error={approvalsError} read={readApprovals} onMarkRead={markApprovalRead} />;
   } else if (activeTab === 3) {
-    content = <OpsPanel meters={meters} error={metersError} />;
+    content = <OpsPanel meters={meters} error={metersError} sessions={opsSessions} sessionsError={opsSessionsError} />;
   }
   return <main className="app"><div className="brandbar"><img className="brandlogo" src="/heddle-logo.png" alt="" /><span className="brandtitle">heddle pocket console</span></div>{!selectedSession && !fleetOpen && <header><h1>{name}</h1></header>}{content}<nav aria-label="Pocket console"><div>{tabs.map(([tab], index) => <button key={tab} className={activeTab === index ? "active" : ""} onClick={() => changeTab(index)}>{tab}{index === 1 && approvalsUnread > 0 && <span className="tab-badge">{approvalsUnread}</span>}</button>)}</div></nav></main>;
 }
