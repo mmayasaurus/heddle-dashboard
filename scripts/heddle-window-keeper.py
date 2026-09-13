@@ -670,6 +670,27 @@ def pct(v):
         return None
 
 
+def _emit_advice(advice, advice_text, advice_key, advice_keys, state, dry_run):
+    # These channels are deliberately independent: a broken desktop or fleet hook must not interrupt
+    # the five-minute keeper job, nor should it prevent the durable advice artifact from being attempted.
+    log(f"rotation advisor: active={advice['active']['id']} used={advice['active']['usedPct']}% target={advice['target'] and advice['target']['id']} command={advice['command']}")
+    if dry_run:
+        log(f"rotation advisor: WOULD advise (dry-run): {advice_text}")
+        return
+    try:
+        write_json_atomic(ROTATION_ADVICE, advice)
+    except Exception as e:
+        log(f"rotation advisor: unable to write advice file: {str(e)[-160:]}")
+    run_rotation_notification(advice_text)
+    post_rotation_advice(advice_text)
+
+    try:
+        state["rotationAdvice"] = (advice_keys + [advice_key])[-50:]
+        write_json_atomic(STATE, state)
+    except Exception as e:
+        log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
+
+
 def advise_rotation(accts, state, now, dry_run=False):
     # A tap capture is written only when a live interactive session renders its statusline. The newest
     # tap is therefore the load-bearing signal for which account is actively in use; keeper anchors do
@@ -694,12 +715,34 @@ def advise_rotation(accts, state, now, dry_run=False):
         return
 
     resets_at = active_window.get("resets_at")
+    active_pct = pct(active_window["used"])
     advice_keys = state.get("rotationAdvice")
     if not isinstance(advice_keys, list):
         advice_keys = []
     census, groups, duplicate_identity = live_census(accts)
     if duplicate_identity:
         log("rotation advisor: WARNING duplicate live identity makes census unsafe; emitting no advice")
+        identity_to_ids = {}
+        for acct_id, identity in groups.items():
+            identity_to_ids.setdefault(identity, []).append(acct_id)
+        duplicate_accounts = sorted(
+            acct_id for ids in identity_to_ids.values() if len(ids) > 1 for acct_id in ids
+        )
+        outcome = "duplicate:" + ",".join(duplicate_accounts)
+        advice_key = {"activeId": active["id"], "resetsAt": resets_at, "outcome": outcome}
+        if any(key.get("activeId") == active["id"] and key.get("resetsAt") == resets_at and key.get("outcome") == outcome
+               for key in advice_keys if isinstance(key, dict)):
+            return
+        reason = ("census unsafe — duplicate live identity across config accounts "
+                  f"{','.join(duplicate_accounts)}; advisor muted until the registry is fixed "
+                  "(re-log one config dir).")
+        advice = {"advisedAt": int(now),
+                  "active": {"id": active["id"], "usedPct": active_pct, "resetsAt": resets_at},
+                  "target": None, "command": None, "thresholdPct": threshold, "reason": reason,
+                  "censusStatus": "duplicate-unsafe", "duplicateAccounts": duplicate_accounts}
+        advice_text = ("Heddle rotation advice [outcome=duplicate-unsafe]: "
+                       f"{reason} Command: none")
+        _emit_advice(advice, advice_text, advice_key, advice_keys, state, dry_run)
         return
     target_result = rotation_target(
         census,
@@ -714,7 +757,6 @@ def advise_rotation(accts, state, now, dry_run=False):
     if any(key.get("activeId") == active["id"] and key.get("resetsAt") == resets_at and key.get("outcome") == outcome
            for key in advice_keys if isinstance(key, dict)):
         return
-    active_pct = pct(active_window["used"])
     target_payload = None
     command = None
     template_error = False
@@ -754,24 +796,7 @@ def advise_rotation(accts, state, now, dry_run=False):
     advice_text = (f"Heddle rotation advice [outcome={target_result['status']} criticalPct={policy['criticalPct']}]: "
                    f"{reason} ({split_note}). Command: {command_text}")
 
-    # These channels are deliberately independent: a broken desktop or fleet hook must not interrupt
-    # the five-minute keeper job, nor should it prevent the durable advice artifact from being attempted.
-    log(f"rotation advisor: active={active['id']} used={active_pct}% target={target and target['id']} command={command}")
-    if dry_run:
-        log(f"rotation advisor: WOULD advise (dry-run): {advice_text}")
-        return
-    try:
-        write_json_atomic(ROTATION_ADVICE, advice)
-    except Exception as e:
-        log(f"rotation advisor: unable to write advice file: {str(e)[-160:]}")
-    run_rotation_notification(advice_text)
-    post_rotation_advice(advice_text)
-
-    try:
-        state["rotationAdvice"] = (advice_keys + [advice_key])[-50:]
-        write_json_atomic(STATE, state)
-    except Exception as e:
-        log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
+    _emit_advice(advice, advice_text, advice_key, advice_keys, state, dry_run)
 
 
 def account_uuid_map():

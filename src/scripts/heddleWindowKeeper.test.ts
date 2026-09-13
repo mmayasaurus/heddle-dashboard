@@ -538,17 +538,30 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(absent.stdout).toContain("rotation-policy.json absent");
   });
 
-  it("fails loud rather than advising when email identities are duplicated", () => {
+  it("loudly mutes duplicate live identities through delivery and deduplicates the mute", () => {
     const home = mkHome();
     writeRegistry(home, [
       { id: "acct1", configDir: null, email: "same@example.test", loggedIn: true },
       { id: "acct2", configDir: "~/.claude-acct2", email: "same@example.test", loggedIn: true },
     ]);
     seedRotationWindows(home);
-    const result = runKeeper([], home);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("WARNING duplicate live identity");
-    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+    const env = { HEDDLE_FLEET_POST_CMD: poster };
+
+    const first = runKeeper([], home, env);
+    expect(first.status).toBe(0);
+    expect(first.stdout).toContain("WARNING duplicate live identity");
+    expect(advice(home)).toMatchObject({ censusStatus: "duplicate-unsafe", duplicateAccounts: ["acct1", "acct2"] });
+    expect(fs.readFileSync(marker, "utf8")).toContain("duplicate");
+    expect(fs.readFileSync(marker, "utf8")).toContain("muted");
+
+    fs.writeFileSync(marker, "must-not-be-reposted");
+    const second = runKeeper([], home, env);
+    expect(second.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).toBe("must-not-be-reposted");
   });
 
   it("emits census-unavailable advice for an unrecognized interactive config dir", () => {

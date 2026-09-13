@@ -16,6 +16,11 @@ When present, HED-451's `~/.heddle/live-identities.json` may provide `{ "account
 treated as one live identity and logged loudly. A partial artifact for an email-sharing group falls
 back to email grouping rather than splitting the identity.
 
+A `live-identities.json` producer must not be wired until duplicate identities are handled this way:
+a grouping artifact that maps two config-dir ids to one identity triggers the duplicate-identity mute.
+The advisor is loudly muted through the delivery channel (`rotation-advice.json` and fleet post), rather
+than silently advising from an invalid, double-counted census.
+
 Set `HEDDLE_COMMS_POST` when installing the launchd job for a portable rotation poster, for example
 `HEDDLE_COMMS_POST=/path/to/comms-post.mjs ./scripts/install-window-keeper-launchd.sh`. The installer
 bakes that path into the plist's `EnvironmentVariables`; without it, it defaults to the operator's

@@ -13,7 +13,7 @@ def important(text):
     outcome = re.search(r"\boutcome=([a-z-]+)\b", text)
     critical = re.search(r"\bcriticalPct=(\d+(?:\.\d+)?)\b", text)
     active = re.search(r"\bis at (\d+(?:\.\d+)?)%", text)
-    if outcome and outcome.group(1) in ("wait", "unavailable"):
+    if outcome and outcome.group(1) in ("wait", "unavailable", "duplicate-unsafe"):
         return True
     return bool(critical and active and float(active.group(1)) >= float(critical.group(1)))
 
