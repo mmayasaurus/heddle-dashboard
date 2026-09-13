@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const keeperPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/heddle-window-keeper.py");
+const rotationPostPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/heddle-rotation-post.py");
 const hasPython3 = spawnSync("python3", ["--version"]).status === 0;
 const homes: string[] = [];
 const registry = {
@@ -35,6 +36,12 @@ function mkHome({ usageDir = true }: { usageDir?: boolean } = {}): string {
 }
 
 function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = {}) {
+  const censusFixture = path.join(home, "census-ps.json");
+  // One active interactive tab makes the other logged-in account legally under ceiling. Individual
+  // tests can replace this fixture to exercise exact split rules without shelling out to ps.
+  if (!fs.existsSync(censusFixture)) {
+    fs.writeFileSync(censusFixture, JSON.stringify(["1 claude --resume abc"]));
+  }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
@@ -43,10 +50,15 @@ function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = 
     HEDDLE_SECURITY_BIN: path.join(home, "fake-security-unavailable"),
     HEDDLE_OAUTH_USAGE_URL: `file://${path.join(home, "missing-oauth-usage.json")}`,
     HEDDLE_OAUTH_ALLOW_INSECURE_URL: "1",
+    HEDDLE_CENSUS_PS_FIXTURE: censusFixture,
   };
   delete env.CLAUDE_CONFIG_DIR;
   Object.assign(env, overrides);
   return spawnSync("python3", [keeperPath, ...args], { cwd: path.resolve(path.dirname(keeperPath), ".."), env, encoding: "utf8" });
+}
+
+function writeCensusFixture(home: string, lines: string[]) {
+  fs.writeFileSync(path.join(home, "census-ps.json"), JSON.stringify(lines));
 }
 
 function calls(home: string): string[] {
@@ -504,6 +516,156 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(rotationAdvice.thresholdPct).toBe(85);
   });
 
+  it("uses valid policy, rejects invalid policy, and logs missing policy defaults", () => {
+    const validHome = mkHome();
+    seedRotationWindows(validHome, { activeUsed: 80 });
+    fs.writeFileSync(path.join(validHome, ".heddle", "rotation-policy.json"), JSON.stringify({ schemaVersion: 1, rotateThresholdPct: 75, criticalPct: 96 }));
+    const valid = runKeeper([], validHome);
+    expect(valid.status).toBe(0);
+    expect(advice(validHome).thresholdPct).toBe(75);
+
+    const invalidHome = mkHome();
+    seedRotationWindows(invalidHome);
+    fs.writeFileSync(path.join(invalidHome, ".heddle", "rotation-policy.json"), "{");
+    const invalid = runKeeper([], invalidHome);
+    expect(invalid.status).toBe(0);
+    expect(invalid.stdout).toContain("invalid rotation-policy.json");
+
+    const absentHome = mkHome();
+    seedRotationWindows(absentHome);
+    const absent = runKeeper([], absentHome);
+    expect(absent.status).toBe(0);
+    expect(absent.stdout).toContain("rotation-policy.json absent");
+  });
+
+  it("fails loud rather than advising when email identities are duplicated", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, email: "same@example.test", loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", email: "same@example.test", loggedIn: true },
+    ]);
+    seedRotationWindows(home);
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WARNING duplicate live identity");
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+  });
+
+  it("emits census-unavailable advice for an unrecognized interactive config dir", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+    writeCensusFixture(home, ["1 claude --resume x CLAUDE_CONFIG_DIR=/not-in-registry"]);
+    const result = runKeeper([], home, { HEDDLE_FLEET_POST_CMD: poster });
+    expect(result.status).toBe(0);
+    expect(advice(home).censusStatus).toBe("unavailable");
+    expect(advice(home).reason).toContain("census unavailable");
+    expect(fs.readFileSync(marker, "utf8")).not.toContain("skewed");
+  });
+
+  it("re-advises a legal target after the same window's census recovers", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeCensusFixture(home, ["1 claude --resume x CLAUDE_CONFIG_DIR=/not-in-registry"]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(advice(home).censusStatus).toBe("unavailable");
+    writeCensusFixture(home, ["1 claude --resume x"]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(advice(home).censusStatus).toBe("target");
+    expect(advice(home).target.id).toBe("acct2");
+  });
+
+  it("excludes billing and logged-out dispatch signals from target selection", () => {
+    const home = mkHome();
+    const { now, resetsAt } = seedRotationWindows(home);
+    writeRegistry(home, [...registry.claude.slice(0, 2), { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true }]);
+    writeTap(home, "acct3", now + 1, 30, resetsAt);
+    fs.writeFileSync(path.join(home, ".heddle", "usage", "claude-acct2.dispatch.json"), JSON.stringify({ dispatchable: false, reason: "logged-out" }));
+    const result = runKeeper([], home);
+    expect(result.status).toBe(0);
+    expect(advice(home).target.id).toBe("acct3");
+  });
+
+  it("stars wait/unavailable outcomes and fractional critical usage without threshold false positives", () => {
+    const home = mkHome();
+    const node = path.join(home, "node");
+    const marker = path.join(home, "node-args");
+    const comms = path.join(home, "comms-post.mjs");
+    fs.writeFileSync(comms, "// fixture\n");
+    fs.writeFileSync(node, `#!/bin/sh\nprintf '%s' "$*" > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(node, 0o755);
+    const post = (text: string) => spawnSync("python3", [rotationPostPath], {
+      input: text,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${home}:${process.env.PATH ?? ""}`, HEDDLE_COMMS_POST: comms },
+    });
+    expect(post("Heddle rotation advice [outcome=target criticalPct=95]: acct1 is at 95.5%").status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).toContain("⭐");
+    expect(post("Heddle rotation advice [outcome=target criticalPct=99]: acct1 is at 90%, meeting the 95% rotation threshold").status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).not.toContain("⭐");
+    expect(post("Heddle rotation advice [outcome=unavailable criticalPct=99]: acct1 is at 1%").status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).toContain("⭐");
+  });
+
+  it("uses the census ceiling and waits rather than recommending a fourth session", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+      { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true },
+      { id: "acct4", configDir: "~/.claude-acct4", loggedIn: true },
+    ]);
+    writeTap(home, "acct1", now + 4, 88, now + 3600);
+    writeTap(home, "acct2", now + 3, 90, now + 4000);
+    writeTap(home, "acct3", now + 2, 90, now + 2000);
+    writeTap(home, "acct4", now + 1, 10, now + 3000);
+    writeCensusFixture(home, [
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x`),
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct2`),
+      ...Array.from({ length: 2 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct3`),
+      ...Array.from({ length: 3 }, (_, i) => `${i} claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct4`),
+    ]);
+    expect(runKeeper([], home).status).toBe(0);
+    expect(advice(home).target).toBeNull();
+    expect(advice(home).reason).toContain("wait until acct3 resets");
+  });
+
+  it("prints advisory in dry-run without writing or posting it", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+    const result = runKeeper(["--dry-run"], home, { HEDDLE_FLEET_POST_CMD: poster });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("WOULD advise (dry-run)");
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("posts the configured critical threshold in a live rotation advisory", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    fs.writeFileSync(
+      path.join(home, ".heddle", "rotation-policy.json"),
+      JSON.stringify({ schemaVersion: 1, rotateThresholdPct: 85, criticalPct: 90 }),
+    );
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+
+    const result = runKeeper([], home, { HEDDLE_FLEET_POST_CMD: poster });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).toContain("criticalPct=90");
+  });
+
   it("does not advise when the active tap usage is below the default rotation threshold", () => {
     const home = mkHome();
     seedRotationWindows(home, { activeUsed: 80 });
@@ -599,7 +761,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(advice(home).advisedAt).toBe("must-not-be-overwritten");
     expect(state.last_ping_ts).toBe(123);
     expect(state.last_ping_acct).toBe("acct2");
-    expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
+    expect(state.rotationAdvice).toContainEqual(expect.objectContaining({ activeId: "acct1", resetsAt, outcome: "target:acct2" }));
     expect(calls(home)).toEqual([]);
   });
 
@@ -619,7 +781,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const state = JSON.parse(fs.readFileSync(path.join(home, ".heddle", "window-keeper.state.json"), "utf8"));
     expect(state.rotationAdvice).toHaveLength(50);
     expect(state.rotationAdvice[0]).toEqual({ activeId: "old6", resetsAt: 6 });
-    expect(state.rotationAdvice).toContainEqual({ activeId: "acct1", resetsAt });
+    expect(state.rotationAdvice).toContainEqual(expect.objectContaining({ activeId: "acct1", resetsAt, outcome: "target:acct2" }));
   });
 
   it("advises again after the active tap window rolls over", () => {
@@ -643,7 +805,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const result = runKeeper([], home);
     expect(result.status).toBe(0);
     expect(advice(home).target).toBeNull();
-    expect(advice(home).reason).toContain("every other logged-in account is also at/over the threshold or unknown");
+    expect(advice(home).reason).toContain("no legal target");
     expect(calls(home)).toEqual([]);
   });
 
