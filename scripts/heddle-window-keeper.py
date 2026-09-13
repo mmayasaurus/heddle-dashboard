@@ -721,7 +721,7 @@ def advise_rotation(accts, state, now, dry_run=False):
         advice_keys = []
     census, groups, duplicate_identity = live_census(accts)
     if duplicate_identity:
-        log("rotation advisor: WARNING duplicate live identity makes census unsafe; emitting no advice")
+        log("rotation advisor: WARNING duplicate live identity makes census unsafe; emitting loud mute")
         identity_to_ids = {}
         for acct_id, identity in groups.items():
             identity_to_ids.setdefault(identity, []).append(acct_id)

@@ -554,7 +554,12 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const first = runKeeper([], home, env);
     expect(first.status).toBe(0);
     expect(first.stdout).toContain("WARNING duplicate live identity");
-    expect(advice(home)).toMatchObject({ censusStatus: "duplicate-unsafe", duplicateAccounts: ["acct1", "acct2"] });
+    expect(advice(home)).toMatchObject({
+      censusStatus: "duplicate-unsafe",
+      duplicateAccounts: ["acct1", "acct2"],
+      target: null,
+      command: null,
+    });
     expect(fs.readFileSync(marker, "utf8")).toContain("duplicate");
     expect(fs.readFileSync(marker, "utf8")).toContain("muted");
 
@@ -562,6 +567,37 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const second = runKeeper([], home, env);
     expect(second.status).toBe(0);
     expect(fs.readFileSync(marker, "utf8")).toBe("must-not-be-reposted");
+
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, email: "same@example.test", loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", email: "same@example.test", loggedIn: true },
+      { id: "acct3", configDir: "~/.claude-acct3", email: "same@example.test", loggedIn: true },
+    ]);
+    const third = runKeeper([], home, env);
+    expect(third.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).not.toBe("must-not-be-reposted");
+    expect(fs.readFileSync(marker, "utf8")).toContain("duplicate");
+    expect(fs.readFileSync(marker, "utf8")).toContain("muted");
+    expect(advice(home).duplicateAccounts).toEqual(["acct1", "acct2", "acct3"]);
+  });
+
+  it("does not write or post a duplicate-identity mute in dry-run mode", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, email: "same@example.test", loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", email: "same@example.test", loggedIn: true },
+    ]);
+    seedRotationWindows(home);
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+
+    const result = runKeeper(["--dry-run"], home, { HEDDLE_FLEET_POST_CMD: poster });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("emits census-unavailable advice for an unrecognized interactive config dir", () => {
