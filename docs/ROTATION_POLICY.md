@@ -15,3 +15,9 @@ When present, HED-451's `~/.heddle/live-identities.json` may provide `{ "account
 "identity-id" } }` for identity grouping. Without it, matching `accounts.json` email values are
 treated as one live identity and logged loudly. A partial artifact for an email-sharing group falls
 back to email grouping rather than splitting the identity.
+
+Set `HEDDLE_COMMS_POST` when installing the launchd job for a portable rotation poster, for example
+`HEDDLE_COMMS_POST=/path/to/comms-post.mjs ./scripts/install-window-keeper-launchd.sh`. The installer
+bakes that path into the plist's `EnvironmentVariables`; without it, it defaults to the operator's
+workspace `comms-post.mjs`. If the poster receives no `HEDDLE_COMMS_POST`, it warns on stderr and
+no-ops rather than crashing when the configured path is absent.

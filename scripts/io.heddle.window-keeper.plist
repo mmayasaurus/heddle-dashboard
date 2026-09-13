@@ -7,6 +7,7 @@
   <key>RunAtLoad</key><true/>
   <key>EnvironmentVariables</key><dict>
     <key>HEDDLE_FLEET_POST_CMD</key><string>/usr/bin/python3 __HOME__/.heddle/heddle-rotation-post.py</string>
+    <key>HEDDLE_COMMS_POST</key><string>__COMMS_POST__</string>
   </dict>
   <key>StandardOutPath</key><string>__HOME__/.heddle/window-keeper.launchd.log</string>
   <key>StandardErrorPath</key><string>__HOME__/.heddle/window-keeper.launchd.log</string>

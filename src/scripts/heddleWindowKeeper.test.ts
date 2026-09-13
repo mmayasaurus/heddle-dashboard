@@ -554,11 +554,16 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
   it("emits census-unavailable advice for an unrecognized interactive config dir", () => {
     const home = mkHome();
     seedRotationWindows(home);
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
     writeCensusFixture(home, ["1 claude --resume x CLAUDE_CONFIG_DIR=/not-in-registry"]);
-    const result = runKeeper([], home);
+    const result = runKeeper([], home, { HEDDLE_FLEET_POST_CMD: poster });
     expect(result.status).toBe(0);
     expect(advice(home).censusStatus).toBe("unavailable");
     expect(advice(home).reason).toContain("census unavailable");
+    expect(fs.readFileSync(marker, "utf8")).not.toContain("skewed");
   });
 
   it("re-advises a legal target after the same window's census recovers", () => {
@@ -641,6 +646,24 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).toContain("WOULD advise (dry-run)");
     expect(fs.existsSync(path.join(home, ".heddle", "rotation-advice.json"))).toBe(false);
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("posts the configured critical threshold in a live rotation advisory", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    fs.writeFileSync(
+      path.join(home, ".heddle", "rotation-policy.json"),
+      JSON.stringify({ schemaVersion: 1, rotateThresholdPct: 85, criticalPct: 90 }),
+    );
+    const marker = path.join(home, "post-marker");
+    const poster = path.join(home, "post-marker.sh");
+    fs.writeFileSync(poster, `#!/bin/sh\ncat > ${JSON.stringify(marker)}\n`);
+    fs.chmodSync(poster, 0o755);
+
+    const result = runKeeper([], home, { HEDDLE_FLEET_POST_CMD: poster });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8")).toContain("criticalPct=90");
   });
 
   it("does not advise when the active tap usage is below the default rotation threshold", () => {

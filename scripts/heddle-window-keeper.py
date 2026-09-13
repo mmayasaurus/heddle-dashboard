@@ -741,7 +741,10 @@ def advise_rotation(accts, state, now, dry_run=False):
     else:
         reason = (f"{active['id']} is at {active_pct}%, meeting the {threshold}% rotation threshold; "
                   "no legal target; census has no live eligible account — verify manually.")
-    split_note = "fleet split is even" if target_result.get("evenlySplit") else "fleet split is currently skewed"
+    evenly_split = target_result.get("evenlySplit")
+    split_note = ("fleet split is even" if evenly_split is True else
+                  "fleet split is currently skewed" if evenly_split is False else
+                  "fleet split unknown")
     advice = {"advisedAt": int(now),
               "active": {"id": active["id"], "usedPct": active_pct, "resetsAt": resets_at},
               "target": target_payload, "command": command, "thresholdPct": threshold, "reason": reason,

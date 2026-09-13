@@ -5,7 +5,8 @@ import re
 import subprocess
 import sys
 
-COMMS_POST = os.environ.get("HEDDLE_COMMS_POST", "/Users/mayatobi/Developer/Spinventory-Rebuild-App/.claude/bin/comms-post.mjs")
+_COMMS_POST_FALLBACK = "/Users/mayatobi/Developer/Spinventory-Rebuild-App/.claude/bin/comms-post.mjs"
+COMMS_POST = os.environ.get("HEDDLE_COMMS_POST") or _COMMS_POST_FALLBACK
 
 
 def important(text):
@@ -22,6 +23,8 @@ def main():
     if not text:
         print("rotation post: empty advisory", file=sys.stderr)
         return 1
+    if "HEDDLE_COMMS_POST" not in os.environ:
+        print(f"rotation post: HEDDLE_COMMS_POST unset; using built-in fallback {COMMS_POST} — set HEDDLE_COMMS_POST for portability", file=sys.stderr)
     if not os.path.isfile(COMMS_POST):
         print("rotation post: comms-post unavailable", file=sys.stderr)
         return 1
