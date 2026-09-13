@@ -252,12 +252,16 @@ const NON_ACCOUNT_SUFFIXES: &[&str] = &[
 fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit> {
     let mut rows: Vec<AccountLimit> = Vec::new();
     for a in registry {
-        // Freshest of tap capture vs keeper anchor (HED-87), then Fable attribution (HED-75) —
-        // an anchor-shaped file has null used_percentage, which attribute() already treats as
-        // no-capture (it never seeds a historical estimate from nothing).
-        let file = freshest_account_file(dir, &a.id);
-        let attrib = attribute(dir, &a.id, file.as_ref(), now);
-        rows.push(row(a, file.as_ref(), now, attrib.as_ref()));
+        // The displayed 5h/7d windows come from the freshest of tap, keeper anchor, and OAuth sidecar.
+        // Fable attribution, though, reads ONLY the tap/keeper capture: an OAuth window row has no
+        // `model` and carries a `seven_day.used_percentage`, so feeding it to attribute()'s
+        // capture_from_tap would poison the account-wide baseline (lastUsedPct/lastCapturedAt) and —
+        // as the freshest source flip-flops between tap and OAuth across renders — rewrite the attrib
+        // file on a bare timestamp bump. The exact Fable % is folded in by attribute() itself (its own
+        // oauth_exact read), independent of this argument. An anchor-shaped file has null
+        // used_percentage, which attribute() already treats as no-capture.
+        let attrib = attribute(dir, &a.id, freshest_tap_keeper(dir, &a.id).as_ref(), now);
+        rows.push(row(a, freshest_account_file(dir, &a.id, now).as_ref(), now, attrib.as_ref()));
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return rows;
@@ -306,9 +310,15 @@ fn account_rows(dir: &Path, registry: &[Account], now: i64) -> Vec<AccountLimit>
     rows
 }
 
-/// The statusline tap has measured usage; the keeper anchor records an otherwise invisible
-/// headless ping. Match the keeper's `window()` rule: whichever was captured most recently wins.
-fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
+/// The statusline tap has measured usage; the keeper anchor records an otherwise invisible headless
+/// ping. Match the keeper's `window()` rule: whichever was captured most recently wins. This is the
+/// FABLE-ATTRIBUTION input (real tap captures only). The OAuth sidecar is folded in for the DISPLAYED
+/// windows by `freshest_account_file`, never here: an OAuth window row has no `model` and carries a
+/// `seven_day.used_percentage`, so `capture_from_tap` would poison the account-wide baseline
+/// (`lastUsedPct`/`lastCapturedAt`) and — as the freshest source flip-flops between tap and OAuth
+/// across renders — rewrite the attrib file on a bare timestamp bump. The exact Fable % arrives
+/// separately via `attribute()`'s own `oauth_exact` read.
+fn freshest_tap_keeper(dir: &Path, id: &str) -> Option<Value> {
     let tap = read_json(&dir.join(format!("claude-{id}.json")));
     let keeper = read_json(&dir.join(format!("claude-{id}.keeper.json"))).map(|anchor| {
         serde_json::json!({
@@ -329,11 +339,64 @@ fn freshest_account_file(dir: &Path, id: &str) -> Option<Value> {
     }
 }
 
+/// The freshest DISPLAYED-window source: tap capture, keeper anchor, and OAuth usage sidecar (which
+/// carries independently refreshed measured windows). Whichever valid source was captured most
+/// recently wins. For the account's shown 5h/7d ONLY — never the Fable-attribution input (see
+/// `freshest_tap_keeper`), which must not ingest the OAuth window file.
+fn freshest_account_file(dir: &Path, id: &str, now: i64) -> Option<Value> {
+    let tap_or_keeper = freshest_tap_keeper(dir, id);
+    let oauth = oauth_usage_windows(dir, id, now);
+    match (tap_or_keeper, oauth) {
+        (Some(existing), Some(oauth)) => {
+            let existing_at = existing["capturedAt"].as_i64().unwrap_or_default();
+            let oauth_at = oauth["capturedAt"].as_i64().unwrap_or_default();
+            Some(if oauth_at > existing_at { oauth } else { existing })
+        }
+        (existing, oauth) => existing.or(oauth),
+    }
+}
+
+/// A fresh OAuth sidecar, mapped to the statusline tap shape for its measured 5h/7d windows.
+/// A sidecar without either valid window is not a capture: accepting it would manufacture an
+/// all-null source and could hide a valid tap or keeper reading.
+fn oauth_usage_windows(dir: &Path, id: &str, now: i64) -> Option<Value> {
+    let v = read_json(&dir.join(format!("claude-{}.oauth-usage.json", safe_segment(id))))?;
+    let captured_at = v["capturedAt"].as_i64()?;
+    if captured_at > now
+        || is_stale(Some(captured_at), now, oauth_exact_stale_after_secs()).unwrap_or(true)
+    {
+        return None;
+    }
+    let valid_pct = |value: &Value| {
+        value
+            .as_f64()
+            .filter(|pct| pct.is_finite() && (0.0..=100.0).contains(pct))
+    };
+    let five_hour_pct = valid_pct(&v["fiveHourPct"]);
+    let seven_day_pct = valid_pct(&v["sevenDayPct"]);
+    if five_hour_pct.is_none() && seven_day_pct.is_none() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "capturedAt": captured_at,
+        "rate_limits": {
+            "five_hour": {
+                "used_percentage": five_hour_pct,
+                "resets_at": v["fiveHourResetsAt"],
+            },
+            "seven_day": {
+                "used_percentage": seven_day_pct,
+                "resets_at": v["sevenDayResetsAt"],
+            },
+        },
+    }))
+}
+
 /// A fresh, valid reading from `claude-<id>.oauth-usage.json` (the window-keeper's sidecar,
 /// HED-150 pt1): `{fablePct, fiveHourPct, sevenDayPct, byModel, capturedAt, source[, windowResetsAt]}`.
-/// `fiveHourPct`/`sevenDayPct` are for Part-1 reconciliation/other consumers — never read here, the
-/// tap alone drives the displayed 5h/7d windows. `None` for anything absent, malformed, out of
-/// range, or stale — best-effort, same as the rest of `attribute()`.
+/// This reader is solely for Fable attribution. The displayed 5h/7d windows are separately read by
+/// `oauth_usage_windows()`. `None` for anything absent, malformed, out of range, or stale —
+/// best-effort, same as the rest of `attribute()`.
 struct OauthExact {
     fable_pct: f64,
     captured_at: i64,
@@ -492,7 +555,14 @@ pub(super) fn build(
     // summary never blanks just because the active account hasn't rendered since install — but
     // then `activeAccount` names the account the legacy capture actually came from (its `account`
     // field), never the selected one, so the label can't disagree with the numbers.
-    let active_file = active.and_then(|a| read_json(&dir.join(format!("claude-{}.json", a.id))));
+    let active_file = active.and_then(|a| freshest_account_file(dir, &a.id, now));
+    // The displayed windows may now come from the OAuth sidecar, which has no `model`. Keep the
+    // summary's model label sourced from the active account's own tap, exactly as it was before the
+    // sidecar became a window source — the label must not blank to just "N acct" because an
+    // idle-account poll won the window race.
+    let active_model = active
+        .and_then(|a| read_json(&dir.join(format!("claude-{}.json", a.id))))
+        .and_then(|v| v["model"].as_str().map(str::to_string));
     let (top_from_active, legacy_account) = match &active_file {
         Some(_) => (true, None),
         None => (
@@ -507,6 +577,7 @@ pub(super) fn build(
         .unwrap_or_else(empty_top);
     top.model = top
         .model
+        .or(active_model)
         .map(|m| format!("{m} · {} acct", rows.len()))
         .or_else(|| Some(format!("{} acct", rows.len())));
     // On legacy fallback, only name an account that actually has a row — a stale/unknown id in
