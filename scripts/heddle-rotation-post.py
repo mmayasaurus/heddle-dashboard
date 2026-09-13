@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Post one window-keeper advisory through the operator's heddle-comms bridge."""
+import os
+import re
 import subprocess
 import sys
 
-COMMS_POST = "/Users/mayatobi/Developer/Spinventory-Rebuild-App/.claude/bin/comms-post.mjs"
+COMMS_POST = os.environ.get("HEDDLE_COMMS_POST", "/Users/mayatobi/Developer/Spinventory-Rebuild-App/.claude/bin/comms-post.mjs")
 
 
 def important(text):
-    return "no legal target" in text.lower() or any(f"{pct}%" in text for pct in range(95, 101))
+    outcome = re.search(r"\boutcome=([a-z-]+)\b", text)
+    critical = re.search(r"\bcriticalPct=(\d+(?:\.\d+)?)\b", text)
+    active = re.search(r"\bis at (\d+(?:\.\d+)?)%", text)
+    if outcome and outcome.group(1) in ("wait", "unavailable"):
+        return True
+    return bool(critical and active and float(active.group(1)) >= float(critical.group(1)))
 
 
 def main():
@@ -15,12 +22,20 @@ def main():
     if not text:
         print("rotation post: empty advisory", file=sys.stderr)
         return 1
+    if not os.path.isfile(COMMS_POST):
+        print("rotation post: comms-post unavailable", file=sys.stderr)
+        return 1
     body = ("⭐ " if important(text) else "") + text
     try:
         # comms-post currently accepts only kind=chat and has no importance argument. Keep the
         # importance marker in the body until its interface grows a dedicated flag.
+        args = ["node", COMMS_POST, "--to", "R", "--kind", "chat"]
+        issue = os.environ.get("HEDDLE_ROTATION_POST_ISSUE")
+        if issue:
+            args += ["--issue", issue]
+        args += ["--body", body]
         result = subprocess.run(
-            ["node", COMMS_POST, "--to", "R", "--kind", "chat", "--issue", "HED-486", "--body", body],
+            args,
             capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
