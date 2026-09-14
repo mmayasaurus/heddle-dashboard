@@ -685,6 +685,84 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.readFileSync(marker, "utf8")).not.toContain("skewed");
   });
 
+  it("keeps fleet census counts when an env-less out-of-pool session is present", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeRegistry(home, [
+      { id: "acct1", configDir: "~/.claude-acct1", loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+    ]);
+    writeCensusFixture(home, [
+      `1 claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct1`,
+      `2 claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct2`,
+      "3 claude --resume x",
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("census excluded 1 out-of-pool session");
+    // HED-495's contract: the out-of-pool session must NOT blank the census. With the two fleet
+    // sessions still counted the advisor has a valid census (a real status, never "unavailable").
+    // The exact decision for this seed is "wait" — that is the advisor's rotation call, not this fix's.
+    expect(advice(home).censusStatus).not.toBe("unavailable");
+    expect(advice(home).censusStatus).toBe("wait");
+  });
+
+  it("keeps an all-out-of-pool census unavailable", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeRegistry(home, [
+      { id: "acct1", configDir: "~/.claude-acct1", loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+    ]);
+    writeCensusFixture(home, ["1 claude --resume x", "2 claude --resume y"]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("census excluded 2 out-of-pool session(s)");
+    expect(advice(home).censusStatus).toBe("unavailable");
+  });
+
+  it("counts an env-less session for the sole default-dir account", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeCensusFixture(home, ["1 claude --resume x"]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(advice(home).censusStatus).toBe("target");
+    expect(result.stdout).not.toContain("out-of-pool");
+  });
+
+  it("keeps an env-less session ambiguous when two fleet accounts own the default dir", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeRegistry(home, [
+      { id: "acct1", configDir: null, loggedIn: true },
+      { id: "acct2", configDir: "~/.claude", loggedIn: true },
+    ]);
+    writeCensusFixture(home, ["1 claude --resume x"]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(advice(home).censusStatus).toBe("unavailable");
+  });
+
+  it("keeps an explicit non-fleet config dir ambiguous", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeCensusFixture(home, [`1 claude --resume x CLAUDE_CONFIG_DIR=${home}/not-in-registry`]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(advice(home).censusStatus).toBe("unavailable");
+  });
+
   it("re-advises a legal target after the same window's census recovers", () => {
     const home = mkHome();
     seedRotationWindows(home);
