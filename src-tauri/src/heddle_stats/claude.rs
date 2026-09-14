@@ -350,7 +350,21 @@ fn freshest_account_file(dir: &Path, id: &str, now: i64) -> Option<Value> {
         (Some(existing), Some(oauth)) => {
             let existing_at = existing["capturedAt"].as_i64().unwrap_or_default();
             let oauth_at = oauth["capturedAt"].as_i64().unwrap_or_default();
-            Some(if oauth_at > existing_at { oauth } else { existing })
+            if oauth_at > existing_at {
+                // OAuth is the freshest source, but a sidecar carrying only ONE valid window must not
+                // let its null window erase a still-valid value from the tap/keeper it outranks —
+                // backfill each missing window (used_percentage + resets_at) from `existing`
+                // (CodeAnt #122). A keeper anchor's own window is null, so this is a no-op there.
+                let mut merged = oauth;
+                for window in ["five_hour", "seven_day"] {
+                    if merged["rate_limits"][window]["used_percentage"].is_null() {
+                        merged["rate_limits"][window] = existing["rate_limits"][window].clone();
+                    }
+                }
+                Some(merged)
+            } else {
+                Some(existing)
+            }
         }
         (existing, oauth) => existing.or(oauth),
     }

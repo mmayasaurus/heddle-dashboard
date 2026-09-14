@@ -536,6 +536,38 @@ fn a_fresh_oauth_sidecar_beats_an_older_tap_for_account_windows() {
 }
 
 #[test]
+fn a_partial_oauth_sidecar_backfills_its_missing_window_from_the_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-partial-window");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    // Fresher OAuth sidecar with ONLY the 5h window populated (7d null) — e.g. an idle account whose
+    // 7-day window the endpoint hasn't reported. The fresher 5h must surface, but the null 7d must NOT
+    // erase the tap's still-valid 24% (CodeAnt #122 — partial sidecar wiped the outranked window).
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &format!(
+            r#"{{"fablePct":null,"fiveHourPct":8.0,"sevenDayPct":null,"byModel":{{}},"capturedAt":{},"source":"oauth-usage"}}"#,
+            now - 10
+        ),
+    );
+    let limit = build(&s.0, &registry(), None, now).unwrap();
+    let row = &limit.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        row.five_hour.used_percentage,
+        Some(8.0),
+        "the fresher OAuth 5h window surfaces"
+    );
+    assert_eq!(
+        row.seven_day.used_percentage,
+        Some(24.0),
+        "the null OAuth 7d must fall back to the tap, not erase it"
+    );
+}
+
+#[test]
 fn a_newer_keeper_anchor_beats_an_older_oauth_sidecar_for_account_windows() {
     let now = 1_786_830_900;
     let s = Scratch::new("oauth-windows-keeper-reset");
