@@ -25,7 +25,6 @@ What it does (per run, safe to run every 5 min from launchd):
 Costs: haiku ~10 tokens per ping, at most one ping per account per 5h. Never uses Fable/Opus.
 """
 import json, math, os, re, sys, time, subprocess, datetime as dt, shutil, shlex
-import urllib.error, urllib.parse, urllib.request
 
 try:
     import fcntl
@@ -47,6 +46,7 @@ TRANSCRIPT_LOCK = os.path.join(HOME, ".heddle", "transcript-accounting.lock")
 OAUTH_LOCK = os.path.join(HOME, ".heddle", "oauth-usage.lock")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
+HEDDLE_BIN = os.environ.get("HEDDLE_BIN", "")
 # The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
 # template instead of inventing a path and presenting it as a real command.
 RELAUNCH_TEMPLATE = os.environ.get("HEDDLE_RELAUNCH_TEMPLATE", "bash resume-sessions.sh --account {account} -y")
@@ -160,144 +160,6 @@ def anchor_slot(now, other_live_resets, window_secs, slot_tolerance_secs):
     return ping_now, target_phase, wait_secs
 
 
-def oauth_access_token(acct):
-    """Read an account's OAuth token without letting it escape into durable data or logs."""
-    acct_id = acct.get("id", "unknown")
-    try:
-        if acct.get("configDir") is None:
-            # Keychain access is intentionally injected for tests. Never include its stdout/stderr in
-            # diagnostics: either can contain the credential we are protecting.
-            override = os.environ.get("HEDDLE_SECURITY_BIN")
-            if override is None:
-                security = "security"
-            else:
-                # A set-but-invalid override must FAIL CLOSED: silently falling back to the real
-                # `security` would read the live keychain (and pop a GUI prompt) on a mistyped
-                # override mid-test — the exact thing the injected fake exists to prevent.
-                security = shutil.which(override)
-                if security is None:
-                    log(f"[oauth] acct {acct_id}: credentials unavailable (HEDDLE_SECURITY_BIN not executable)")
-                    return None
-            result = subprocess.run([security, "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                                    capture_output=True, text=True, timeout=10)
-            if result.returncode != 0:
-                log(f"[oauth] acct {acct_id}: credentials unavailable (security status={result.returncode})")
-                return None
-            credentials = json.loads(result.stdout)
-        else:
-            config_dir = os.path.expanduser(acct["configDir"])
-            with open(os.path.join(config_dir, ".credentials.json")) as f:
-                credentials = json.load(f)
-        nested_token = (credentials.get("claudeAiOauth") or {}).get("accessToken") if isinstance(credentials, dict) else None
-        token = nested_token if isinstance(nested_token, str) and nested_token else (credentials.get("accessToken") if isinstance(credentials, dict) else None)
-        if not isinstance(token, str) or not token:
-            log(f"[oauth] acct {acct_id}: credentials unavailable (missing access token)")
-            return None
-        return token
-    except Exception as e:  # Credential sources can be absent, denied, or malformed.
-        log(f"[oauth] acct {acct_id}: credentials unavailable ({type(e).__name__})")
-        return None
-
-
-class RefuseOAuthRedirects(urllib.request.HTTPRedirectHandler):
-    """A bearer token must never be forwarded to a redirect destination."""
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def oauth_url_allowed(url):
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme == "https":
-        return True
-    # File fixtures exist solely for this test-only explicit opt-in. Normal operation accepts HTTPS only.
-    if os.environ.get("HEDDLE_OAUTH_ALLOW_INSECURE_URL") != "1":
-        return False
-    return parsed.scheme == "file"
-
-
-def fetch_oauth_usage(token):
-    """Fetch only the OAuth limits object; failures deliberately omit bodies and credentials."""
-    url = os.environ.get("HEDDLE_OAUTH_USAGE_URL", "https://api.anthropic.com/api/oauth/usage")
-    if not oauth_url_allowed(url):
-        log("[oauth] usage fetch failed (disallowed URL scheme)")
-        return None
-    request = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
-        "anthropic-beta": "oauth-2025-04-20",
-    })
-    try:
-        opener = urllib.request.build_opener(RefuseOAuthRedirects())
-        with opener.open(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # Do not read an HTTP error body: undocumented endpoints can reflect authorization data.
-        log(f"[oauth] usage fetch failed (HTTPError status={e.code})")
-        return None
-    except Exception as e:
-        log(f"[oauth] usage fetch failed ({type(e).__name__})")
-        return None
-    limits = payload.get("limits") if isinstance(payload, dict) else None
-    if not limits and isinstance(payload, dict) and isinstance(payload.get("weekly_scoped"), dict):
-        # `not limits` covers both a missing key and an empty `limits: []` returned alongside a
-        # populated weekly_scoped — either way the exact Fable value must not be silently dropped.
-        limits = [{"kind": "weekly_scoped", **payload["weekly_scoped"]}]
-    if not isinstance(limits, list):
-        log("[oauth] usage fetch failed (invalid response)")
-        return None
-    # The endpoint is undocumented, so do not trust it not to reflect Authorization data in a model
-    # label. Remove such a label before any response object leaves this token-bearing function.
-    for limit in limits:
-        if not isinstance(limit, dict):
-            continue
-        scope = limit.get("scope")
-        model = scope.get("model") if isinstance(scope, dict) else None
-        display_name = model.get("display_name") if isinstance(model, dict) else None
-        if isinstance(display_name, str) and token in display_name:
-            model["display_name"] = None
-    return {"limits": limits}
-
-
-def oauth_usage_for(acct):
-    """Return a token-free usage payload and whether failure was credential-related."""
-    token = oauth_access_token(acct)
-    if token is None:
-        return None, True
-    try:
-        usage = fetch_oauth_usage(token)
-    finally:
-        # The token's only use is the Authorization header built in fetch_oauth_usage.
-        del token
-    if usage is None:
-        return None, False
-
-    # This endpoint is undocumented and its entries are not guaranteed. Copy only independently
-    # validated numbers and restrained display names into the artifact, never the raw response.
-    shaped = {"fablePct": None, "fiveHourPct": None, "sevenDayPct": None, "byModel": {},
-              "capturedAt": int(time.time()), "source": "oauth-usage"}
-    for limit in usage["limits"]:
-        if not isinstance(limit, dict):
-            continue
-        percent = limit.get("percent")
-        if (isinstance(percent, bool) or not isinstance(percent, (int, float))
-                or not math.isfinite(percent) or not 0 <= percent <= 100):
-            continue
-        kind = limit.get("kind")
-        if kind == "five_hour":
-            shaped["fiveHourPct"] = percent
-        elif kind == "seven_day":
-            shaped["sevenDayPct"] = percent
-        elif kind == "weekly_scoped":
-            scope = limit.get("scope")
-            model = scope.get("model") if isinstance(scope, dict) else None
-            display_name = model.get("display_name") if isinstance(model, dict) else None
-            if not isinstance(display_name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ._-]{0,63}", display_name):
-                continue
-            shaped["byModel"][display_name] = percent
-            if display_name == "Fable":
-                shaped["fablePct"] = percent
-    return shaped, False
-
-
 def oauth_lock():
     """Acquire the same non-blocking flock discipline as transcript accounting."""
     if fcntl is None:
@@ -319,6 +181,15 @@ def oauth_lock():
 
 def refresh_oauth_usage(accts, now):
     """Refresh uncached exact OAuth usage separately from the primary ping execution."""
+    heddle_argv = shlex.split(HEDDLE_BIN)
+    if not heddle_argv:
+        # An unresolved HEDDLE_BIN IS the staleness bug: the installer bakes an explicit
+        # `<abs-node> <abs>/dist/cli.js` here, so an empty value means the keeper was installed
+        # without that wiring. Surface it loudly rather than a silent backoff — a backoff would be
+        # indistinguishable from a transient poll failure and hide the misconfiguration. Checked
+        # before oauth_lock(): no reason to take the flock when there is nothing to run.
+        log("[oauth] HEDDLE_BIN unresolved — sidecar refresh unavailable")
+        return
     lock_file = oauth_lock()
     if lock_file is False:
         return
@@ -346,19 +217,31 @@ def refresh_oauth_usage(accts, now):
                 if isinstance(last_attempt, (int, float)) and now - last_attempt < OAUTH_BACKOFF_SECS:
                     log(f"[oauth] acct {acct_id}: skipped (backoff)")
                     continue
-                payload, credential_failure = oauth_usage_for(acct)
-                if payload is None:
-                    if credential_failure:
-                        attempts[acct_id] = {"lastAttemptAt": int(now)}
-                        state_changed = True
-                    continue
                 try:
-                    write_json_atomic(path, payload)
-                except Exception as e:
-                    # A persistent local write failure (disk full, USAGE unwritable) is not transient;
-                    # back it off like a credential failure so we don't re-fetch (keychain + network)
-                    # every run only to fail the write again. A one-off glitch costs one backoff window.
-                    log(f"[oauth] acct {acct_id}: usage write failed ({type(e).__name__})")
+                    before = os.path.getmtime(path)
+                except OSError:
+                    before = None
+                try:
+                    result = subprocess.run(heddle_argv + ["usage", "poll-claude", "--account", acct_id],
+                                            capture_output=True, text=True, timeout=60)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    log(f"[oauth] acct {acct_id}: poll-claude failed ({type(e).__name__})")
+                    attempts[acct_id] = {"lastAttemptAt": int(now)}
+                    state_changed = True
+                    continue
+                if result.returncode != 0:  # 1 = no such account id, 2 = bad --account value
+                    log(f"[oauth] acct {acct_id}: poll-claude exit {result.returncode}")
+                    attempts[acct_id] = {"lastAttemptAt": int(now)}
+                    state_changed = True
+                    continue
+                # The CLI exits 0 even for credential/non-ok failures (it writes nothing), so detecting
+                # a fresh sidecar write preserves per-account credential backoff without parsing --json.
+                try:
+                    after = os.path.getmtime(path)
+                except OSError:
+                    after = None
+                if after is None or after == before:
+                    log(f"[oauth] acct {acct_id}: poll-claude wrote no fresh usage → backoff")
                     attempts[acct_id] = {"lastAttemptAt": int(now)}
                     state_changed = True
                     continue

@@ -239,6 +239,12 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
   tolerance and must track the launchd plist's `StartInterval` (300 by default). **Verified:**
   pinging a LIVE window does not move `resets_at` (`--verify acct2`, 2026-08-15) — the keeper only
   starts windows, never shifts them. `--dry-run` prints decisions. Never uses Fable/Opus.
+  **Install:** `bash scripts/install-window-keeper-launchd.sh` — run from the **main checkout** (beside
+  `../heddle`) or set `HEDDLE_CORE_DIR`. It bakes an explicit `HEDDLE_BIN=<abs-node> <heddle>/dist/cli.js`
+  into the plist (launchd's PATH has no node, so the CLI cannot be a bare name) for the keeper's OAuth
+  sidecar refresh (`heddle usage poll-claude`), and **refuses rather than baking a broken path** if it
+  can resolve neither an installed `heddle` nor `HEDDLE_CORE_DIR`/sibling `../heddle/dist/cli.js`
+  (HED-329). Re-run after any keeper change — merged `~/.heddle/*` is not auto-redeployed (HED-534).
 - **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd `io.heddle.cursor-refresh`,
   every 5 min): runs the dashboard's `--refresh-provider-limits cursor` subcommand to fetch Cursor,
   synchronously refresh Codex and Gemini, re-derive Claude, and write `~/.heddle/usage/limits.json`
