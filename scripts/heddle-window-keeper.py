@@ -572,8 +572,14 @@ def live_census(accts):
         except (subprocess.TimeoutExpired, OSError):
             log("rotation advisor: census unavailable (process inspection failed)")
             return None, groups, duplicate
-    counts, found, ambiguous = {}, 0, False
-    default_ids = [a.get("id") for a in accts if a.get("configDir") is None or a.get("configDir") == "~/.claude"]
+    counts, found, ambiguous, out_of_pool = {}, 0, False, 0
+    # Normalize exactly like config_to_id above: an account can name the default dir as None, "",
+    # "~/.claude", or an absolute path — all resolve to the same realpath and all OWN the env-less
+    # default sessions. A raw string check would miss the absolute/empty forms and wrongly exclude a
+    # real fleet session as out-of-pool once HED-495 skips len==0 (CodeAnt review, PR #124).
+    default_config = os.path.realpath(os.path.expanduser("~/.claude"))
+    default_ids = [a.get("id") for a in accts
+                   if os.path.realpath(os.path.expanduser(a.get("configDir") or "~/.claude")) == default_config]
     for line in process_lines:
         if not isinstance(line, str):
             continue
@@ -581,18 +587,29 @@ def live_census(accts):
             continue
         if re.search(r"(?:^|\s)(?:-p|--print)(?:\s|$)", line):
             continue
-        found += 1
         match = re.search(r"(?:^|\s)CLAUDE_CONFIG_DIR=([^\s]+)", line)
         if not match:
-            acct_id = default_ids[0] if len(default_ids) == 1 else None
+            if len(default_ids) == 1:
+                acct_id = default_ids[0]
+            elif len(default_ids) == 0:
+                # HED-495: an env-less Claude process belongs to the default ~/.claude, but when no
+                # fleet account owns that directory it is out-of-pool rather than an ambiguous fleet
+                # session. Exclude it before counting so it cannot mute valid fleet rotation advice.
+                out_of_pool += 1
+                continue
+            else:
+                acct_id = None
         else:
             config_dir = os.path.realpath(os.path.expanduser(match.group(1).strip("'\"")))
             acct_id = config_to_id.get(config_dir)
+        found += 1
         if not acct_id:
             ambiguous = True
             continue
         identity = groups[acct_id]
         counts[identity] = counts.get(identity, 0) + 1
+    if out_of_pool:
+        log(f"rotation advisor: census excluded {out_of_pool} out-of-pool session(s) (env-less, no fleet account owns ~/.claude)")
     if ambiguous or not found:
         log("rotation advisor: census unavailable (no unambiguous interactive sessions)")
         return None, groups, duplicate
