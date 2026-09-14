@@ -5,6 +5,8 @@
 // Code pipes in, writes it straight back to stdout UNCHANGED (so claude-hud sees byte-identical
 // input and renders exactly as before), and — best-effort, never blocking — records the current
 // rate-limit state to ~/.heddle/usage/<provider>.json for the heddle Fleet drawer to read.
+// It also records one statusline snapshot per active session to ~/.heddle/sessions/<id>.json for the
+// fleet roster (HED-381) — independent of the rate-limit capture and equally best-effort.
 //
 // Design rules (this runs on every statusline render, for every agent):
 //   1. Passthrough is written FIRST and always; the capture is wrapped so it can never fail the HUD.

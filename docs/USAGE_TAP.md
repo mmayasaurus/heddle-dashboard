@@ -320,14 +320,23 @@ does record on every capture: the `model` of the rendering session and the accou
   ("Fable ≈NN% of weekly (est.)", soft-limit tick at 50%) is Agent R's; it should render only when the
   estimate is non-null.
 
-## Install (already wired on this machine)
+## Install / redeploy
 
 The tap is inserted into `~/.claude/settings.json` → `statusLine.command`, as
 `"$BUN" ~/.heddle/usage-tap.mjs | <original claude-hud command>`. The original settings are backed up
 at `~/.claude/settings.json.bak-heddle-<timestamp>`.
 
-⚠️ **A session only captures once it started AFTER the tap was installed** — running sessions cache
-the statusline command at startup. New/cycled agents populate `claude.json` automatically.
+Deploy or refresh the tap with `bash scripts/install-usage-tap.sh` — it copies
+`scripts/heddle-usage-tap.mjs` (the canonical copy) to `~/.heddle/usage-tap.mjs`, backing up any
+differing existing copy as `usage-tap.mjs.bak-<timestamp>`, and is a no-op when already current.
+**Re-run it after any change to `scripts/heddle-usage-tap.mjs`** — there is otherwise no redeploy
+mechanism, so the installed copy silently drifts from source (the HED-510 bug: the deployed tap sat
+months behind, so per-session capture never ran).
+
+⚠️ **A session only captures once it started AFTER the tap was installed** — this caveat is about the
+`statusLine.command` wiring, which running sessions cache at startup. The tap file itself is re-read
+on every render, so refreshing its content with the installer takes effect immediately for
+already-running sessions. New/cycled agents populate `claude.json` automatically.
 
 ## Revert
 
