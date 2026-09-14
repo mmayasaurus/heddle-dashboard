@@ -48,6 +48,10 @@ function runKeeper(args: string[], home: string, overrides: NodeJS.ProcessEnv = 
     HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"),
     HEDDLE_ROTATE_NOTIFY: "0",
     HEDDLE_CENSUS_PS_FIXTURE: censusFixture,
+    // Isolate OAuth refresh by default: an empty HEDDLE_BIN makes the keeper log-and-skip the
+    // poll-claude sidecar (see keeper refresh_oauth_usage) so non-OAuth tests don't inherit a real
+    // `heddle` from the environment or write backoff state. OAuth tests override with a fake bin.
+    HEDDLE_BIN: "",
   };
   delete env.CLAUDE_CONFIG_DIR;
   Object.assign(env, overrides);
@@ -1474,6 +1478,31 @@ with open(lock, "a") as f:
       holder.kill();
     }
   }, 20000);
+
+  it("logs loudly and skips OAuth refresh when HEDDLE_BIN is unresolved", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const result = runKeeper([], home, { HEDDLE_BIN: "" });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[oauth] HEDDLE_BIN unresolved — sidecar refresh unavailable");
+    // No poll attempt is made, so no backoff state is written — an unresolved bin is a loud config
+    // error to fix, not a transient failure to back off from.
+    expect(fs.existsSync(path.join(home, ".heddle", "oauth-usage-state.json"))).toBe(false);
+  });
+
+  it("invokes poll-claude through a two-token HEDDLE_BIN (baked <node> <cli.js> shape)", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "acct1", configDir: null, loggedIn: true }]);
+    const fake = writeFakeHeddle(home, "healthy");
+    // The installer bakes `HEDDLE_BIN=<abs-node> <abs>/dist/cli.js` — two tokens the keeper must
+    // shlex.split before argv. Exercise that shape with `/bin/sh <fake>` so the fake receives
+    // `usage poll-claude --account acct1` at $1..$4 exactly as the real CLI would.
+    const result = runKeeper([], home, { HEDDLE_BIN: `/bin/sh ${fake}` });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"), "utf8"))).toMatchObject({ fablePct: 77 });
+  });
 
   it("continues pings when transcript accounting fails", () => {
     const home = mkHome();

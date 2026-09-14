@@ -46,7 +46,7 @@ TRANSCRIPT_LOCK = os.path.join(HOME, ".heddle", "transcript-accounting.lock")
 OAUTH_LOCK = os.path.join(HOME, ".heddle", "oauth-usage.lock")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
-HEDDLE_BIN = os.environ.get("HEDDLE_BIN", "heddle")
+HEDDLE_BIN = os.environ.get("HEDDLE_BIN", "")
 # The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
 # template instead of inventing a path and presenting it as a real command.
 RELAUNCH_TEMPLATE = os.environ.get("HEDDLE_RELAUNCH_TEMPLATE", "bash resume-sessions.sh --account {account} -y")
@@ -181,6 +181,15 @@ def oauth_lock():
 
 def refresh_oauth_usage(accts, now):
     """Refresh uncached exact OAuth usage separately from the primary ping execution."""
+    heddle_argv = shlex.split(HEDDLE_BIN)
+    if not heddle_argv:
+        # An unresolved HEDDLE_BIN IS the staleness bug: the installer bakes an explicit
+        # `<abs-node> <abs>/dist/cli.js` here, so an empty value means the keeper was installed
+        # without that wiring. Surface it loudly rather than a silent backoff — a backoff would be
+        # indistinguishable from a transient poll failure and hide the misconfiguration. Checked
+        # before oauth_lock(): no reason to take the flock when there is nothing to run.
+        log("[oauth] HEDDLE_BIN unresolved — sidecar refresh unavailable")
+        return
     lock_file = oauth_lock()
     if lock_file is False:
         return
@@ -213,7 +222,7 @@ def refresh_oauth_usage(accts, now):
                 except OSError:
                     before = None
                 try:
-                    result = subprocess.run([HEDDLE_BIN, "usage", "poll-claude", "--account", acct_id],
+                    result = subprocess.run(heddle_argv + ["usage", "poll-claude", "--account", acct_id],
                                             capture_output=True, text=True, timeout=60)
                 except (OSError, subprocess.TimeoutExpired) as e:
                     log(f"[oauth] acct {acct_id}: poll-claude failed ({type(e).__name__})")
