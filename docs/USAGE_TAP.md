@@ -232,11 +232,13 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
 - **Window-keeper** (`scripts/heddle-window-keeper.py`, installed at `~/.heddle/window-keeper.py`,
   launchd `io.heddle.window-keeper`, every 5 min): the 5h window is a rolling window anchored to the
   first request (empirical: `resets_at` on odd minutes), so one ~10-token haiku ping starts an
-  account's clock. The keeper pings any account whose window is EXPIRED/UNKNOWN, **staggered 75 min
-  apart** so a fresh window opens roughly every 75 min around the clock — always an account about to
-  reset for the fleet to rotate onto. **Verified:** pinging a LIVE window does not move `resets_at`
-  (`--verify acct2`, 2026-08-15) — the keeper only starts windows, never shifts them. `--dry-run`
-  prints decisions. Never uses Fable/Opus.
+  account's clock. For an EXPIRED/UNKNOWN account with live peers, the keeper schedules its fresh
+  reset at the midpoint of the widest gap in their 5h reset phases, gradually spreading the fleet
+  toward roughly 75-minute spacing. With no live peers it falls back to the legacy 75-minute
+  stagger. `HEDDLE_KEEPER_INTERVAL_SECS` (default `300`, range `60`–`3600`) is the max-gap slot
+  tolerance and must track the launchd plist's `StartInterval` (300 by default). **Verified:**
+  pinging a LIVE window does not move `resets_at` (`--verify acct2`, 2026-08-15) — the keeper only
+  starts windows, never shifts them. `--dry-run` prints decisions. Never uses Fable/Opus.
 - **Cursor refresh** (`scripts/io.heddle.cursor-refresh.plist`, launchd `io.heddle.cursor-refresh`,
   every 5 min): runs the dashboard's `--refresh-provider-limits cursor` subcommand to fetch Cursor,
   synchronously refresh Codex and Gemini, re-derive Claude, and write `~/.heddle/usage/limits.json`

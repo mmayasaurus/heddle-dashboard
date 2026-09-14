@@ -89,6 +89,10 @@ def int_env(name, default, lo, hi):
 
 # Minutes between staggered pings: at least one, and an upper bound past a full 5h window is a typo.
 STAGGER_MIN = int_env("HEDDLE_STAGGER_MIN", 75, 1, 300)
+# Keep the rolling-window length in one place: anchors and reset-phase placement must agree.
+WINDOW_SECS = 5 * 3600
+# launchd runs every five minutes by default; a slot within one run is safe to fire rather than skip.
+STARTINTERVAL_SECS = int_env("HEDDLE_KEEPER_INTERVAL_SECS", 300, 60, 3600)
 # A percentage of the 5h window.
 ROTATE_PCT = int_env("HEDDLE_ROTATE_PCT", 85, 1, 100)
 # OAuth is supplemental to the keeper's pings, so cache its exact weekly signal and back off after
@@ -121,6 +125,31 @@ def write_json_atomic(path, obj):
 
 def safe_segment(acct_id):
     return re.sub(r"[^A-Za-z0-9._-]", "_", str(acct_id))
+
+
+def anchor_slot(now, other_live_resets, window_secs, slot_tolerance_secs):
+    """Where/whether to re-anchor an expired account at the widest gap in the reset-phase ring.
+
+    Returns (ping_now, target_phase, wait_secs). This is deliberately pure: `now` is supplied by the
+    caller and every peer reset is already known live. The caller owns the no-peer cold-start case.
+    """
+    if not other_live_resets:
+        return False, None, None
+    phases = sorted(reset % window_secs for reset in other_live_resets)
+    # Walk sorted neighbours plus the final wrapped neighbour. Strict `>` preserves the first (lowest
+    # starting phase) equal-width gap, making an otherwise ambiguous ring deterministic.
+    gap_start, gap_width = phases[0], -1
+    for index, start in enumerate(phases):
+        end = phases[(index + 1) % len(phases)]
+        if index == len(phases) - 1:
+            end += window_secs
+        width = end - start
+        if width > gap_width:
+            gap_start, gap_width = start, width
+    target_phase = (gap_start + gap_width / 2) % window_secs
+    # A ping starts a window whose reset phase is `now`; wait forward only, never pull a phase backward.
+    wait_secs = (target_phase - (now % window_secs)) % window_secs
+    return wait_secs < slot_tolerance_secs, target_phase, wait_secs
 
 
 def oauth_access_token(acct):
@@ -1174,18 +1203,30 @@ def main():
     # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
     # filesystem read — is not an exception, so the try/except guarding the advisor and transcript
     # accounting below cannot catch it. Only doing the pings first guarantees a hang there costs no ping.
-    for a in accts:
-        w = window(a["id"])
-        live = bool(w and w["resets_at"] and w["resets_at"] > now)
+    windows = [(a, window(a["id"])) for a in accts]
+    def _live(w):
+        return bool(w and w.get("resets_at") and w["resets_at"] > now)
+    live_resets = [w["resets_at"] for _, w in windows if _live(w)]
+
+    for a, w in windows:
+        live = _live(w)
         # Same rounding as the advisor: this status line is where an operator reads the numbers when
         # they are deciding whether to rotate, and `7.000000000000001%` is noise in that moment.
         status = f"live ({w.get('source')}), {pct(w['used']) if w.get('used') is not None else '?'}% used, resets {fmt(w['resets_at'])}" if live else ("EXPIRED" if w and w.get("resets_at") else "UNKNOWN (no capture)")
         if live:
             log(f"{a['id']}: {status} → nothing to do"); continue
-        since_last = now - float(state.get("last_ping_ts") or 0)
-        if state.get("last_ping_ts") and since_last < STAGGER_MIN * 60:
-            log(f"{a['id']}: {status} but stagger slot not due ({int((STAGGER_MIN*60 - since_last)/60)}m left) → wait")
-            continue
+        if live_resets:
+            ping_now, target_phase, wait_secs = anchor_slot(now, live_resets, WINDOW_SECS, STARTINTERVAL_SECS)
+            if not ping_now:
+                log(f"{a['id']}: {status} → wait {int(wait_secs // 60)}m for max-gap slot "
+                    f"(target reset-phase {int(target_phase // 60)}m into the {WINDOW_SECS // 3600}h ring, {len(live_resets)} live)")
+                continue
+        else:
+            # cold start / single logged-in account: no peers to space against — legacy global stagger
+            since_last = now - float(state.get("last_ping_ts") or 0)
+            if state.get("last_ping_ts") and since_last < STAGGER_MIN * 60:
+                log(f"{a['id']}: {status} but stagger slot not due ({int((STAGGER_MIN*60 - since_last)/60)}m left) → wait")
+                continue
         if dry:
             log(f"{a['id']}: {status} → WOULD ping (dry-run)"); continue
         ok, secs, err, reason = ping(a)
@@ -1194,7 +1235,7 @@ def main():
         if ok:
             # Remember the window WE just started (the tap can't see headless pings).
             write_json_atomic(os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.keeper.json"),
-                              {"account": a["id"], "startedAt": int(now), "resets_at": int(now) + 5 * 3600,
+                              {"account": a["id"], "startedAt": int(now), "resets_at": int(now) + WINDOW_SECS,
                                "used": None, "source": "keeper-ping",
                                "note": "upper bound — a pre-existing live window this keeper could not see may reset earlier; a fresher tap capture supersedes this anchor"})
             state.update({"last_ping_ts": now, "last_ping_acct": a["id"]})
