@@ -267,6 +267,23 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
   `detail = {account, configDir, model}`), plus rows for any `claude-unknown-<dir>.json` the tap wrote for
   an unregistered config dir. Without a registry the entry is the plain single-file tap entry
   (`accounts: null`).
+- **OAuth-usage sidecar** (`claude-<id>.oauth-usage.json`, written by the window-keeper / `heddle usage
+  poll-claude`, HED-329): a per-account superset of what the tap can see, polled from `/api/oauth/usage`:
+  `{fablePct, fiveHourPct, sevenDayPct, byModel, capturedAt, source:"oauth-usage", fiveHourResetsAt,
+  sevenDayResetsAt}` (a legacy `windowResetsAt` is honoured for the Fable window when present).
+  `capturedAt` is epoch seconds; a stamp in the future, or older than three of the keeper's cache
+  cycles (`3 × HEDDLE_OAUTH_CACHE_SECS`, at least 900s), is ignored. It lets an **idle** account — one that never
+  renders a statusline, so has no tap — still report fresh windows and an exact Fable %.
+- **Freshest window wins (Step C):** the displayed `fiveHour`/`sevenDay` for each account row AND the
+  top-level summary come from whichever of {tap `claude-<id>.json`, keeper anchor
+  `claude-<id>.keeper.json`, OAuth sidecar} was captured most recently (invalid/out-of-range/stale
+  sidecar windows fall back to the tap). The top-level summary keeps its `model` label from the active
+  account's tap even when the sidecar supplies the windows; a per-account row shows a model only when
+  the tap is its freshest source (the keeper anchor and sidecar carry none — unchanged from the
+  pre-existing keeper-anchor behaviour).
+- **Fable attribution reads the tap/keeper capture only**, never the OAuth window row (which has no
+  `model` and a `seven_day.used_percentage` that would poison the account-wide baseline); the sidecar's
+  `fablePct` supplies the exact Fable % through a separate read (see `fable_attrib.rs` below).
 - Tests: `cargo test --lib heddle_stats::claude` (registry + tap files in a scratch dir).
 
 ## Fable weekly estimate (`heddle_stats/fable_attrib.rs`) — HED-75

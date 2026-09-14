@@ -514,9 +514,137 @@ fn tap_absent_with_a_fresh_sidecar_still_surfaces_the_exact_value() {
     let r = &l.accounts.as_ref().unwrap()[0];
     assert_eq!(r.fable_weekly_estimate_pct, Some(55.0));
     assert_eq!(r.detail.as_ref().unwrap()["fableWeekly"]["exact"], true);
-    // The 5h/7d windows stay unknown — the sidecar never substitutes for a tap capture there.
-    assert_eq!(r.five_hour, LimitWindow::default());
-    assert_eq!(r.seven_day, LimitWindow::default());
+    assert_eq!(r.five_hour.used_percentage, Some(10.0));
+    assert_eq!(r.seven_day.used_percentage, Some(20.0));
+}
+
+#[test]
+fn a_fresh_oauth_sidecar_beats_an_older_tap_for_account_windows() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-windows-newer");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(55.0, now - 10));
+
+    let limit = build(&s.0, &registry(), None, now).unwrap();
+    let row = &limit.accounts.as_ref().unwrap()[0];
+    assert_eq!(row.captured_at, Some(now - 10));
+    assert_eq!(row.five_hour.used_percentage, Some(10.0));
+    assert_eq!(row.seven_day.used_percentage, Some(20.0));
+}
+
+#[test]
+fn a_partial_oauth_sidecar_backfills_its_missing_window_from_the_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-partial-window");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    // Fresher OAuth sidecar with ONLY the 5h window populated (7d null) — e.g. an idle account whose
+    // 7-day window the endpoint hasn't reported. The fresher 5h must surface, but the null 7d must NOT
+    // erase the tap's still-valid 24% (CodeAnt #122 — partial sidecar wiped the outranked window).
+    s.write(
+        "claude-acct1.oauth-usage.json",
+        &format!(
+            r#"{{"fablePct":null,"fiveHourPct":8.0,"sevenDayPct":null,"byModel":{{}},"capturedAt":{},"source":"oauth-usage"}}"#,
+            now - 10
+        ),
+    );
+    let limit = build(&s.0, &registry(), None, now).unwrap();
+    let row = &limit.accounts.as_ref().unwrap()[0];
+    assert_eq!(
+        row.five_hour.used_percentage,
+        Some(8.0),
+        "the fresher OAuth 5h window surfaces"
+    );
+    assert_eq!(
+        row.seven_day.used_percentage,
+        Some(24.0),
+        "the null OAuth 7d must fall back to the tap, not erase it"
+    );
+}
+
+#[test]
+fn a_newer_keeper_anchor_beats_an_older_oauth_sidecar_for_account_windows() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-windows-keeper-reset");
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(55.0, now - 60));
+    s.write(
+        "claude-acct1.keeper.json",
+        &format!(
+            r#"{{"account":"acct1","startedAt":{},"resets_at":{},"used":null}}"#,
+            now - 10,
+            now + 5 * 3600
+        ),
+    );
+
+    let limit = build(&s.0, &registry(), None, now).unwrap();
+    let row = &limit.accounts.as_ref().unwrap()[0];
+    assert_eq!(row.captured_at, Some(now - 10));
+    assert_eq!(row.five_hour.used_percentage, None);
+    assert_eq!(row.five_hour.resets_at, Some(now + 5 * 3600));
+    assert_eq!(row.seven_day.used_percentage, None);
+}
+
+#[test]
+fn invalid_future_or_stale_oauth_windows_fall_back_to_the_tap() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-windows-invalid");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 10, "acct1"),
+    );
+    for sidecar in [
+        format!(
+            r#"{{"capturedAt":{},"fiveHourPct":150,"sevenDayPct":null}}"#,
+            now
+        ),
+        format!(
+            r#"{{"capturedAt":{},"fiveHourPct":10,"sevenDayPct":20}}"#,
+            now + 1
+        ),
+        format!(
+            r#"{{"capturedAt":{},"fiveHourPct":10,"sevenDayPct":20}}"#,
+            now - oauth_exact_stale_after_secs() - 1
+        ),
+    ] {
+        s.write("claude-acct1.oauth-usage.json", &sidecar);
+        let limit = build(&s.0, &registry(), None, now).unwrap();
+        let row = &limit.accounts.as_ref().unwrap()[0];
+        assert_eq!(row.captured_at, Some(now - 10), "sidecar {sidecar}");
+        assert_eq!(
+            row.five_hour.used_percentage,
+            Some(32.0),
+            "sidecar {sidecar}"
+        );
+        assert_eq!(
+            row.seven_day.used_percentage,
+            Some(24.0),
+            "sidecar {sidecar}"
+        );
+    }
+}
+
+#[test]
+fn top_level_summary_uses_the_active_accounts_freshest_oauth_windows() {
+    let now = 1_786_830_900;
+    let s = Scratch::new("oauth-windows-top-level");
+    s.write(
+        "claude-acct1.json",
+        &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
+    );
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(55.0, now - 10));
+
+    let limit = build(&s.0, &registry(), None, now).unwrap();
+    assert_eq!(limit.active_account.as_deref(), Some("acct1"));
+    assert_eq!(limit.five_hour.used_percentage, Some(10.0));
+    assert_eq!(limit.seven_day.used_percentage, Some(20.0));
+    // The windows come from the fresher OAuth sidecar, but the summary's model label still names the
+    // active account's own tap model — it must not blank just because the sidecar won the window race.
+    assert_eq!(limit.model.as_deref(), Some("claude-fable-5 · 4 acct"));
 }
 
 #[test]
@@ -601,7 +729,11 @@ fn keeper_sidecars_are_never_mistaken_for_unregistered_account_rows() {
         "claude-acct1.json",
         &tap_file("claude-fable-5", 32.0, 24.0, now - 60, "acct1"),
     );
-    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 30));
+    // Older than the tap (now - 60), but well inside the 900s exact-Fable bound: the sidecar supplies
+    // the exact Fable % WITHOUT winning the window race, the same guard the keeper anchor uses below.
+    // (Pre-HED-329 Step C the OAuth sidecar didn't compete for windows, so this fixture used a fresher
+    // stamp; now it does, so it must be aged like any other model-less window source.)
+    s.write("claude-acct1.oauth-usage.json", &oauth_file(77.0, now - 70));
     // Both other sidecars given a FRESH `capturedAt`, so only the name keeps them out of the roster —
     // the keeper anchor stays older than the tap so it doesn't also change acct1's windows.
     s.write(
