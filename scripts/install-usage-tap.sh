@@ -18,6 +18,23 @@ sha256() {
   fi
 }
 
+atomic_install() {
+  # Deploy atomically: write to a temp file in the destination dir, then rename
+  # it into place. A rename within one filesystem is atomic, so a concurrent
+  # statusline render (bun reads the tap on every render, across many sessions)
+  # never sees a half-written file. Plain `install`/`cp` truncate in place and
+  # would let a render read incomplete JavaScript and break the pipeline.
+  _tmp=$(mktemp "$HEDDLE_DIR/usage-tap.mjs.XXXXXX") || {
+    printf 'error: mktemp failed in %s\n' "$HEDDLE_DIR" >&2
+    return 1
+  }
+  trap 'rm -f "$_tmp" 2>/dev/null' EXIT
+  cp "$SRC" "$_tmp"
+  chmod 755 "$_tmp"
+  mv -f "$_tmp" "$DST"
+  trap - EXIT
+}
+
 if [ ! -f "$SRC" ]; then
   printf 'error: source tap not found: %s\n' "$SRC" >&2
   exit 1
@@ -40,11 +57,11 @@ if [ -f "$DST" ]; then
     backup="$DST.bak-$(date +%Y%m%d-%H%M%S)"
     cp "$DST" "$backup"
     printf 'backed up existing -> %s\n' "$backup"
-    install -m 755 "$SRC" "$DST"
+    atomic_install
     printf 'installed %s -> %s\n' "$src_digest" "$DST"
   fi
 else
-  install -m 755 "$SRC" "$DST"
+  atomic_install
   printf 'installed %s -> %s\n' "$src_digest" "$DST"
 fi
 
