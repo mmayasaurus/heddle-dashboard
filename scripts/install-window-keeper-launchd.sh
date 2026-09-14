@@ -26,6 +26,26 @@ if [ ! -x "$NODE_BIN" ] || [ ! -f "$CLI_JS" ]; then
   exit 1
 fi
 
+# Either/or with the keeper-less usage-poll producer (HED-552, reciprocal of HED-517's guard): exactly
+# one scheduled usage-sidecar producer per machine. If io.heddle.usage-poll-claude is loaded, installing
+# the keeper too would double-write the claude-<id>.oauth-usage.json sidecars. Fail SAFE: only launchctl's
+# "not found" (exit 113) proves the producer absent; any other failure leaves its status undetermined, so
+# refuse rather than risk a second producer. Runs before any mutation so a refusal touches nothing.
+PRODUCER_LABEL="io.heddle.usage-poll-claude"
+if launchctl print "gui/$(id -u)/$PRODUCER_LABEL" >/dev/null 2>&1; then
+  PRODUCER_RC=0
+else
+  PRODUCER_RC=$?
+fi
+if [ "$PRODUCER_RC" -eq 0 ]; then
+  echo "error: $PRODUCER_LABEL is loaded — this machine already runs the keeper-less usage-poll producer." >&2
+  echo "       Install exactly one producer per machine (never both). Boot out the producer, or skip the keeper." >&2
+  exit 1
+elif [ "$PRODUCER_RC" -ne 113 ]; then
+  echo "error: cannot determine whether $PRODUCER_LABEL is loaded (launchctl exit $PRODUCER_RC); refusing to install a second usage producer." >&2
+  exit 1
+fi
+
 mkdir -p "$HEDDLE_DIR" "$(dirname "$PLIST")"
 install -m 755 "$SOURCE_DIR/heddle-window-keeper.py" "$HEDDLE_DIR/window-keeper.py"
 install -m 755 "$SOURCE_DIR/heddle-rotation-post.py" "$HEDDLE_DIR/heddle-rotation-post.py"
