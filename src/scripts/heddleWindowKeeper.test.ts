@@ -113,6 +113,42 @@ function advice(home: string) {
   return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "rotation-advice.json"), "utf8"));
 }
 
+function anchorSlot(now: number, otherLiveResets: number[], windowSecs = 18000, slotToleranceSecs = 300) {
+  const result = spawnSync("python3", ["-c", `
+import json, runpy, sys
+source, now, other_live_resets, window_secs, slot_tolerance_secs = sys.argv[1:]
+keeper = runpy.run_path(source, run_name="anchor_slot_fixture")
+print(json.dumps(keeper["anchor_slot"](float(now), json.loads(other_live_resets), float(window_secs), float(slot_tolerance_secs))))
+`, keeperPath, String(now), JSON.stringify(otherLiveResets), String(windowSecs), String(slotToleranceSecs)], { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout) as [boolean, number | null, number | null];
+}
+
+function seedMaxGapWindows(home: string, targetOffsetSecs: number) {
+  const now = Math.floor(Date.now() / 1000);
+  const windowSecs = 18000;
+  const targetPhase = (now % windowSecs + targetOffsetSecs) % windowSecs;
+  // Cluster the three live peers tightly around the ANTIPODE of the intended target, so the widest
+  // gap on the reset ring is centred on `targetPhase` and anchor_slot's midpoint lands there — the
+  // keeper's wait then equals `targetOffsetSecs`. (Clustering them around `targetPhase` itself would
+  // put the widest gap half a ring away, which is the bug this construction avoids.)
+  const clusterCenter = (targetPhase + windowSecs / 2) % windowSecs;
+  const livePhases = [clusterCenter - 1500, clusterCenter, clusterCenter + 1500]
+    .map((phase) => (phase + windowSecs) % windowSecs);
+  writeRegistry(home, [
+    { id: "acct1", configDir: null, loggedIn: true },
+    { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+    { id: "acct3", configDir: "~/.claude-acct3", loggedIn: true },
+    { id: "acct4", configDir: "~/.claude-acct4", loggedIn: true },
+  ]);
+  for (const [index, phase] of livePhases.entries()) {
+    let resetsAt = now + ((phase - now % windowSecs + windowSecs) % windowSecs);
+    // A reset phase exactly at `now` is not live; its next occurrence is one ring ahead.
+    if (resetsAt <= now) resetsAt += windowSecs;
+    writeTap(home, `acct${index + 1}`, now + index + 1, 10, resetsAt);
+  }
+}
+
 type TranscriptTurn = {
   ownerAccountUuid: string;
   timestamp: string;
@@ -303,6 +339,24 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.existsSync(path.join(home, ".heddle", "fake-claude.calls"))).toBe(false);
   });
 
+  it("fires within one interval before the target or up to two intervals after, else waits", () => {
+    // target_phase = midpoint of the widest circular gap; wait_secs = forward distance to it.
+    expect(anchorSlot(0, [0, 4500, 9000])).toEqual([false, 13500, 13500]);
+    expect(anchorSlot(0, [0, 600, 1200])).toEqual([false, 9600, 9600]);
+    expect(anchorSlot(0, [0])).toEqual([false, 9000, 9000]);
+    // near side: within one interval BEFORE the target -> fire.
+    expect(anchorSlot(13400, [0, 4500, 9000])).toEqual([true, 13500, 100]);
+    // dead zone: well before the target -> wait.
+    expect(anchorSlot(13000, [0, 4500, 9000])).toEqual([false, 13500, 500]);
+    // far side: just PAST the target -> fire (a well-spaced account expires AT its target phase, so
+    // the first run after expiry lands here; a one-sided `wait < tol` would lock it out ~5h).
+    expect(anchorSlot(13600, [0, 4500, 9000])).toEqual([true, 13500, 17900]); // 100s past
+    expect(anchorSlot(13800, [0, 4500, 9000])).toEqual([true, 13500, 17700]); // 300s past (first run after expiry)
+    // beyond two intervals past the target -> wait for the next ring.
+    expect(anchorSlot(14200, [0, 4500, 9000])).toEqual([false, 13500, 17300]); // 700s past
+    expect(anchorSlot(0, [])).toEqual([false, null, null]);
+  });
+
   it("starts one default-account window with atomic keeper and state records", () => {
     const home = mkHome();
     const startedAt = Math.floor(Date.now() / 1000);
@@ -350,18 +404,18 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).not.toContain("team/a: UNKNOWN");
   });
 
-  it("does not re-ping a keeper-started live window and observes the stagger", () => {
+  it("does not re-ping a keeper-started live window and waits for its max-gap slot", () => {
     const home = mkHome();
     establishAcct1Window(home);
     const result = runKeeper([], home);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("acct1: live (keeper)");
     expect(result.stdout).toContain("nothing to do");
-    expect(result.stdout).toMatch(/acct2: .*stagger slot not due/);
+    expect(result.stdout).toMatch(/acct2: .*wait .*max-gap slot/);
     expect(calls(home)).toHaveLength(1);
   });
 
-  it("pings the next account when the stagger slot is due", () => {
+  it("uses max-gap placement instead of a due legacy stagger when a live peer exists", () => {
     const home = mkHome();
     establishAcct1Window(home);
     fs.writeFileSync(
@@ -370,8 +424,8 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     );
     const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
-    expect(calls(home)).toHaveLength(2);
-    expect(calls(home)[1]).toContain(`CFG=${path.join(home, ".claude-acct2")}`);
+    expect(result.stdout).toMatch(/acct2: .*wait .*max-gap slot/);
+    expect(calls(home)).toHaveLength(1);
   });
 
   it("uses a fresher live tap capture instead of pinging that account", () => {
@@ -385,7 +439,7 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(calls(home)).toHaveLength(1);
   });
 
-  it("pings an account with an expired tap capture", () => {
+  it("waits to re-anchor an expired tap capture at the max-gap slot", () => {
     const home = mkHome();
     establishAcct1Window(home);
     const now = Math.floor(Date.now() / 1000);
@@ -396,8 +450,24 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     );
     const result = runKeeper([], home, { HEDDLE_STAGGER_MIN: "1" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/acct2: EXPIRED.*pinged ok=True/);
-    expect(calls(home)).toHaveLength(2);
+    expect(result.stdout).toMatch(/acct2: EXPIRED.*wait .*max-gap slot/);
+    expect(calls(home)).toHaveLength(1);
+  });
+
+  it("waits for and then pings the expired rotation target at its max-gap slot", () => {
+    const farHome = mkHome();
+    seedMaxGapWindows(farHome, 1000);
+    const far = runKeeper([], farHome);
+    expect(far.status).toBe(0);
+    expect(far.stdout).toMatch(/acct4: UNKNOWN \(no capture\).*wait .*max-gap slot/);
+    expect(fs.existsSync(path.join(farHome, ".heddle", "usage", "claude-acct4.keeper.json"))).toBe(false);
+
+    const dueHome = mkHome();
+    seedMaxGapWindows(dueHome, 120);
+    const due = runKeeper([], dueHome);
+    expect(due.status).toBe(0);
+    expect(due.stdout).toMatch(/acct4: UNKNOWN \(no capture\).*pinged ok=True/);
+    expect(fs.existsSync(path.join(dueHome, ".heddle", "usage", "claude-acct4.keeper.json"))).toBe(true);
   });
 
   it("survives an unavailable Claude binary without persisting anchors", () => {

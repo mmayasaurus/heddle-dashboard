@@ -11,6 +11,19 @@ and 95% critical threshold. The advisor uses a fresh interactive-session census 
 ceiling; it reports whether the observed pre-rotation split is even, but does not suppress advice
 merely because it is skewed. It never rotates accounts itself.
 
+## Window-keeper reset phases
+
+For the intended 3-loaded/1-resting rotation, the window-keeper re-anchors an EXPIRED or unknown
+account at the midpoint of the widest circular gap between the other accounts' live 5-hour reset
+phases. It waits until that phase is within one keeper run interval, so successive refresh cycles
+spread reset phases toward roughly 75-minute spacing rather than simply pinging as soon as a global
+stagger allows. Keeping one account empty/resting as the next rotation target remains the
+launcher/rotation workflow's responsibility; the keeper only maintains the rolling windows.
+
+With only one logged-in/live account, or on a cold start with no live peer resets to compare, there
+is no reset ring to space against. In that fallback the keeper keeps using the legacy
+`HEDDLE_STAGGER_MIN` gate.
+
 When present, HED-451's `~/.heddle/live-identities.json` may provide `{ "accounts": { "acct1":
 "identity-id" } }` for identity grouping. Without it, matching `accounts.json` email values are
 treated as one live identity and logged loudly. A partial artifact for an email-sharing group falls
