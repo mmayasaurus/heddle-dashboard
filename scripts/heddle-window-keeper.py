@@ -573,7 +573,13 @@ def live_census(accts):
             log("rotation advisor: census unavailable (process inspection failed)")
             return None, groups, duplicate
     counts, found, ambiguous, out_of_pool = {}, 0, False, 0
-    default_ids = [a.get("id") for a in accts if a.get("configDir") is None or a.get("configDir") == "~/.claude"]
+    # Normalize exactly like config_to_id above: an account can name the default dir as None, "",
+    # "~/.claude", or an absolute path — all resolve to the same realpath and all OWN the env-less
+    # default sessions. A raw string check would miss the absolute/empty forms and wrongly exclude a
+    # real fleet session as out-of-pool once HED-495 skips len==0 (CodeAnt review, PR #124).
+    default_config = os.path.realpath(os.path.expanduser("~/.claude"))
+    default_ids = [a.get("id") for a in accts
+                   if os.path.realpath(os.path.expanduser(a.get("configDir") or "~/.claude")) == default_config]
     for line in process_lines:
         if not isinstance(line, str):
             continue

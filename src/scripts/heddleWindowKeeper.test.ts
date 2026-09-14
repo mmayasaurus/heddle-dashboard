@@ -763,6 +763,27 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(advice(home).censusStatus).toBe("unavailable");
   });
 
+  it("counts an env-less session for a default-dir account named by absolute path (not out-of-pool)", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeRegistry(home, [
+      { id: "acct1", configDir: `${home}/.claude`, loggedIn: true },
+      { id: "acct2", configDir: "~/.claude-acct2", loggedIn: true },
+    ]);
+    writeCensusFixture(home, [
+      "1 claude --resume x",
+      `2 claude --resume x CLAUDE_CONFIG_DIR=${home}/.claude-acct2`,
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    // The env-less session belongs to acct1 (default dir named by ABSOLUTE path), so it must be
+    // COUNTED, not excluded as out-of-pool — default_ids normalizes the same way config_to_id does.
+    expect(result.stdout).not.toContain("out-of-pool");
+    expect(advice(home).censusStatus).not.toBe("unavailable");
+  });
+
   it("re-advises a legal target after the same window's census recovers", () => {
     const home = mkHome();
     seedRotationWindows(home);
