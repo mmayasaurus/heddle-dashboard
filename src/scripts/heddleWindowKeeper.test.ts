@@ -339,13 +339,21 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.existsSync(path.join(home, ".heddle", "fake-claude.calls"))).toBe(false);
   });
 
-  it("chooses the midpoint of the widest reset-phase gap and only fires within its tolerance", () => {
+  it("fires within one interval before the target or up to two intervals after, else waits", () => {
+    // target_phase = midpoint of the widest circular gap; wait_secs = forward distance to it.
     expect(anchorSlot(0, [0, 4500, 9000])).toEqual([false, 13500, 13500]);
     expect(anchorSlot(0, [0, 600, 1200])).toEqual([false, 9600, 9600]);
     expect(anchorSlot(0, [0])).toEqual([false, 9000, 9000]);
+    // near side: within one interval BEFORE the target -> fire.
     expect(anchorSlot(13400, [0, 4500, 9000])).toEqual([true, 13500, 100]);
+    // dead zone: well before the target -> wait.
     expect(anchorSlot(13000, [0, 4500, 9000])).toEqual([false, 13500, 500]);
-    expect(anchorSlot(13600, [0, 4500, 9000])).toEqual([false, 13500, 17900]);
+    // far side: just PAST the target -> fire (a well-spaced account expires AT its target phase, so
+    // the first run after expiry lands here; a one-sided `wait < tol` would lock it out ~5h).
+    expect(anchorSlot(13600, [0, 4500, 9000])).toEqual([true, 13500, 17900]); // 100s past
+    expect(anchorSlot(13800, [0, 4500, 9000])).toEqual([true, 13500, 17700]); // 300s past (first run after expiry)
+    // beyond two intervals past the target -> wait for the next ring.
+    expect(anchorSlot(14200, [0, 4500, 9000])).toEqual([false, 13500, 17300]); // 700s past
     expect(anchorSlot(0, [])).toEqual([false, null, null]);
   });
 

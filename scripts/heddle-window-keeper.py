@@ -147,9 +147,17 @@ def anchor_slot(now, other_live_resets, window_secs, slot_tolerance_secs):
         if width > gap_width:
             gap_start, gap_width = start, width
     target_phase = (gap_start + gap_width / 2) % window_secs
-    # A ping starts a window whose reset phase is `now`; wait forward only, never pull a phase backward.
+    # A ping starts a window whose reset phase is `now`, so wait_secs is the forward distance from now
+    # to the target phase around the ring.
     wait_secs = (target_phase - (now % window_secs)) % window_secs
-    return wait_secs < slot_tolerance_secs, target_phase, wait_secs
+    # Fire within one run interval BEFORE the target, or up to two intervals AFTER it. A one-sided
+    # "just before target" test is a one-shot the periodic keeper reliably MISSES: a well-spaced
+    # account expires exactly at its own reset phase, which equals the widest gap's midpoint, so the
+    # first run after it expires lands just PAST the target (wait_secs ~= a full ring) and a strict
+    # `wait < tol` would idle it for a whole 5h ring instead of re-anchoring. The trailing 2*tol also
+    # lets a jitter-delayed run or a failed ping re-anchor in the same ring. (CodeAnt/Cursor, PR #123.)
+    ping_now = wait_secs < slot_tolerance_secs or wait_secs > window_secs - 2 * slot_tolerance_secs
+    return ping_now, target_phase, wait_secs
 
 
 def oauth_access_token(acct):
