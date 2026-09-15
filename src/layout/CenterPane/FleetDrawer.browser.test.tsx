@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// Async-find timeout headroom for the account-cycler rotate tests: the post-rotation re-render can
+// exceed findBy's 1s default under CI load, producing a rare "unable to find text" flake (HED-542).
+const CI_ASYNC_TIMEOUT = 3000;
+
 type TermStoreMockState = {
   activeSessionId: string | null;
   sessions: { id: string; projectId: string; cwd: string }[];
@@ -105,15 +109,13 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText("3/3")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    // Extra timeout headroom: the post-rotation async re-render can exceed findBy's 1s default under CI load.
-    await screen.findByText("acct1", undefined, { timeout: 3000 });
+    await screen.findByText("acct1", undefined, { timeout: CI_ASYNC_TIMEOUT });
     expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
     expect(accountDetailElement("acct3")).toBeNull();
     expect(accountRowCount("acct1")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    // Same headroom for the second rotation's async re-render (findBy's 1s default is tight under CI load).
-    await screen.findByText("acct2", undefined, { timeout: 3000 });
+    await screen.findByText("acct2", undefined, { timeout: CI_ASYNC_TIMEOUT });
     expect(screen.getByText("fleet.keeperEstimate")).toBeTruthy();
     expect(accountRowCount("acct2")).toBe(rowCount);
 
@@ -528,8 +530,7 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
     // AccountCycler calls t() with no provider-specific argument.
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
 
-    // Extra timeout headroom: the post-rotation async re-render can exceed findBy's 1s default under CI load.
-    await screen.findByText("codex-acct-b", undefined, { timeout: 3000 });
+    await screen.findByText("codex-acct-b", undefined, { timeout: CI_ASYNC_TIMEOUT });
     expect(screen.getByText("2/2")).toBeTruthy();
     expect(screen.getByText("SURG")).toBeTruthy();
     expect(screen.queryByText("BONU")).toBeNull();
