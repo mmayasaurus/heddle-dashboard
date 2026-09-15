@@ -125,6 +125,26 @@ print(json.dumps(keeper["anchor_slot"](float(now), json.loads(other_live_resets)
   return JSON.parse(result.stdout) as [boolean, number | null, number | null];
 }
 
+function pingAccount(home: string, account: unknown) {
+  const result = spawnSync("python3", ["-c", `
+import json, runpy, sys
+source, account = sys.argv[1:]
+keeper = runpy.run_path(source, run_name="ping_fixture")
+print(json.dumps(keeper["ping"](json.loads(account))))
+`, keeperPath, JSON.stringify(account)], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: home,
+      HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"),
+      HEDDLE_BIN: "",
+      CLAUDE_CONFIG_DIR: undefined,
+    },
+  });
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout) as [boolean, number, string, string];
+}
+
 function seedMaxGapWindows(home: string, targetOffsetSecs: number) {
   const now = Math.floor(Date.now() / 1000);
   const windowSecs = 18000;
@@ -267,6 +287,61 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).toContain("acct2: UNKNOWN (no capture) → WOULD ping (dry-run)");
     expect(result.stdout).not.toContain("acct3");
     expect(fs.existsSync(path.join(home, ".heddle", "fake-claude.calls"))).toBe(false);
+  });
+
+  it("excludes a logged-in env-repoint account from window maintenance and logs the skip", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      {
+        id: "repointed",
+        configDir: null,
+        loggedIn: true,
+        envRepoint: { baseUrl: "https://repoint.example.test", token: "fixture-token" },
+      },
+    ]);
+
+    const result = runKeeper(["--dry-run"], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("skipping env-repoint account 'repointed' — window maintenance is native-only; repoint credentials are dispatch-only");
+    expect(result.stdout).not.toContain("repointed: UNKNOWN (no capture) → WOULD ping");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("refuses a direct env-repoint ping without invoking the native Claude subprocess", () => {
+    const home = mkHome();
+    const result = pingAccount(home, {
+      id: "repointed",
+      configDir: null,
+      loggedIn: true,
+      envRepoint: { baseUrl: "https://repoint.example.test", token: "fixture-token" },
+    });
+
+    expect(result).toEqual([false, 0, "", "skipped"]);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("still selects and pings a native logged-in account when an env-repoint peer is skipped", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      {
+        id: "repointed",
+        configDir: null,
+        loggedIn: true,
+        envRepoint: { baseUrl: "https://repoint.example.test", token: "fixture-token" },
+      },
+      { id: "native", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("skipping env-repoint account 'repointed'");
+    expect(result.stdout).toContain("native: UNKNOWN (no capture) → pinged ok=True");
+    expect(calls(home)).toHaveLength(1);
+    expect(calls(home)[0]).toContain(`CFG=${home}/.claude-native`);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-repointed.keeper.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-native.keeper.json"))).toBe(true);
   });
 
   it("fires within one interval before the target or up to two intervals after, else waits", () => {

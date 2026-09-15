@@ -315,6 +315,8 @@ def classify_ping(ok, returncode, stdout, stderr):
 
 
 def ping(acct):
+    if acct.get("envRepoint"):
+        return False, 0.0, "", "skipped"
     env = dict(os.environ)
     if acct.get("configDir"):
         # Same `~` handling as the tap: a child process gets the literal string, so expand it here.
@@ -1073,7 +1075,14 @@ def main():
             return 2
         verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
-    accts = [a for a in reg if a.get("loggedIn")]
+    accts = []
+    for a in reg:
+        if not a.get("loggedIn"):
+            continue
+        if a.get("envRepoint"):
+            log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
+            continue
+        accts.append(a)
     # Distinct ids must stay distinct after filename sanitization, or two accounts would share
     # capture/anchor files and mis-attribute windows. Registry ids are trusted slugs, so a
     # collision is a registry mistake — skip the later entry loudly rather than cross-write.
@@ -1099,6 +1108,9 @@ def main():
         before = window(verify)
         log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
         ok, secs, err, reason = ping(a)
+        if reason == "skipped":
+            log(f"[verify {verify}] skipped — window maintenance is native-only")
+            return
         write_dispatch(verify, reason, err)
         time.sleep(3)
         after = window(verify)
@@ -1138,6 +1150,9 @@ def main():
         if dry:
             log(f"{a['id']}: {status} → WOULD ping (dry-run)"); continue
         ok, secs, err, reason = ping(a)
+        if reason == "skipped":
+            log(f"{a['id']}: {status} → skipped (window maintenance is native-only)")
+            continue
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
         write_dispatch(a["id"], reason, err)
         if ok:
