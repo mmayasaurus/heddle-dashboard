@@ -1397,6 +1397,25 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(accountUuidMap(home)[sharedUuid]).toBe("native");
   });
 
+  it("keeps the first-mapped owner when two env-repoint configs share an account UUID", () => {
+    const home = mkHome();
+    const sharedUuid = "shared-glm-uuid";
+    const dirA = path.join(home, ".claude-glm-a");
+    const dirB = path.join(home, ".claude-glm-b");
+    for (const configDir of [dirA, dirB]) {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, ".claude.json"), JSON.stringify({ accountUuid: sharedUuid }));
+    }
+    // No native claimant: the collision path must keep the FIRST-mapped env-repoint (deterministic
+    // first-claim), not the last, and must not falsely credit a native. glm-a is first in the registry.
+    writeRegistry(home, [
+      { id: "glm-a", configDir: dirA, loggedIn: true, envRepoint },
+      { id: "glm-b", configDir: dirB, loggedIn: true, envRepoint },
+    ]);
+
+    expect(accountUuidMap(home)[sharedUuid]).toBe("glm-a");
+  });
+
   it("attributes shared transcript turns by owner account and deduplicates symlinked project dirs", () => {
     const home = mkHome();
     const { sharedProjects } = setupTranscriptAccounts(home);

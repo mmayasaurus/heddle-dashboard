@@ -4,10 +4,10 @@
 This keeper performs NATIVE window maintenance only. Accounts with `envRepoint` route
 `ANTHROPIC_BASE_URL` to a third-party endpoint and have no native Anthropic window, so they are
 excluded from the native keep-alive PING and its file products (the `claude-<id>.dispatch.json`
-dispatch signal and the `claude-<id>.keeper.json` anchor). They remain visible to the secondary
-accounting passes (rotation advice, transcript accounting, OAuth usage refresh) for correct
-per-account attribution — those resolve credentials only at dispatch time and make no native
-keep-alive call on a repoint account's behalf.
+dispatch signal and the `claude-<id>.keeper.json` anchor), and from the native OAuth usage refresh
+(`heddle usage poll-claude` polls a native window they do not have — HED-595). They remain visible to
+the secondary attribution passes (rotation advice, transcript accounting, and the transcript
+owner-UUID map) — local reads that make no native keep-alive call on a repoint account's behalf.
 
 Why (Maya, 2026-08-15): the 5h usage window is a rolling window anchored to the FIRST request in a
 fresh window (empirically: resets_at lands on odd minutes, e.g. 22:55, 22:10 — not clock hours).
@@ -782,7 +782,7 @@ def account_uuid_map():
                     if env_repoint and owner_uuid in owners:
                         log(f"registry error: env-repoint id '{acct_id}' shares accountUuid "
                             f"'{owner_uuid}' with already-mapped id '{owners[owner_uuid]}' — "
-                            f"retaining it (native accounts map first)")
+                            f"keeping the first-mapped owner")
                     else:
                         owners[owner_uuid] = acct_id
             except (OSError, json.JSONDecodeError, ValueError, TypeError):
