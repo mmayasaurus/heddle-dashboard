@@ -9,6 +9,11 @@ const keeperPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const rotationPostPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../scripts/heddle-rotation-post.py");
 const hasPython3 = spawnSync("python3", ["--version"]).status === 0;
 const homes: string[] = [];
+const envRepoint = {
+  baseUrl: "https://repoint.example.test",
+  authTokenRef: "secretref",
+  service: "glm",
+};
 const registry = {
   claude: [
     { id: "acct1", configDir: null, loggedIn: true },
@@ -79,7 +84,11 @@ function writeFailingClaude(home: string, stderr: string, code = 1): string {
 }
 
 function dispatch(home: string, account: string) {
-  return JSON.parse(fs.readFileSync(path.join(home, ".heddle", "usage", `claude-${account}.dispatch.json`), "utf8"));
+  return JSON.parse(fs.readFileSync(dispatchPath(home, account), "utf8"));
+}
+
+function dispatchPath(home: string, account: string) {
+  return path.join(home, ".heddle", "usage", `claude-${account}.dispatch.json`);
 }
 
 function establishAcct1Window(home: string) {
@@ -123,6 +132,26 @@ print(json.dumps(keeper["anchor_slot"](float(now), json.loads(other_live_resets)
 `, keeperPath, String(now), JSON.stringify(otherLiveResets), String(windowSecs), String(slotToleranceSecs)], { encoding: "utf8" });
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as [boolean, number | null, number | null];
+}
+
+function pingAccount(home: string, account: unknown) {
+  const result = spawnSync("python3", ["-c", `
+import json, runpy, sys
+source, account = sys.argv[1:]
+keeper = runpy.run_path(source, run_name="ping_fixture")
+print(json.dumps(keeper["ping"](json.loads(account))))
+`, keeperPath, JSON.stringify(account)], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: home,
+      HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"),
+      HEDDLE_BIN: "",
+      CLAUDE_CONFIG_DIR: undefined,
+    },
+  });
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout) as [boolean, number, string, string];
 }
 
 function seedMaxGapWindows(home: string, targetOffsetSecs: number) {
@@ -267,6 +296,272 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).toContain("acct2: UNKNOWN (no capture) → WOULD ping (dry-run)");
     expect(result.stdout).not.toContain("acct3");
     expect(fs.existsSync(path.join(home, ".heddle", "fake-claude.calls"))).toBe(false);
+  });
+
+  it("skips the native ping for a logged-in env-repoint account and logs the skip", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      {
+        id: "repointed",
+        configDir: "~/.claude-repointed",
+        loggedIn: true,
+        envRepoint,
+      },
+    ]);
+
+    const result = runKeeper(["--dry-run"], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("skipping env-repoint account 'repointed' — window maintenance is native-only; repoint credentials are dispatch-only");
+    expect(result.stdout).not.toContain("repointed: UNKNOWN (no capture) → WOULD ping");
+    expect(result.stdout).not.toContain("no logged-in accounts in registry");
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("reports the original empty-registry message when there are no logged-in accounts", () => {
+    const home = mkHome();
+    writeRegistry(home, []);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("no logged-in accounts in registry");
+    expect(result.stdout).not.toContain("no native logged-in accounts in registry");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("removes a stale excluding dispatch signal when an env-repoint account is skipped", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint }]);
+    fs.writeFileSync(dispatchPath(home, "repointed"), JSON.stringify({
+      schemaVersion: 1,
+      account: "repointed",
+      dispatchable: false,
+      reason: "logged-out",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not remove a stale dispatch signal in --dry-run (write-free preview)", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint }]);
+    fs.writeFileSync(dispatchPath(home, "repointed"), JSON.stringify({
+      schemaVersion: 1,
+      account: "repointed",
+      dispatchable: false,
+      reason: "logged-out",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const result = runKeeper(["--dry-run"], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("repointed: WOULD remove stale dispatch signal (dry-run)");
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(true);
+  });
+
+  it("logs a dispatch cleanup failure without costing a native account its ping", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
+      { id: "native", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+    fs.mkdirSync(dispatchPath(home, "repointed"));
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("unable to remove stale dispatch signal for 'repointed' (");
+    expect(result.stdout).toContain("native: UNKNOWN (no capture) → pinged ok=True");
+    expect(calls(home)).toHaveLength(1);
+  });
+
+  it("leaves an env-repoint dispatch sidecar during --verify and sanitizes it on the main run", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint }]);
+    fs.writeFileSync(dispatchPath(home, "repointed"), JSON.stringify({
+      schemaVersion: 1,
+      account: "repointed",
+      dispatchable: false,
+      reason: "logged-out",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const verifyResult = runKeeper(["--verify", "repointed"], home);
+
+    expect(verifyResult.status).toBe(0);
+    expect(verifyResult.stdout).toContain("[verify repointed] env-repoint account — native window maintenance does not apply (dispatch-only)");
+    expect(verifyResult.stdout).not.toContain("--verify: unknown account repointed");
+    expect(calls(home)).toEqual([]);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(true);
+
+    const mainResult = runKeeper([], home);
+
+    expect(mainResult.status).toBe(0);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("--verify reports an unknown account even when only env-repoint accounts are registered", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint }]);
+
+    const result = runKeeper(["--verify", "ghost"], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--verify: unknown account ghost");
+    expect(result.stdout).not.toContain("no native logged-in accounts in registry");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not delete a native account's dispatch signal when an env-repoint id sanitizes to the same segment", () => {
+    const home = mkHome();
+    // "glm 1" and "glm_1" both sanitize to segment "glm_1"; the native account owns that sidecar.
+    writeRegistry(home, [
+      { id: "glm 1", configDir: "~/.claude-glm", loggedIn: true, envRepoint },
+      { id: "glm_1", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+    fs.writeFileSync(dispatchPath(home, "glm_1"), JSON.stringify({
+      schemaVersion: 1,
+      account: "glm_1",
+      dispatchable: true,
+      reason: "ok",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("registry error: ids 'glm 1' and 'glm_1' collide after sanitization ('glm_1') — skipping 'glm_1'");
+    expect(result.stdout).toContain("dispatch signal claude-glm_1.dispatch.json belongs to a native account — not removing");
+    expect(fs.existsSync(dispatchPath(home, "glm_1"))).toBe(true);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("preserves a logged-out native account's dispatch signal when a logged-in env-repoint id shares its segment", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      { id: "glm 1", configDir: "~/.claude-glm", loggedIn: true, envRepoint },
+      { id: "glm_1", configDir: "~/.claude-native", loggedIn: false },
+    ]);
+    fs.writeFileSync(dispatchPath(home, "glm_1"), JSON.stringify({
+      schemaVersion: 1,
+      account: "glm_1",
+      dispatchable: false,
+      reason: "logged-out",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("dispatch signal claude-glm_1.dispatch.json belongs to a native account — not removing");
+    expect(fs.existsSync(dispatchPath(home, "glm_1"))).toBe(true);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("refuses a direct env-repoint ping without invoking the native Claude subprocess", () => {
+    const home = mkHome();
+    const result = pingAccount(home, {
+      id: "repointed",
+      configDir: "~/.claude-repointed",
+      loggedIn: true,
+      envRepoint,
+    });
+
+    expect(result).toEqual([false, 0, "", "skipped"]);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("still selects and pings a native logged-in account when an env-repoint peer is skipped", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      {
+        id: "repointed",
+        configDir: "~/.claude-repointed",
+        loggedIn: true,
+        envRepoint,
+      },
+      { id: "native", configDir: "~/.claude-native", loggedIn: true, envRepoint: null },
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("skipping env-repoint account 'repointed'");
+    expect(result.stdout).toContain("native: UNKNOWN (no capture) → pinged ok=True");
+    expect(calls(home)).toHaveLength(1);
+    expect(calls(home)[0]).toContain(`CFG=${home}/.claude-native`);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-repointed.keeper.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-native.keeper.json"))).toBe(true);
+  });
+
+  it("does not let an env-repoint live reset defer a native account's cold-start ping", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
+      { id: "native", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+    writeTap(home, "repointed", now, 90, now + 3600);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("native: UNKNOWN (no capture) → pinged ok=True");
+    expect(result.stdout).not.toMatch(/native: UNKNOWN \(no capture\).*wait .*max-gap slot/);
+    expect(calls(home)).toHaveLength(1);
+    expect(calls(home)[0]).toContain(`CFG=${home}/.claude-native`);
+  });
+
+  it("treats an empty envRepoint object as native because an empty dict is falsy in Python", () => {
+    const home = mkHome();
+    writeRegistry(home, [
+      { id: "native-empty-repoint", configDir: "~/.claude-native-empty", loggedIn: true, envRepoint: {} },
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("native-empty-repoint: UNKNOWN (no capture) → pinged ok=True");
+    expect(calls(home)).toHaveLength(1);
+    expect(calls(home)[0]).toContain(`CFG=${home}/.claude-native-empty`);
+  });
+
+  it("attributes transcripts for an env-repoint account without native-pinging it", () => {
+    const home = mkHome();
+    const { accounts, sharedProjects } = setupTranscriptAccounts(home);
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [{
+      id: "repointed",
+      configDir: accounts[0].configDir,
+      loggedIn: true,
+      envRepoint,
+    }]);
+    writeTranscriptWindow(home, "repointed", now + 6 * 86400);
+    writeTranscript(path.join(sharedProjects, "repointed.jsonl"), [
+      {
+        ownerAccountUuid: "uuid-acct1",
+        timestamp: new Date(now * 1000).toISOString(),
+        model: "claude-fable-5",
+        input: 4,
+      },
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(calls(home)).toEqual([]);
+    expect(transcriptSummary(home, "repointed").weightedTotal).toBe(4);
   });
 
   it("fires within one interval before the target or up to two intervals after, else waits", () => {
@@ -613,6 +908,26 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(advice(home).censusStatus).toBe("unavailable");
     expect(advice(home).reason).toContain("census unavailable");
     expect(fs.readFileSync(marker, "utf8")).not.toContain("skewed");
+  });
+
+  it("keeps an env-repoint account visible to rotation census attribution", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
+    ]);
+    writeTap(home, "repointed", now, 90, now + 3600);
+    writeCensusFixture(home, [
+      `1 claude --resume abc CLAUDE_CONFIG_DIR=${home}/.claude-repointed`,
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rotation advisor: active=repointed");
+    expect(result.stdout).not.toContain("census unavailable");
+    expect(result.stdout).not.toContain("out-of-pool");
+    expect(advice(home).censusStatus).not.toBe("unavailable");
   });
 
   it("keeps fleet census counts when an env-less out-of-pool session is present", () => {

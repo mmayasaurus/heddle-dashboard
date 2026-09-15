@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""heddle window-keeper — keeps every Claude account's 5-hour window ticking, STAGGERED.
+"""heddle window-keeper — keeps native Claude accounts' 5-hour windows ticking, STAGGERED.
+
+This keeper performs NATIVE window maintenance only. Accounts with `envRepoint` route
+`ANTHROPIC_BASE_URL` to a third-party endpoint and have no native Anthropic window, so they are
+excluded from the native keep-alive PING and its file products (the `claude-<id>.dispatch.json`
+dispatch signal and the `claude-<id>.keeper.json` anchor). They remain visible to the secondary
+accounting passes (rotation advice, transcript accounting, OAuth usage refresh) for correct
+per-account attribution — those resolve credentials only at dispatch time and make no native
+keep-alive call on a repoint account's behalf.
 
 Why (Maya, 2026-08-15): the 5h usage window is a rolling window anchored to the FIRST request in a
 fresh window (empirically: resets_at lands on odd minutes, e.g. 22:55, 22:10 — not clock hours).
@@ -8,7 +16,7 @@ walls arrive together; pinging them ~STAGGER_MIN apart makes a fresh window open
 the clock, so the fleet can always rotate onto an account that just reset.
 
 What it does (per run, safe to run every 5 min from launchd):
-  for each account in ~/.heddle/accounts.json (claude, loggedIn):
+  for each native account in ~/.heddle/accounts.json (claude, loggedIn, no envRepoint):
     - read its window from ~/.heddle/usage/claude-<id>.json (written by the statusline tap, which
       keys per account via CLAUDE_CONFIG_DIR) OR from claude-<id>.keeper.json (the keeper's own
       anchor for a window IT started) — freshest wins;
@@ -315,6 +323,8 @@ def classify_ping(ok, returncode, stdout, stderr):
 
 
 def ping(acct):
+    if acct.get("envRepoint"):
+        return False, 0.0, "", "skipped"
     env = dict(os.environ)
     if acct.get("configDir"):
         # Same `~` handling as the tap: a child process gets the literal string, so expand it here.
@@ -1073,7 +1083,31 @@ def main():
             return 2
         verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
-    accts = [a for a in reg if a.get("loggedIn")]
+    logged_in_accts = [a for a in reg if a.get("loggedIn")]
+
+    if verify:
+        verify_acct = next((x for x in logged_in_accts if x["id"] == verify), None)
+        if not verify_acct:
+            log(f"--verify: unknown account {verify}"); return
+        if verify_acct.get("envRepoint"):
+            log(f"[verify {verify}] env-repoint account — native window maintenance does not apply (dispatch-only)")
+            return
+
+        before = window(verify)
+        log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
+        ok, secs, err, reason = ping(verify_acct)
+        write_dispatch(verify, reason, err)
+        time.sleep(3)
+        after = window(verify)
+        log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
+        if before and after and before["resets_at"] and after["resets_at"]:
+            log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
+        return
+
+    # A native account OWNS its dispatch sidecar filename even while logged out. Compute native
+    # segments over the full registry so repoint cleanup can never cross-delete that signal.
+    native_segments = {safe_segment(a["id"]) for a in reg if not a.get("envRepoint")}
+    accts = logged_in_accts
     # Distinct ids must stay distinct after filename sanitization, or two accounts would share
     # capture/anchor files and mis-attribute windows. Registry ids are trusted slugs, so a
     # collision is a registry mistake — skip the later entry loudly rather than cross-write.
@@ -1089,29 +1123,37 @@ def main():
     accts = unique_accts
     if not accts:
         log("no logged-in accounts in registry"); return
+
+    for a in accts:
+        if not a.get("envRepoint"):
+            continue
+        log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
+        segment = safe_segment(a["id"])
+        if segment in native_segments:
+            log(f"  dispatch signal claude-{segment}.dispatch.json belongs to a native account — not removing")
+            continue
+        dispatch_path = os.path.join(USAGE, f"claude-{segment}.dispatch.json")
+        if dry:
+            # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
+            if os.path.exists(dispatch_path):
+                log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
+        else:
+            try:
+                os.unlink(dispatch_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
+                log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
+
     state = load(STATE, {"last_ping_ts": 0, "last_ping_acct": None})
     now = time.time()
-
-    if verify:
-        a = next((x for x in accts if x["id"] == verify), None)
-        if not a:
-            log(f"--verify: unknown account {verify}"); return
-        before = window(verify)
-        log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
-        ok, secs, err, reason = ping(a)
-        write_dispatch(verify, reason, err)
-        time.sleep(3)
-        after = window(verify)
-        log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
-        if before and after and before["resets_at"] and after["resets_at"]:
-            log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
-        return
 
     # PRIMARY JOB FIRST (adversarial review, cursor/grok): keep windows alive before ANY secondary
     # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
     # filesystem read — is not an exception, so the try/except guarding the advisor and transcript
     # accounting below cannot catch it. Only doing the pings first guarantees a hang there costs no ping.
-    windows = [(a, window(a["id"])) for a in accts]
+    native_accts = [a for a in accts if not a.get("envRepoint")]
+    windows = [(a, window(a["id"])) for a in native_accts]
     def _live(w):
         return bool(w and w.get("resets_at") and w["resets_at"] > now)
     live_resets = [w["resets_at"] for _, w in windows if _live(w)]
