@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""heddle window-keeper — keeps every Claude account's 5-hour window ticking, STAGGERED.
+"""heddle window-keeper — keeps native Claude accounts' 5-hour windows ticking, STAGGERED.
+
+This keeper performs NATIVE window maintenance only. Accounts with `envRepoint` route
+`ANTHROPIC_BASE_URL` to a third-party endpoint and are dispatch-only, so they are intentionally
+excluded from every native-maintenance path: ping, rotation advice, transcript accounting, and
+OAuth polling. They have no native window, and their credentials are resolved only at dispatch time.
 
 Why (Maya, 2026-08-15): the 5h usage window is a rolling window anchored to the FIRST request in a
 fresh window (empirically: resets_at lands on odd minutes, e.g. 22:55, 22:10 — not clock hours).
@@ -8,7 +13,7 @@ walls arrive together; pinging them ~STAGGER_MIN apart makes a fresh window open
 the clock, so the fleet can always rotate onto an account that just reset.
 
 What it does (per run, safe to run every 5 min from launchd):
-  for each account in ~/.heddle/accounts.json (claude, loggedIn):
+  for each native account in ~/.heddle/accounts.json (claude, loggedIn, no envRepoint):
     - read its window from ~/.heddle/usage/claude-<id>.json (written by the statusline tap, which
       keys per account via CLAUDE_CONFIG_DIR) OR from claude-<id>.keeper.json (the keeper's own
       anchor for a window IT started) — freshest wins;
@@ -1075,12 +1080,23 @@ def main():
             return 2
         verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
+    logged_in_accts = [a for a in reg if a.get("loggedIn")]
     accts = []
-    for a in reg:
-        if not a.get("loggedIn"):
-            continue
+    for a in logged_in_accts:
         if a.get("envRepoint"):
             log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
+            dispatch_path = os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.dispatch.json")
+            if dry:
+                # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
+                if os.path.exists(dispatch_path):
+                    log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
+            else:
+                try:
+                    os.unlink(dispatch_path)
+                except FileNotFoundError:
+                    pass
+                except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
+                    log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
             continue
         accts.append(a)
     # Distinct ids must stay distinct after filename sanitization, or two accounts would share
@@ -1096,8 +1112,13 @@ def main():
         seen_segments[segment] = a["id"]
         unique_accts.append(a)
     accts = unique_accts
+    if verify:
+        verify_acct = next((x for x in logged_in_accts if x["id"] == verify), None)
+        if verify_acct and verify_acct.get("envRepoint"):
+            log(f"[verify {verify}] env-repoint account — native window maintenance does not apply (dispatch-only)")
+            return
     if not accts:
-        log("no logged-in accounts in registry"); return
+        log("no native logged-in accounts in registry"); return
     state = load(STATE, {"last_ping_ts": 0, "last_ping_acct": None})
     now = time.time()
 
@@ -1150,9 +1171,6 @@ def main():
         if dry:
             log(f"{a['id']}: {status} → WOULD ping (dry-run)"); continue
         ok, secs, err, reason = ping(a)
-        if reason == "skipped":
-            log(f"{a['id']}: {status} → skipped (window maintenance is native-only)")
-            continue
         log(f"{a['id']}: {status} → pinged ok={ok} ({secs}s){'' if ok else ' err=' + err}")
         write_dispatch(a["id"], reason, err)
         if ok:

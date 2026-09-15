@@ -232,8 +232,11 @@ multi-account mechanism per the Claude Code env-vars docs). **Gotcha:** never se
 - **Window-keeper** (`scripts/heddle-window-keeper.py`, installed at `~/.heddle/window-keeper.py`,
   launchd `io.heddle.window-keeper`, every 5 min): the 5h window is a rolling window anchored to the
   first request (empirical: `resets_at` on odd minutes), so one ~10-token haiku ping starts an
-  account's clock. For an EXPIRED/UNKNOWN account with live peers, the keeper schedules its fresh
-  reset at the midpoint of the widest gap in their 5h reset phases, gradually spreading the fleet
+  account's clock. Maintenance is native-only: env-repoint accounts routed through
+  `ANTHROPIC_BASE_URL` are dispatch-only and are excluded from keeper pings, rotation advice,
+  transcript accounting, and OAuth polling. For an EXPIRED/UNKNOWN native account with live
+  peers, the keeper schedules its fresh reset at the midpoint of the widest gap in their 5h reset
+  phases, gradually spreading the fleet
   toward roughly 75-minute spacing. With no live peers it falls back to the legacy 75-minute
   stagger. `HEDDLE_KEEPER_INTERVAL_SECS` (default `300`, range `60`–`3600`) is the max-gap slot
   tolerance and must track the launchd plist's `StartInterval` (300 by default). **Verified:**
