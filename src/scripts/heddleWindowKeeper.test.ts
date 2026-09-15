@@ -134,7 +134,11 @@ print(json.dumps(keeper["anchor_slot"](float(now), json.loads(other_live_resets)
   return JSON.parse(result.stdout) as [boolean, number | null, number | null];
 }
 
-function pingAccount(home: string, account: unknown) {
+function pingAccount(
+  home: string,
+  account: unknown,
+  { claudeBin = path.join(home, "fake-claude"), ambientEnv = {} }: { claudeBin?: string; ambientEnv?: NodeJS.ProcessEnv } = {},
+) {
   const result = spawnSync("python3", ["-c", `
 import json, runpy, sys
 source, account = sys.argv[1:]
@@ -145,13 +149,35 @@ print(json.dumps(keeper["ping"](json.loads(account))))
     env: {
       ...process.env,
       HOME: home,
-      HEDDLE_CLAUDE_BIN: path.join(home, "fake-claude"),
+      HEDDLE_CLAUDE_BIN: claudeBin,
       HEDDLE_BIN: "",
       CLAUDE_CONFIG_DIR: undefined,
+      ...ambientEnv,
     },
   });
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as [boolean, number, string, string];
+}
+
+function accountUuidMap(home: string) {
+  const result = spawnSync("python3", ["-c", `
+import json, runpy, sys
+source = sys.argv[1]
+keeper = runpy.run_path(source, run_name="account_uuid_map_fixture")
+print(json.dumps(keeper["account_uuid_map"]()))
+`, keeperPath], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, HEDDLE_BIN: "" },
+  });
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout.trim().split("\n").pop()!) as Record<string, string>;
+}
+
+function writeEnvDumpClaude(home: string, marker: string): string {
+  const fakeClaude = path.join(home, "fake-claude-env-dump");
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\nenv | sort > ${JSON.stringify(marker)}\nprintf '{"result":"ok"}\\n'\n`);
+  fs.chmodSync(fakeClaude, 0o755);
+  return fakeClaude;
 }
 
 function seedMaxGapWindows(home: string, targetOffsetSecs: number) {
@@ -255,7 +281,7 @@ function writeFakeHeddle(home: string, mode: "healthy" | "no-write" | "error", m
   const heddle = path.join(home, "fake-heddle");
   fs.writeFileSync(heddle, [
     "#!/bin/sh",
-    marker ? `printf x >> ${JSON.stringify(marker)}` : "",
+    marker ? `printf '%s\\n' "$4" >> ${JSON.stringify(marker)}` : "",
     'if [ "$1" != usage ] || [ "$2" != poll-claude ] || [ "$3" != --account ]; then exit 9; fi',
     mode === "healthy" ? 'mkdir -p "$HOME/.heddle/usage"; printf \'%s\\n\' \'{"fablePct":77,"source":"oauth-usage"}\' > "$HOME/.heddle/usage/claude-$4.oauth-usage.json"' : "",
     mode === "error" ? "exit 1" : "exit 0",
@@ -479,6 +505,28 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result).toEqual([false, 0, "", "skipped"]);
     expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
     expect(calls(home)).toEqual([]);
+  });
+
+  it("strips ambient Anthropic credentials before a native ping while preserving its config dir", () => {
+    const home = mkHome();
+    const marker = path.join(home, "native-ping-env");
+    const configDir = path.join(home, ".claude-native");
+    const ambientCredentialVars = [
+      "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_PROFILE",
+      "ANTHROPIC_BASE_URL", "ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID",
+      "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+    ];
+    fs.mkdirSync(configDir, { recursive: true });
+
+    const result = pingAccount(home, { id: "native", configDir, loggedIn: true }, {
+      claudeBin: writeEnvDumpClaude(home, marker),
+      ambientEnv: Object.fromEntries(ambientCredentialVars.map((name) => [name, "ambient-credential"])),
+    });
+
+    expect(result[0]).toBe(true);
+    const childEnv = fs.readFileSync(marker, "utf8");
+    for (const name of ambientCredentialVars) expect(childEnv).not.toContain(`${name}=`);
+    expect(childEnv).toContain(`CLAUDE_CONFIG_DIR=${configDir}`);
   });
 
   it("still selects and pings a native logged-in account when an env-repoint peer is skipped", () => {
@@ -1331,6 +1379,43 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.stdout).not.toContain("Command: no eligible target");
   });
 
+  it("keeps a native owner when an env-repoint config shares its account UUID", () => {
+    const home = mkHome();
+    const sharedUuid = "shared-owner-uuid";
+    const nativeConfigDir = path.join(home, ".claude-native");
+    const repointedConfigDir = path.join(home, ".claude-repointed");
+    for (const configDir of [nativeConfigDir, repointedConfigDir]) {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, ".claude.json"), JSON.stringify({ accountUuid: sharedUuid }));
+    }
+    // The env-repoint account is last, which exposed the former registry-order misattribution.
+    writeRegistry(home, [
+      { id: "native", configDir: nativeConfigDir, loggedIn: true },
+      { id: "repointed", configDir: repointedConfigDir, loggedIn: true, envRepoint },
+    ]);
+
+    expect(accountUuidMap(home)[sharedUuid]).toBe("native");
+  });
+
+  it("keeps the first-mapped owner when two env-repoint configs share an account UUID", () => {
+    const home = mkHome();
+    const sharedUuid = "shared-glm-uuid";
+    const dirA = path.join(home, ".claude-glm-a");
+    const dirB = path.join(home, ".claude-glm-b");
+    for (const configDir of [dirA, dirB]) {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, ".claude.json"), JSON.stringify({ accountUuid: sharedUuid }));
+    }
+    // No native claimant: the collision path must keep the FIRST-mapped env-repoint (deterministic
+    // first-claim), not the last, and must not falsely credit a native. glm-a is first in the registry.
+    writeRegistry(home, [
+      { id: "glm-a", configDir: dirA, loggedIn: true, envRepoint },
+      { id: "glm-b", configDir: dirB, loggedIn: true, envRepoint },
+    ]);
+
+    expect(accountUuidMap(home)[sharedUuid]).toBe("glm-a");
+  });
+
   it("attributes shared transcript turns by owner account and deduplicates symlinked project dirs", () => {
     const home = mkHome();
     const { sharedProjects } = setupTranscriptAccounts(home);
@@ -1721,7 +1806,21 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(fs.readFileSync(path.join(home, ".heddle", "usage", "claude-acct1.oauth-usage.json"), "utf8"))).toMatchObject({ fablePct: 77 });
     expect(fs.existsSync(path.join(home, ".heddle", "oauth-usage-state.json"))).toBe(false);
-    expect(fs.readFileSync(marker, "utf8")).toBe("x");
+    expect(fs.readFileSync(marker, "utf8")).toBe("acct1\n");
+  });
+
+  it("refreshes native OAuth usage without polling env-repoint accounts", () => {
+    const home = mkHome();
+    const marker = path.join(home, "poll-claude-calls");
+    writeRegistry(home, [
+      { id: "native", configDir: null, loggedIn: true },
+      { id: "repointed", configDir: null, loggedIn: true, envRepoint },
+    ]);
+
+    const result = runKeeper([], home, { HEDDLE_BIN: writeFakeHeddle(home, "healthy", marker) });
+
+    expect(result.status).toBe(0);
+    expect(fs.readFileSync(marker, "utf8").trim().split("\n")).toEqual(["native"]);
   });
 
   it("backs off when poll-claude exits zero without writing usage", () => {
