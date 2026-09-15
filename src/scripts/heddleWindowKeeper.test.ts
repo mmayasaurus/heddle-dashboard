@@ -388,6 +388,41 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
   });
 
+  it("--verify reports an unknown account even when only env-repoint accounts are registered", () => {
+    const home = mkHome();
+    writeRegistry(home, [{ id: "repointed", configDir: null, loggedIn: true, envRepoint }]);
+
+    const result = runKeeper(["--verify", "ghost"], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--verify: unknown account ghost");
+    expect(result.stdout).not.toContain("no native logged-in accounts in registry");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not delete a native account's dispatch signal when an env-repoint id sanitizes to the same segment", () => {
+    const home = mkHome();
+    // "glm 1" and "glm_1" both sanitize to segment "glm_1"; the native account owns that sidecar.
+    writeRegistry(home, [
+      { id: "glm 1", configDir: null, loggedIn: true, envRepoint },
+      { id: "glm_1", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+    fs.writeFileSync(dispatchPath(home, "glm_1"), JSON.stringify({
+      schemaVersion: 1,
+      account: "glm_1",
+      dispatchable: true,
+      reason: "ok",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("dispatch signal claude-glm_1.dispatch.json belongs to a native account — not removing");
+    expect(fs.existsSync(dispatchPath(home, "glm_1"))).toBe(true);
+    expect(calls(home)).toHaveLength(1);
+  });
+
   it("refuses a direct env-repoint ping without invoking the native Claude subprocess", () => {
     const home = mkHome();
     const result = pingAccount(home, {

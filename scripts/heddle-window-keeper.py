@@ -1081,22 +1081,51 @@ def main():
         verify = sys.argv[verify_index + 1]
     reg = load(REG, {}).get("claude", [])
     logged_in_accts = [a for a in reg if a.get("loggedIn")]
+
+    if verify:
+        verify_acct = next((x for x in logged_in_accts if x["id"] == verify), None)
+        if not verify_acct:
+            log(f"--verify: unknown account {verify}"); return
+        if verify_acct.get("envRepoint"):
+            log(f"[verify {verify}] env-repoint account — native window maintenance does not apply (dispatch-only)")
+            return
+
+        before = window(verify)
+        log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
+        ok, secs, err, reason = ping(verify_acct)
+        write_dispatch(verify, reason, err)
+        time.sleep(3)
+        after = window(verify)
+        log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
+        if before and after and before["resets_at"] and after["resets_at"]:
+            log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
+        return
+
+    # A native account OWNS its dispatch sidecar filename. Compute the kept-native segments FIRST so a
+    # repoint id that sanitizes to the SAME segment as a native id can never delete the native account's
+    # signal — ids are trusted slugs, but a sanitization collision must not cross-delete (the ping-set
+    # analogue is the id-collision dedup below).
+    native_segments = {safe_segment(a["id"]) for a in logged_in_accts if not a.get("envRepoint")}
     accts = []
     for a in logged_in_accts:
         if a.get("envRepoint"):
             log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
-            dispatch_path = os.path.join(USAGE, f"claude-{safe_segment(a['id'])}.dispatch.json")
-            if dry:
-                # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
-                if os.path.exists(dispatch_path):
-                    log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
+            segment = safe_segment(a["id"])
+            if segment in native_segments:
+                log(f"  dispatch signal claude-{segment}.dispatch.json belongs to a native account — not removing")
             else:
-                try:
-                    os.unlink(dispatch_path)
-                except FileNotFoundError:
-                    pass
-                except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
-                    log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
+                dispatch_path = os.path.join(USAGE, f"claude-{segment}.dispatch.json")
+                if dry:
+                    # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
+                    if os.path.exists(dispatch_path):
+                        log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
+                else:
+                    try:
+                        os.unlink(dispatch_path)
+                    except FileNotFoundError:
+                        pass
+                    except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
+                        log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
             continue
         accts.append(a)
     # Distinct ids must stay distinct after filename sanitization, or two accounts would share
@@ -1112,33 +1141,10 @@ def main():
         seen_segments[segment] = a["id"]
         unique_accts.append(a)
     accts = unique_accts
-    if verify:
-        verify_acct = next((x for x in logged_in_accts if x["id"] == verify), None)
-        if verify_acct and verify_acct.get("envRepoint"):
-            log(f"[verify {verify}] env-repoint account — native window maintenance does not apply (dispatch-only)")
-            return
     if not accts:
         log("no native logged-in accounts in registry"); return
     state = load(STATE, {"last_ping_ts": 0, "last_ping_acct": None})
     now = time.time()
-
-    if verify:
-        a = next((x for x in accts if x["id"] == verify), None)
-        if not a:
-            log(f"--verify: unknown account {verify}"); return
-        before = window(verify)
-        log(f"[verify {verify}] BEFORE: used={before and before['used']}% resets_at={fmt(before and before['resets_at'])}")
-        ok, secs, err, reason = ping(a)
-        if reason == "skipped":
-            log(f"[verify {verify}] skipped — window maintenance is native-only")
-            return
-        write_dispatch(verify, reason, err)
-        time.sleep(3)
-        after = window(verify)
-        log(f"[verify {verify}] ping ok={ok} ({secs}s) AFTER: used={after and after['used']}% resets_at={fmt(after and after['resets_at'])}")
-        if before and after and before["resets_at"] and after["resets_at"]:
-            log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
-        return
 
     # PRIMARY JOB FIRST (adversarial review, cursor/grok): keep windows alive before ANY secondary
     # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
