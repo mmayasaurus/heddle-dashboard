@@ -383,20 +383,30 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(calls(home)).toHaveLength(1);
   });
 
-  it("reports --verify for an env-repoint account as dispatch-only without a native ping", () => {
+  it("leaves an env-repoint dispatch sidecar during --verify and sanitizes it on the main run", () => {
     const home = mkHome();
-    writeRegistry(home, [
-      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
-      { id: "native", configDir: "~/.claude-native", loggedIn: true },
-    ]);
+    writeRegistry(home, [{ id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint }]);
+    fs.writeFileSync(dispatchPath(home, "repointed"), JSON.stringify({
+      schemaVersion: 1,
+      account: "repointed",
+      dispatchable: false,
+      reason: "logged-out",
+      checkedAt: Math.floor(Date.now() / 1000),
+    }));
 
-    const result = runKeeper(["--verify", "repointed"], home);
+    const verifyResult = runKeeper(["--verify", "repointed"], home);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("[verify repointed] env-repoint account — native window maintenance does not apply (dispatch-only)");
-    expect(result.stdout).not.toContain("--verify: unknown account repointed");
+    expect(verifyResult.status).toBe(0);
+    expect(verifyResult.stdout).toContain("[verify repointed] env-repoint account — native window maintenance does not apply (dispatch-only)");
+    expect(verifyResult.stdout).not.toContain("--verify: unknown account repointed");
     expect(calls(home)).toEqual([]);
+    expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(true);
+
+    const mainResult = runKeeper([], home);
+
+    expect(mainResult.status).toBe(0);
     expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
+    expect(calls(home)).toEqual([]);
   });
 
   it("--verify reports an unknown account even when only env-repoint accounts are registered", () => {
@@ -493,6 +503,24 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(fs.existsSync(dispatchPath(home, "repointed"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-repointed.keeper.json"))).toBe(false);
     expect(fs.existsSync(path.join(home, ".heddle", "usage", "claude-native.keeper.json"))).toBe(true);
+  });
+
+  it("does not let an env-repoint live reset defer a native account's cold-start ping", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
+      { id: "native", configDir: "~/.claude-native", loggedIn: true },
+    ]);
+    writeTap(home, "repointed", now, 90, now + 3600);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("native: UNKNOWN (no capture) → pinged ok=True");
+    expect(result.stdout).not.toMatch(/native: UNKNOWN \(no capture\).*wait .*max-gap slot/);
+    expect(calls(home)).toHaveLength(1);
+    expect(calls(home)[0]).toContain(`CFG=${home}/.claude-native`);
   });
 
   it("treats an empty envRepoint object as native because an empty dict is falsy in Python", () => {
@@ -880,6 +908,26 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     expect(advice(home).censusStatus).toBe("unavailable");
     expect(advice(home).reason).toContain("census unavailable");
     expect(fs.readFileSync(marker, "utf8")).not.toContain("skewed");
+  });
+
+  it("keeps an env-repoint account visible to rotation census attribution", () => {
+    const home = mkHome();
+    const now = Math.floor(Date.now() / 1000);
+    writeRegistry(home, [
+      { id: "repointed", configDir: "~/.claude-repointed", loggedIn: true, envRepoint },
+    ]);
+    writeTap(home, "repointed", now, 90, now + 3600);
+    writeCensusFixture(home, [
+      `1 claude --resume abc CLAUDE_CONFIG_DIR=${home}/.claude-repointed`,
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rotation advisor: active=repointed");
+    expect(result.stdout).not.toContain("census unavailable");
+    expect(result.stdout).not.toContain("out-of-pool");
+    expect(advice(home).censusStatus).not.toBe("unavailable");
   });
 
   it("keeps fleet census counts when an env-less out-of-pool session is present", () => {
