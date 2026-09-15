@@ -12,6 +12,19 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct CommsDbEnvRestore(Option<String>);
+
+impl Drop for CommsDbEnvRestore {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => std::env::set_var("HEDDLE_COMMS_DB", value),
+            None => std::env::remove_var("HEDDLE_COMMS_DB"),
+        }
+    }
+}
+
 /// Verbatim broker schema (pragmas, tables, indexes, append-only/lineage triggers) from
 /// `comms-fixtures.output.md` section 1, itself cross-checked against `src/comms/log.ts`.
 const SCHEMA_SQL: &str = r#"
@@ -190,6 +203,52 @@ fn seeded_db(path: &Path) {
     empty_schema_db(path);
     let conn = Connection::open(path).unwrap();
     conn.execute_batch(BASE_FIXTURE_SQL).unwrap();
+}
+
+#[test]
+fn comms_db_path_uses_a_non_empty_env_path() {
+    let _guard = ENV_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _restore = CommsDbEnvRestore(std::env::var("HEDDLE_COMMS_DB").ok());
+    let dir = tempfile::tempdir().unwrap();
+    let custom_path = dir.path().join("custom-comms.db");
+
+    std::env::set_var("HEDDLE_COMMS_DB", &custom_path);
+
+    assert_eq!(comms_db_path(), Some(custom_path));
+}
+
+#[test]
+fn comms_db_path_uses_the_home_default_for_an_empty_env_value() {
+    let _guard = ENV_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _restore = CommsDbEnvRestore(std::env::var("HEDDLE_COMMS_DB").ok());
+
+    std::env::set_var("HEDDLE_COMMS_DB", "");
+
+    let path = comms_db_path().expect("the home directory should be available for this test");
+    assert!(path.ends_with("comms.db"));
+    assert!(path.parent().is_some_and(|parent| parent.ends_with(".heddle")));
+}
+
+#[test]
+fn comms_db_path_uses_the_home_default_when_the_env_is_unset() {
+    let _guard = ENV_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _restore = CommsDbEnvRestore(std::env::var("HEDDLE_COMMS_DB").ok());
+
+    std::env::remove_var("HEDDLE_COMMS_DB");
+
+    let path = comms_db_path().expect("the home directory should be available for this test");
+    assert!(path.ends_with("comms.db"));
+    assert!(path.parent().is_some_and(|parent| parent.ends_with(".heddle")));
+}
+
+#[test]
+fn comms_db_path_uses_a_whitespace_env_value_literally() {
+    let _guard = ENV_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _restore = CommsDbEnvRestore(std::env::var("HEDDLE_COMMS_DB").ok());
+
+    std::env::set_var("HEDDLE_COMMS_DB", "   ");
+
+    assert_eq!(comms_db_path(), Some(std::path::PathBuf::from("   ")));
 }
 
 #[test]

@@ -200,7 +200,18 @@ pub struct Participant {
 /// `None` when no home directory exists — callers treat that as a fresh install rather than
 /// ever touching a cwd-relative path.
 fn comms_db_path() -> Option<PathBuf> {
-    Some(dirs::home_dir()?.join(".heddle").join("comms.db"))
+    // Honor HEDDLE_COMMS_DB first, matching the broker's resolution in the heddle repo
+    // (`process.env.HEDDLE_COMMS_DB || DEFAULT_COMMS_PATH` — bootstrap.ts / server.ts /
+    // fleet-pause.ts:59). This reader MUST open the same file the broker WRITES, or the panel
+    // reads a different database than the fleet uses. `!is_empty()` mirrors `||` exactly: unset
+    // or empty falls back to the home default; a non-empty value (whitespace included) is used
+    // LITERALLY — do NOT trim (fleet-pause.ts:55: trimming a whitespace path to the default while
+    // the broker opens the literal path reintroduces the split-brain). A non-Unicode value (an
+    // Err other than NotPresent) also falls back, matching the broker's string-typed env read.
+    match std::env::var("HEDDLE_COMMS_DB") {
+        Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
+        _ => Some(dirs::home_dir()?.join(".heddle").join("comms.db")),
+    }
 }
 
 /// The fleet owns this queue. Keep it separate from the comms database path because it remains
