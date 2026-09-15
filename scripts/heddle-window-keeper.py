@@ -2,9 +2,12 @@
 """heddle window-keeper — keeps native Claude accounts' 5-hour windows ticking, STAGGERED.
 
 This keeper performs NATIVE window maintenance only. Accounts with `envRepoint` route
-`ANTHROPIC_BASE_URL` to a third-party endpoint and are dispatch-only, so they are intentionally
-excluded from every native-maintenance path: ping, rotation advice, transcript accounting, and
-OAuth polling. They have no native window, and their credentials are resolved only at dispatch time.
+`ANTHROPIC_BASE_URL` to a third-party endpoint and have no native Anthropic window, so they are
+excluded from the native keep-alive PING and its file products (the `claude-<id>.dispatch.json`
+dispatch signal and the `claude-<id>.keeper.json` anchor). They remain visible to the secondary
+accounting passes (rotation advice, transcript accounting, OAuth usage refresh) for correct
+per-account attribution — those resolve credentials only at dispatch time and make no native
+keep-alive call on a repoint account's behalf.
 
 Why (Maya, 2026-08-15): the 5h usage window is a rolling window anchored to the FIRST request in a
 fresh window (empirically: resets_at lands on odd minutes, e.g. 22:55, 22:10 — not clock hours).
@@ -1101,33 +1104,10 @@ def main():
             log(f"[verify {verify}] resets_at moved? {'YES ⚠️' if after['resets_at'] != before['resets_at'] else 'no ✅ (window unchanged by the ping)'}")
         return
 
-    # A native account OWNS its dispatch sidecar filename. Compute the kept-native segments FIRST so a
-    # repoint id that sanitizes to the SAME segment as a native id can never delete the native account's
-    # signal — ids are trusted slugs, but a sanitization collision must not cross-delete (the ping-set
-    # analogue is the id-collision dedup below).
-    native_segments = {safe_segment(a["id"]) for a in logged_in_accts if not a.get("envRepoint")}
-    accts = []
-    for a in logged_in_accts:
-        if a.get("envRepoint"):
-            log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
-            segment = safe_segment(a["id"])
-            if segment in native_segments:
-                log(f"  dispatch signal claude-{segment}.dispatch.json belongs to a native account — not removing")
-            else:
-                dispatch_path = os.path.join(USAGE, f"claude-{segment}.dispatch.json")
-                if dry:
-                    # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
-                    if os.path.exists(dispatch_path):
-                        log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
-                else:
-                    try:
-                        os.unlink(dispatch_path)
-                    except FileNotFoundError:
-                        pass
-                    except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
-                        log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
-            continue
-        accts.append(a)
+    # A native account OWNS its dispatch sidecar filename even while logged out. Compute native
+    # segments over the full registry so repoint cleanup can never cross-delete that signal.
+    native_segments = {safe_segment(a["id"]) for a in reg if not a.get("envRepoint")}
+    accts = logged_in_accts
     # Distinct ids must stay distinct after filename sanitization, or two accounts would share
     # capture/anchor files and mis-attribute windows. Registry ids are trusted slugs, so a
     # collision is a registry mistake — skip the later entry loudly rather than cross-write.
@@ -1142,7 +1122,29 @@ def main():
         unique_accts.append(a)
     accts = unique_accts
     if not accts:
-        log("no native logged-in accounts in registry"); return
+        log("no logged-in accounts in registry"); return
+
+    for a in accts:
+        if not a.get("envRepoint"):
+            continue
+        log(f"skipping env-repoint account {a['id']!r} — window maintenance is native-only; repoint credentials are dispatch-only")
+        segment = safe_segment(a["id"])
+        if segment in native_segments:
+            log(f"  dispatch signal claude-{segment}.dispatch.json belongs to a native account — not removing")
+            continue
+        dispatch_path = os.path.join(USAGE, f"claude-{segment}.dispatch.json")
+        if dry:
+            # --dry-run is write-free (like the transcript/OAuth passes below): preview only.
+            if os.path.exists(dispatch_path):
+                log(f"{a['id']}: WOULD remove stale dispatch signal (dry-run)")
+        else:
+            try:
+                os.unlink(dispatch_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:  # noqa: BLE001 - stale-signal cleanup must never cost a native ping
+                log(f"unable to remove stale dispatch signal for {a['id']!r} ({type(e).__name__})")
+
     state = load(STATE, {"last_ping_ts": 0, "last_ping_acct": None})
     now = time.time()
 
@@ -1150,7 +1152,8 @@ def main():
     # work. A secondary step that BLOCKS rather than raises — a hung open() on a FIFO, a stalled
     # filesystem read — is not an exception, so the try/except guarding the advisor and transcript
     # accounting below cannot catch it. Only doing the pings first guarantees a hang there costs no ping.
-    windows = [(a, window(a["id"])) for a in accts]
+    native_accts = [a for a in accts if not a.get("envRepoint")]
+    windows = [(a, window(a["id"])) for a in native_accts]
     def _live(w):
         return bool(w and w.get("resets_at") and w["resets_at"] > now)
     live_resets = [w["resets_at"] for _, w in windows if _live(w)]
