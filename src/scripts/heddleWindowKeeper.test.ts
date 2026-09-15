@@ -855,8 +855,52 @@ describe.skipIf(!hasPython3)("heddle-window-keeper", () => {
     const rotationAdvice = advice(home);
     expect(rotationAdvice.active).toEqual({ id: "acct1", usedPct: 90, resetsAt });
     expect(rotationAdvice.target).toEqual({ id: "acct2", usedPct: 20, resetsAt, source: "tap" });
-    expect(rotationAdvice.command).toContain("acct2");
+    expect(rotationAdvice.command).toBe("bash resume-sessions-hed.sh --account acct2 -y");
     expect(rotationAdvice.thresholdPct).toBe(85);
+  });
+
+  it("observes a legal rotation without killing or relaunching the active Claude processes", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    const sharedProjects = path.join(home, "shared-projects");
+    fs.mkdirSync(sharedProjects, { recursive: true });
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.mkdirSync(path.join(home, ".claude-acct2"), { recursive: true });
+    fs.symlinkSync(sharedProjects, path.join(home, ".claude", "projects"));
+    fs.symlinkSync(sharedProjects, path.join(home, ".claude-acct2", "projects"));
+    writeCensusFixture(home, [
+      `42 claude --resume active CLAUDE_CONFIG_DIR=${path.join(home, ".claude")}`,
+      `7 claude --resume active CLAUDE_CONFIG_DIR=${path.join(home, ".claude")}`,
+    ]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rotation executor [DRY-RUN]: WOULD kill pid(s) 7,42 for active acct1 (used 90%), then run `bash resume-sessions-hed.sh --account acct2 -y` to resume under target acct2; shared-projects=OK, idle-check passed. NO action taken (dry-run cut).");
+    expect(calls(home)).toEqual([]);
+  });
+
+  it("does not run the rotation executor when no legal target exists", () => {
+    const home = mkHome();
+    seedRotationWindows(home, { peerUsed: 90 });
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(advice(home).censusStatus).toBe("wait");
+    expect(result.stdout).not.toContain("rotation executor [DRY-RUN]");
+  });
+
+  it("aborts dry-run rotation when active and target projects are not shared", () => {
+    const home = mkHome();
+    seedRotationWindows(home);
+    writeCensusFixture(home, [`42 claude --resume active CLAUDE_CONFIG_DIR=${path.join(home, ".claude")}`]);
+
+    const result = runKeeper([], home);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rotation executor [DRY-RUN]: ABORT — target acct2 configDir does not share projects/ with active acct1; --resume would land in empty history (fix onboarding symlinks, HED-584/585)");
+    expect(calls(home)).toEqual([]);
   });
 
   it("uses valid policy, rejects invalid policy, and logs missing policy defaults", () => {

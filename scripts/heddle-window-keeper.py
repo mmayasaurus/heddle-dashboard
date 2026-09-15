@@ -55,9 +55,9 @@ OAUTH_LOCK = os.path.join(HOME, ".heddle", "oauth-usage.lock")
 PING_MODEL = os.environ.get("HEDDLE_PING_MODEL", "claude-haiku-4-5-20251001")
 CLAUDE = os.environ.get("HEDDLE_CLAUDE_BIN", os.path.join(HOME, ".local", "bin", "claude"))
 HEDDLE_BIN = os.environ.get("HEDDLE_BIN", "")
-# The per-fleet resume script is not verified to exist on this machine, so keep it an operator-owned
-# template instead of inventing a path and presenting it as a real command.
-RELAUNCH_TEMPLATE = os.environ.get("HEDDLE_RELAUNCH_TEMPLATE", "bash resume-sessions.sh --account {account} -y")
+# The Heddle wrapper delegates to v2, which owns --account and CLAUDE_CONFIG_DIR.
+# Keep this operator-owned template overrideable rather than inventing a machine-specific path.
+RELAUNCH_TEMPLATE = os.environ.get("HEDDLE_RELAUNCH_TEMPLATE", "bash resume-sessions-hed.sh --account {account} -y")
 _LOG_WARNING_EMITTED = False
 
 
@@ -103,6 +103,8 @@ WINDOW_SECS = 5 * 3600
 STARTINTERVAL_SECS = int_env("HEDDLE_KEEPER_INTERVAL_SECS", 300, 60, 3600)
 # A percentage of the 5h window.
 ROTATE_PCT = int_env("HEDDLE_ROTATE_PCT", 85, 1, 100)
+# A recent transcript means the hot interactive session may still be mid-turn.
+IDLE_SEC = int_env("HEDDLE_ROTATE_IDLE_SEC", 60, 1, 3600)
 # OAuth is supplemental to the keeper's pings, so cache its exact weekly signal and back off after
 # a denied credential prompt rather than repeatedly disturbing the operator.
 OAUTH_CACHE_SECS = int_env("HEDDLE_OAUTH_CACHE_SECS", 300, 0, 86400)
@@ -448,6 +450,28 @@ def identity_groups(accts):
     return groups, duplicate
 
 
+def _claude_process_lines():
+    """Return (pid, ps eww line) pairs, or None when process inspection is unavailable."""
+    if os.environ.get("HEDDLE_CENSUS_PS_FIXTURE"):
+        fixture = load(os.environ["HEDDLE_CENSUS_PS_FIXTURE"], None)
+        lines = fixture if isinstance(fixture, list) else []
+        return [(str(line).split(None, 1)[0] if isinstance(line, str) and line.split() else None, line)
+                for line in lines]
+    try:
+        pids = subprocess.run(["pgrep", "-x", "claude"], capture_output=True, text=True, timeout=5)
+        if pids.returncode not in (0, 1):
+            raise OSError("pgrep failed")
+        process_lines = []
+        for pid in pids.stdout.split():
+            result = subprocess.run(["ps", "eww", "-p", pid], capture_output=True, text=True, timeout=5)
+            if result.returncode:
+                continue  # A claude process can exit after pgrep; do not poison the census.
+            process_lines.extend((pid, line) for line in result.stdout.splitlines()[1:])
+        return process_lines
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def live_census(accts):
     """Count interactive Claude sessions by launch-time CLAUDE_CONFIG_DIR identity.
 
@@ -460,24 +484,10 @@ def live_census(accts):
         acct_id = acct.get("id")
         if isinstance(acct_id, str):
             config_to_id[os.path.realpath(os.path.expanduser(acct.get("configDir") or "~/.claude"))] = acct_id
-    process_lines = None
-    if os.environ.get("HEDDLE_CENSUS_PS_FIXTURE"):
-        fixture = load(os.environ["HEDDLE_CENSUS_PS_FIXTURE"], None)
-        process_lines = fixture if isinstance(fixture, list) else []
+    process_lines = _claude_process_lines()
     if process_lines is None:
-        try:
-            pids = subprocess.run(["pgrep", "-x", "claude"], capture_output=True, text=True, timeout=5)
-            if pids.returncode not in (0, 1):
-                raise OSError("pgrep failed")
-            process_lines = []
-            for pid in pids.stdout.split():
-                result = subprocess.run(["ps", "eww", "-p", pid], capture_output=True, text=True, timeout=5)
-                if result.returncode:
-                    continue  # A claude process can exit after pgrep; do not poison the census.
-                process_lines.extend(result.stdout.splitlines()[1:])
-        except (subprocess.TimeoutExpired, OSError):
-            log("rotation advisor: census unavailable (process inspection failed)")
-            return None, groups, duplicate
+        log("rotation advisor: census unavailable (process inspection failed)")
+        return None, groups, duplicate
     counts, found, ambiguous, out_of_pool = {}, 0, False, 0
     # Normalize exactly like config_to_id above: an account can name the default dir as None, "",
     # "~/.claude", or an absolute path — all resolve to the same realpath and all OWN the env-less
@@ -486,7 +496,7 @@ def live_census(accts):
     default_config = os.path.realpath(os.path.expanduser("~/.claude"))
     default_ids = [a.get("id") for a in accts
                    if os.path.realpath(os.path.expanduser(a.get("configDir") or "~/.claude")) == default_config]
-    for line in process_lines:
+    for _, line in process_lines:
         if not isinstance(line, str):
             continue
         if "CODEX_COMPANION" in line or "shell-snapshot" in line:
@@ -651,6 +661,66 @@ def _emit_advice(advice, advice_text, advice_key, advice_keys, state, dry_run):
         log(f"rotation advisor: unable to persist dedupe state: {str(e)[-160:]}")
 
 
+def execute_rotation_dryrun(active, active_window, target_result, accts, groups, now):
+    """Inspect and log the rotation action this cut deliberately does not execute."""
+    try:
+        if target_result.get("status") != "target":
+            return
+        target = target_result["account"]
+        active_config = os.path.realpath(os.path.expanduser(active.get("configDir") or "~/.claude"))
+        target_config = os.path.realpath(os.path.expanduser(target.get("configDir") or "~/.claude"))
+        active_projects = os.path.realpath(os.path.join(active_config, "projects"))
+        target_projects = os.path.realpath(os.path.join(target_config, "projects"))
+        if active_projects != target_projects:
+            log(f"rotation executor [DRY-RUN]: ABORT — target {target['id']} configDir does not share "
+                f"projects/ with active {active['id']}; --resume would land in empty history "
+                "(fix onboarding symlinks, HED-584/585)")
+            return
+
+        active_pids = []
+        for pid, line in _claude_process_lines() or []:
+            if not isinstance(line, str):
+                continue
+            if "CODEX_COMPANION" in line or "shell-snapshot" in line:
+                continue
+            if re.search(r"(?:^|\s)(?:-p|--print)(?:\s|$)", line):
+                continue
+            match = re.search(r"(?:^|\s)CLAUDE_CONFIG_DIR=([^\s]+)", line)
+            if not match:
+                continue
+            config_dir = os.path.realpath(os.path.expanduser(match.group(1).strip("'\"")))
+            if config_dir == active_config and pid is not None:
+                active_pids.append(str(pid))
+
+        latest_mtime = None
+        for transcript in transcript_files([active]):
+            try:
+                mtime = os.path.getmtime(transcript)
+                latest_mtime = mtime if latest_mtime is None else max(latest_mtime, mtime)
+            except OSError:
+                continue
+        if latest_mtime is not None:
+            age = max(0, int(now - latest_mtime))
+            if age <= IDLE_SEC:
+                log(f"rotation executor [DRY-RUN]: active {active['id']} looks mid-turn "
+                    f"(transcript modified {age}s ago) — would DEFER this cycle")
+                return
+
+        try:
+            command = RELAUNCH_TEMPLATE.format(account=target["id"])
+        except Exception as e:  # noqa: BLE001 - malformed operator configuration must never break advice
+            log(f"rotation executor [DRY-RUN]: invalid HEDDLE_RELAUNCH_TEMPLATE: {str(e)[-160:]}")
+            return
+        pids = sorted(set(active_pids), key=lambda value: (0, int(value)) if value.isdigit() else (1, value))
+        pid_text = ",".join(pids) if pids else "none"
+        quoted_command = chr(96) + command + chr(96)
+        log(f"rotation executor [DRY-RUN]: WOULD kill pid(s) {pid_text} for active {active['id']} "
+            f"(used {pct(active_window.get('used'))}%), then run {quoted_command} to resume under target "
+            f"{target['id']}; shared-projects=OK, idle-check passed. NO action taken (dry-run cut).")
+    except Exception as e:  # noqa: BLE001 - a secondary observation must never interrupt the keeper
+        log(f"rotation executor [DRY-RUN]: unable to inspect rotation: {str(e)[-160:]}")
+
+
 def advise_rotation(accts, state, now, dry_run=False):
     # A tap capture is written only when a live interactive session renders its statusline. The newest
     # tap is therefore the load-bearing signal for which account is actively in use; keeper anchors do
@@ -757,6 +827,8 @@ def advise_rotation(accts, state, now, dry_run=False):
                    f"{reason} ({split_note}). Command: {command_text}")
 
     _emit_advice(advice, advice_text, advice_key, advice_keys, state, dry_run)
+    if target_result["status"] == "target":
+        execute_rotation_dryrun(active, active_window, target_result, accts, groups, now)
 
 
 def account_uuid_map():
