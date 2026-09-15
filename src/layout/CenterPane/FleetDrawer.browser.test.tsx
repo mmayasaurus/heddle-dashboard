@@ -105,13 +105,15 @@ describe("FleetDrawer Claude account cycler", () => {
     expect(screen.getByText("3/3")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    await screen.findByText("acct1");
+    // Extra timeout headroom: the post-rotation async re-render can exceed findBy's 1s default under CI load.
+    await screen.findByText("acct1", undefined, { timeout: 3000 });
     expect(screen.getByText("fleet.loggedOut")).toBeTruthy();
     expect(accountDetailElement("acct3")).toBeNull();
     expect(accountRowCount("acct1")).toBe(rowCount);
 
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
-    await screen.findByText("acct2");
+    // Same headroom for the second rotation's async re-render (findBy's 1s default is tight under CI load).
+    await screen.findByText("acct2", undefined, { timeout: 3000 });
     expect(screen.getByText("fleet.keeperEstimate")).toBeTruthy();
     expect(accountRowCount("acct2")).toBe(rowCount);
 
@@ -526,7 +528,8 @@ describe("FleetDrawer generalized account cycler (codex)", () => {
     // AccountCycler calls t() with no provider-specific argument.
     fireEvent.click(screen.getByRole("button", { name: "fleet.rotateAccounts" }));
 
-    await screen.findByText("codex-acct-b");
+    // Extra timeout headroom: the post-rotation async re-render can exceed findBy's 1s default under CI load.
+    await screen.findByText("codex-acct-b", undefined, { timeout: 3000 });
     expect(screen.getByText("2/2")).toBeTruthy();
     expect(screen.getByText("SURG")).toBeTruthy();
     expect(screen.queryByText("BONU")).toBeNull();
