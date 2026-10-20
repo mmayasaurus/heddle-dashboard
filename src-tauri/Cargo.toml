@@ -69,7 +69,7 @@ toml_edit = "0.25"
 minisign-verify = { version = "0.2", optional = true }
 # Pure-Rust russh multiplexes exec, SFTP, and forwarding over one connection, currently avoiding Windows
 # OpenSSH ControlMaster/ConPTY issues. The ring backend builds without NASM/cmake. GUI only.
-russh = { version = "0.62", default-features = false, features = ["ring", "flate2", "rsa"], optional = true }
+russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"], optional = true }
 russh-sftp = { version = "2", optional = true }
 # Claude quotas call Anthropic's oauth/usage endpoint through lightweight synchronous rustls HTTP. Codex
 # quotas read local rollouts, making this the only project-wide HTTP-client use.
